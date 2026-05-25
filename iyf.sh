@@ -13,10 +13,8 @@ zmodload zsh/datetime 2>/dev/null
 __iyf_is_ignored() {
   local cmd="${1%% *}"
   cmd="${cmd##*/}"
-  local ignores=(${(s:,:)IYF_IGNORE_CMDS})
+  local ignores=(${=IYF_IGNORE_CMDS})
   for ignore in $ignores; do
-    ignore="${ignore## }"
-    ignore="${ignore%% }"
     [[ "$cmd" == "$ignore" ]] && return 0
   done
   return 1
