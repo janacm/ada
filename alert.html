@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Command Finished</title>
+<style>
+  *, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html, body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    background: #0a0a0f;
+    color: #e4e4e7;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    cursor: pointer;
+  }
+
+  body {
+    background: radial-gradient(ellipse at 50% 40%, rgba(99, 102, 241, 0.06) 0%, transparent 60%),
+                radial-gradient(ellipse at 70% 60%, rgba(168, 85, 247, 0.04) 0%, transparent 50%),
+                #0a0a0f;
+  }
+
+  .container {
+    text-align: center;
+    padding: 2rem;
+    animation: fadeIn 0.4s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: scale(0.96); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+
+  .icon {
+    font-size: 6rem;
+    line-height: 1;
+    margin-bottom: 1.5rem;
+    display: block;
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { filter: drop-shadow(0 0 20px rgba(99, 102, 241, 0.3)); }
+    50%      { filter: drop-shadow(0 0 40px rgba(99, 102, 241, 0.7)); }
+  }
+
+  .title {
+    font-size: 3.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.5rem;
+    background: linear-gradient(135deg, #e4e4e7 0%, #a1a1aa 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .subtitle {
+    font-size: 1.1rem;
+    color: #71717a;
+    margin-bottom: 2.5rem;
+    font-weight: 400;
+  }
+
+  .cmd-box {
+    background: rgba(39, 39, 42, 0.8);
+    border: 1px solid rgba(63, 63, 70, 0.6);
+    border-radius: 12px;
+    padding: 1.25rem 2rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    max-width: 90vw;
+    margin-bottom: 2rem;
+    backdrop-filter: blur(6px);
+  }
+
+  .cmd-prompt {
+    color: #22c55e;
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 1rem;
+    font-weight: 500;
+  }
+
+  .cmd-text {
+    color: #e4e4e7;
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 1.3rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 50vw;
+  }
+
+  .meta {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 2.5rem;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 1rem;
+    border-radius: 999px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    background: rgba(39, 39, 42, 0.8);
+    border: 1px solid rgba(63, 63, 70, 0.5);
+    color: #d4d4d8;
+  }
+
+  .badge svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .badge.success { border-color: rgba(34, 197, 94, 0.4); color: #4ade80; }
+  .badge.failure { border-color: rgba(239, 68, 68, 0.4); color: #f87171; }
+
+  .dismiss-hint {
+    color: #52525b;
+    font-size: 0.85rem;
+    letter-spacing: 0.02em;
+  }
+
+  .dismiss-hint kbd {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    background: rgba(63, 63, 70, 0.4);
+    border: 1px solid rgba(82, 82, 91, 0.3);
+    font-family: "SF Mono", monospace;
+    font-size: 0.8rem;
+    color: #a1a1aa;
+  }
+
+  .progress-ring {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    height: 3px;
+    background: linear-gradient(90deg, rgba(99, 102, 241, 0.5), rgba(168, 85, 247, 0.5));
+    transition: width 1s linear;
+    width: 100%;
+    z-index: 10;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .icon { animation: none; }
+    .container { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container" id="app">
+  <span class="icon" id="statusIcon">⚡</span>
+  <p class="title">Command Finished</p>
+  <p class="subtitle">The terminal is ready for you</p>
+
+  <div class="cmd-box">
+    <span class="cmd-prompt">$</span>
+    <span class="cmd-text" id="cmdDisplay">—</span>
+  </div>
+
+  <div class="meta">
+    <span class="badge" id="durationBadge">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <span id="durationDisplay">—</span>
+    </span>
+    <span class="badge success" id="exitBadge">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      <span id="exitDisplay">—</span>
+    </span>
+  </div>
+
+  <p class="dismiss-hint">Click anywhere or press <kbd>Esc</kbd> to dismiss</p>
+</div>
+
+<div class="progress-ring" id="progressBar"></div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const cmd = params.get('cmd') || '—';
+  const duration = params.get('duration') || '—';
+  const code = params.get('code');
+
+  document.getElementById('cmdDisplay').textContent = cmd;
+  document.getElementById('durationDisplay').textContent = duration;
+
+  const exitBadge = document.getElementById('exitBadge');
+  const exitDisplay = document.getElementById('exitDisplay');
+  const statusIcon = document.getElementById('statusIcon');
+
+  if (code === '0') {
+    exitDisplay.textContent = 'Exit 0';
+    exitBadge.className = 'badge success';
+    exitBadge.title = 'Command succeeded';
+  } else if (code !== null) {
+    exitDisplay.textContent = 'Exit ' + code;
+    exitBadge.className = 'badge failure';
+    exitBadge.title = 'Command failed';
+    statusIcon.textContent = '✕';
+    document.querySelector('.title').textContent = 'Command Failed';
+    document.querySelector('.title').style.background = 'linear-gradient(135deg, #f87171 0%, #ef4444 100%)';
+    document.querySelector('.title').style.webkitBackgroundClip = 'text';
+    document.querySelector('.title').style.webkitTextFillColor = 'transparent';
+  }
+
+  let dismissed = false;
+  function dismiss() {
+    if (dismissed) return;
+    dismissed = true;
+    // Chrome/Brave/Edge --app windows (and script-opened Safari windows) self-close here.
+    // Never navigate to dismiss: window.open('','_self') blanks the page to about:blank.
+    window.close();
+    // Fallback if the OS denies the close: leave fullscreen and drop to the background
+    // so the terminal regains focus, instead of leaving a stuck window on screen.
+    setTimeout(() => {
+      if (document.fullscreenElement) document.exitFullscreen?.();
+      window.blur?.();
+    }, 150);
+  }
+
+  document.addEventListener('click', dismiss);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') dismiss();
+  });
+
+  let remaining = 90;
+  const progressBar = document.getElementById('progressBar');
+
+  function tick() {
+    remaining--;
+    if (remaining <= 0) { dismiss(); return; }
+    progressBar.style.width = (remaining / 90 * 100) + '%';
+    setTimeout(tick, 1000);
+  }
+
+  tick();
+</script>
+</body>
+</html>
