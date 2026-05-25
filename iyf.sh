@@ -56,10 +56,10 @@ __iyf_close_alerts() {
   local app=$1
   case "$app" in
     *Chrome*|*Brave*|*Edge*)
-      osascript -e "tell app \"$app\" to close (every window whose name contains \"alert.html\")" 2>/dev/null
+      osascript -e "tell app \"$app\" to close (every window whose name contains \"Command Finished\")" 2>/dev/null
       ;;
     *Safari*)
-      osascript -e "tell app \"Safari\" to close (every tab of every window whose name contains \"alert.html\")" 2>/dev/null
+      osascript -e "tell app \"Safari\" to close (every tab of every window whose name contains \"Command Finished\")" 2>/dev/null
       ;;
   esac
 }
