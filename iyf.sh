@@ -7,6 +7,14 @@ export IYF_THRESHOLD=${IYF_THRESHOLD:-10}
 export IYF_ALERT_FILE="${IYF_ALERT_FILE:-$HOME/.iyf/alert.html}"
 export IYF_IGNORE_CMDS=${IYF_IGNORE_CMDS:-"vim nvim nano emacs less more man htop top tig lazygit btm bottom glances"}
 export IYF_AUTO_CLOSE=${IYF_AUTO_CLOSE:-90}
+# When the command finishes while you're already looking at the terminal that
+# ran it, the output is right there and the alert is just noise. Suppress it.
+export IYF_SKIP_OWN_TERMINAL=${IYF_SKIP_OWN_TERMINAL:-1}
+# Extra apps to stay silent for when they're frontmost. Space-separated; each
+# entry matches a frontmost app's bundle id exactly or its name as a substring.
+# Note: terminal-TUI agents (opencode, etc.) are NOT separate apps — list the
+# terminal that hosts them (e.g. "ghostty Termius iTerm2 Terminal").
+export IYF_SKIP_WHEN_ACTIVE=${IYF_SKIP_WHEN_ACTIVE:-""}
 
 zmodload zsh/datetime 2>/dev/null
 
@@ -17,6 +25,34 @@ __iyf_is_ignored() {
   for ignore in $ignores; do
     [[ "$cmd" == "$ignore" ]] && return 0
   done
+  return 1
+}
+
+# True when the frontmost macOS app means you're already watching the output,
+# so the alert would be redundant. Uses lsappinfo (no Automation permission
+# prompt, unlike System Events). Only called after the duration threshold, so
+# it never touches the fast interactive path.
+__iyf_should_skip_active() {
+  local skip_own=${IYF_SKIP_OWN_TERMINAL:-1}
+  [[ "$skip_own" != 1 && -z "${IYF_SKIP_WHEN_ACTIVE// /}" ]] && return 1
+
+  local front bid name raw
+  front=$(lsappinfo front 2>/dev/null) || return 1
+  [[ -z "$front" ]] && return 1
+  raw=$(lsappinfo info -only bundleid "$front" 2>/dev/null); bid=${raw##*=\"}; bid=${bid%\"}
+  raw=$(lsappinfo info -only name "$front" 2>/dev/null);     name=${raw##*=\"}; name=${name%\"}
+
+  # You're looking at the very terminal that ran the command.
+  if [[ "$skip_own" == 1 && -n "$__CFBundleIdentifier" && "$bid" == "$__CFBundleIdentifier" ]]; then
+    return 0
+  fi
+
+  # Frontmost app is one you explicitly asked to stay silent for.
+  local entries=(${=IYF_SKIP_WHEN_ACTIVE}) e
+  for e in $entries; do
+    [[ -n "$e" && ( "$bid" == "$e" || ( -n "$name" && "$name" == *"$e"* ) ) ]] && return 0
+  done
+
   return 1
 }
 
@@ -45,7 +81,7 @@ __iyf_precmd() {
   local end_time=$EPOCHREALTIME
   local elapsed=$(( end_time - __iyf_start_time ))
 
-  if (( elapsed > IYF_THRESHOLD )) && ! __iyf_is_ignored "$__iyf_cmd"; then
+  if (( elapsed > IYF_THRESHOLD )) && ! __iyf_is_ignored "$__iyf_cmd" && ! __iyf_should_skip_active; then
     __iyf_show_alert "$__iyf_cmd" "$elapsed" "$exit_code"
   fi
 
