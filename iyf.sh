@@ -1,6 +1,6 @@
 # =============================================================
 # In Your Face for Terminal
-# Full-screen alert when long terminal commands finish
+# Maximized-window alert when long terminal commands finish
 # =============================================================
 
 export IYF_THRESHOLD=${IYF_THRESHOLD:-10}

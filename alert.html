@@ -298,12 +298,9 @@
     // Chrome/Brave/Edge --app windows (and script-opened Safari windows) self-close here.
     // Never navigate to dismiss: window.open('','_self') blanks the page to about:blank.
     window.close();
-    // Fallback if the OS denies the close: leave fullscreen and drop to the background
-    // so the terminal regains focus, instead of leaving a stuck window on screen.
-    setTimeout(() => {
-      if (document.fullscreenElement) document.exitFullscreen?.();
-      window.blur?.();
-    }, 150);
+    // Fallback if the OS denies the close: drop to the background so the terminal
+    // regains focus, instead of leaving a stuck window on screen.
+    setTimeout(() => { window.blur?.(); }, 150);
   }
 
   function dismiss() {

@@ -1,10 +1,10 @@
 # In Your Face for Terminal
 
-A full-screen alert that pops up when a long-running terminal command finishes,
-so you can switch away from the terminal and get yanked back the moment your
-build / test / deploy is done.
+A maximized-window alert that pops up when a long-running terminal command
+finishes, so you can switch away from the terminal and get yanked back the moment
+your build / test / deploy is done.
 
-When a command runs longer than a threshold, `iyf` opens a full-screen browser
+When a command runs longer than a threshold, `iyf` opens a maximized browser
 window showing the command, how long it took, and its exit status (green for
 success, red for failure). Click anywhere or press `Esc` to dismiss; it also
 auto-closes after a configurable timeout. Not ready to deal with it yet? Hit a
@@ -24,7 +24,7 @@ the output is right in front of you and the alert is just noise — so by defaul
 - `precmd` runs after the command returns, measures elapsed time, and captures
   the exit code.
 - If the command took longer than `IYF_THRESHOLD` seconds and isn't in the
-  ignore list, it opens `alert.html` full-screen.
+  ignore list, it opens `alert.html` in a maximized window.
 
 The alert is a local HTML file opened as a Chrome / Brave / Edge `--app` window
 (falling back to Safari if none are installed). The command, duration, exit
@@ -71,7 +71,7 @@ vim nvim nano emacs less more man htop top tig lazygit btm bottom glances
 
 The alert exists to yank you back when you've switched *away* from the terminal.
 If you never left — you ran the command and watched it finish — popping a
-full-screen window over the output you're already reading is just annoying.
+maximized window over the output you're already reading is just annoying.
 
 So when a command crosses the threshold, `iyf` checks the frontmost macOS app
 (via `lsappinfo`, which needs no Automation permission) and stays silent if:
@@ -163,9 +163,9 @@ delay, labelled as a snoozed reminder. You can snooze a reminder again.
 
 Why it needs a helper: the alert is a sandboxed `file://` page, and once its
 window closes its JavaScript is gone — and browsers won't let a background page
-force itself fullscreen or steal focus on a timer, so a pure in-page timer
+bring itself forward or steal focus on a timer, so a pure in-page timer
 couldn't yank you back the way the original alert does. So picking a snooze
-re-launches a *fresh* full-screen alert from the shell side. To bridge the two,
+re-launches a *fresh* alert from the shell side. To bridge the two,
 `iyf-show-alert.sh` spawns a tiny detached `python3` daemon
 (`iyf-snooze-daemon.py`) on an ephemeral **loopback-only** port; the page tells
 it which delay you picked via a local request, the daemon waits, then re-runs

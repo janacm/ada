@@ -2,7 +2,7 @@
 # =============================================================
 # iyf-claude-hook — In Your Face for Claude Code
 # -------------------------------------------------------------
-# Pops the same full-screen alert as iyf.sh, but when a long
+# Pops the same maximized-window alert as iyf.sh, but when a long
 # Claude Code *turn* finishes instead of a shell command.
 #
 # One script, wired to two Claude Code hooks. It reads the hook

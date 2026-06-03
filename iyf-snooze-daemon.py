@@ -4,7 +4,7 @@
 # -------------------------------------------------------------
 # The alert is a sandboxed file:// page in a browser window; once
 # it closes, its JS dies, so it cannot bring itself forcefully
-# back (browsers block requestFullscreen / focus-stealing from
+# back (browsers block window activation / focus-stealing from
 # timers). A "snooze" therefore has to be re-launched by a
 # process that outlives the window. That's this daemon.
 #
