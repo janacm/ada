@@ -7,6 +7,10 @@ export IYF_THRESHOLD=${IYF_THRESHOLD:-10}
 export IYF_ALERT_FILE="${IYF_ALERT_FILE:-$HOME/.iyf/alert.html}"
 export IYF_IGNORE_CMDS=${IYF_IGNORE_CMDS:-"vim nvim nano emacs less more man htop top tig lazygit btm bottom glances"}
 export IYF_AUTO_CLOSE=${IYF_AUTO_CLOSE:-90}
+# Snooze options (minutes) shown as buttons on the alert. Needs python3; an
+# explicit empty value hides them. Colon-less so "" is preserved, not defaulted.
+# See iyf-snooze-daemon.py for how a snooze re-arms the alert.
+export IYF_SNOOZE_MINUTES=${IYF_SNOOZE_MINUTES-"5 10 30 60"}
 # When the command finishes while you're already looking at the terminal that
 # ran it, the output is right there and the alert is just noise. Suppress it.
 export IYF_SKIP_OWN_TERMINAL=${IYF_SKIP_OWN_TERMINAL:-1}

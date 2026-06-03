@@ -150,6 +150,47 @@
     color: #a1a1aa;
   }
 
+  .snooze {
+    margin-top: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+
+  .snooze-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: #71717a;
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
+
+  .snooze-label svg { width: 15px; height: 15px; }
+
+  .snooze-btn {
+    appearance: none;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #c7d2fe;
+    padding: 0.45rem 1.05rem;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  }
+
+  .snooze-btn:hover {
+    background: rgba(99, 102, 241, 0.22);
+    border-color: rgba(129, 140, 248, 0.7);
+  }
+
+  .snooze-btn:active { transform: scale(0.95); }
+
   .progress-ring {
     position: fixed;
     bottom: 0;
@@ -191,6 +232,13 @@
   </div>
 
   <p class="dismiss-hint">Click anywhere or press <kbd>Esc</kbd> to dismiss</p>
+
+  <div class="snooze" id="snoozeBar" hidden>
+    <span class="snooze-label">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l2.5 2.5"/><circle cx="12" cy="13" r="8"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/></svg>
+      Snooze
+    </span>
+  </div>
 </div>
 
 <div class="progress-ring" id="progressBar"></div>
@@ -203,6 +251,10 @@
 
   document.getElementById('cmdDisplay').textContent = cmd;
   document.getElementById('durationDisplay').textContent = duration;
+
+  if (params.get('snoozed') === '1') {
+    document.querySelector('.subtitle').textContent = 'Snoozed reminder · the terminal is ready for you';
+  }
 
   const exitBadge = document.getElementById('exitBadge');
   const exitDisplay = document.getElementById('exitDisplay');
@@ -223,10 +275,26 @@
     document.querySelector('.title').style.webkitTextFillColor = 'transparent';
   }
 
+  // Snooze talks to the detached daemon iyf-show-alert.sh spawned for us. It's
+  // a no-cors fetch so the opaque file:// origin can reach loopback; we never
+  // read the (opaque) response, we only need the request to land. keepalive
+  // lets it complete even as the window closes a beat later.
+  const sport = params.get('sport');
+  const stoken = params.get('stoken');
+  const snoozeEnabled = params.get('snooze') === '1' && sport && stoken;
+
+  function signal(path) {
+    if (!snoozeEnabled) return;
+    try {
+      fetch(`http://127.0.0.1:${sport}/${stoken}/${path}`, {
+        method: 'GET', mode: 'no-cors', keepalive: true,
+      }).catch(() => {});
+    } catch (e) {}
+  }
+
   let dismissed = false;
-  function dismiss() {
-    if (dismissed) return;
-    dismissed = true;
+  let decided = false; // a snooze was chosen — don't also fire a dismiss
+  function closeWindow() {
     // Chrome/Brave/Edge --app windows (and script-opened Safari windows) self-close here.
     // Never navigate to dismiss: window.open('','_self') blanks the page to about:blank.
     window.close();
@@ -238,10 +306,46 @@
     }, 150);
   }
 
+  function dismiss() {
+    if (dismissed || decided) return;
+    dismissed = true;
+    signal('dismiss'); // let the daemon exit promptly instead of waiting out its deadline
+    closeWindow();
+  }
+
+  function snooze(mins) {
+    if (decided || dismissed) return;
+    decided = true;
+    signal(`snooze/${mins}`);
+    document.getElementById('app').innerHTML =
+      '<span class="icon">⏰</span>' +
+      '<p class="title">Snoozed</p>' +
+      '<p class="subtitle">Back in ' + mins + ' minute' + (mins === 1 ? '' : 's') + '</p>';
+    setTimeout(closeWindow, 650);
+  }
+
   document.addEventListener('click', dismiss);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') dismiss();
   });
+
+  // Render the snooze options the launcher passed through (IYF_SNOOZE_MINUTES).
+  if (snoozeEnabled) {
+    const bar = document.getElementById('snoozeBar');
+    const mins = (params.get('snoozemins') || '5,10,30,60')
+      .split(',').map(n => parseInt(n, 10)).filter(n => Number.isFinite(n) && n > 0);
+    for (const m of mins) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'snooze-btn';
+      btn.textContent = m + 'm';
+      btn.addEventListener('click', (e) => { e.stopPropagation(); snooze(m); });
+      bar.appendChild(btn);
+    }
+    // Clicks on the bar's empty space shouldn't bubble to the dismiss handler.
+    bar.addEventListener('click', (e) => e.stopPropagation());
+    bar.hidden = false;
+  }
 
   let remaining = parseInt(params.get('autoclose'), 10);
   if (!Number.isFinite(remaining) || remaining <= 0) remaining = 90;

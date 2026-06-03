@@ -7,7 +7,9 @@ build / test / deploy is done.
 When a command runs longer than a threshold, `iyf` opens a full-screen browser
 window showing the command, how long it took, and its exit status (green for
 success, red for failure). Click anywhere or press `Esc` to dismiss; it also
-auto-closes after a configurable timeout.
+auto-closes after a configurable timeout. Not ready to deal with it yet? Hit a
+**Snooze** button (5/10/30/60 min by default) and it'll pop the same alert back
+up later.
 
 If you're still looking at the terminal that ran the command when it finishes,
 the output is right in front of you and the alert is just noise — so by default
@@ -39,8 +41,9 @@ echo 'source ~/.iyf/iyf.sh' >> ~/.zshrc
 
 Then open a new shell (or run `source ~/.zshrc`).
 
-Requires **zsh** on **macOS**. `python3` is used to URL-encode the command when
-available, and degrades gracefully without it.
+Requires **zsh** on **macOS**. `python3` is used to URL-encode the command and
+to power the [snooze](#snoozing-the-alert) buttons; without it the alert still
+works, just minus snooze.
 
 ## Configuration
 
@@ -56,6 +59,7 @@ All settings are environment variables. Set them before `iyf.sh` is sourced
 | `IYF_SKIP_OWN_TERMINAL` | `1` | When `1`, suppress the alert if the terminal that ran the command is the frontmost app when it finishes. Set to `0` to always alert. |
 | `IYF_SKIP_WHEN_ACTIVE` | _(empty)_ | Space-separated apps to also stay silent for when they're frontmost. Each entry matches a frontmost app's bundle id exactly, or its name as a substring. |
 | `IYF_CLAUDE_THRESHOLD` | `45` | Minimum Claude Code *turn* duration, in seconds, to trigger an alert. Only used by the [Claude Code integration](#claude-code). |
+| `IYF_SNOOZE_MINUTES` | `5 10 30 60` | Space-separated snooze options, in minutes, shown as buttons on the alert. Set to empty to hide the buttons. Requires `python3` (see [Snoozing the alert](#snoozing-the-alert)). |
 
 The default ignore list covers common interactive / long-lived foreground tools:
 
@@ -148,3 +152,26 @@ rules apply here too, so an alert only pops when you've actually walked away.
   bottom shows the time remaining.
 - Opening a new alert first closes any previous alert window, so they don't
   stack up.
+
+## Snoozing the alert
+
+Sometimes the build's done but you're not ready to context-switch back. The
+alert shows a row of **Snooze** buttons — `5 10 30 60` minutes by default,
+configurable with `IYF_SNOOZE_MINUTES`. Click one and the window closes now and
+the *same* alert (same command, duration, exit code) pops back up after the
+delay, labelled as a snoozed reminder. You can snooze a reminder again.
+
+Why it needs a helper: the alert is a sandboxed `file://` page, and once its
+window closes its JavaScript is gone — and browsers won't let a background page
+force itself fullscreen or steal focus on a timer, so a pure in-page timer
+couldn't yank you back the way the original alert does. So picking a snooze
+re-launches a *fresh* full-screen alert from the shell side. To bridge the two,
+`iyf-show-alert.sh` spawns a tiny detached `python3` daemon
+(`iyf-snooze-daemon.py`) on an ephemeral **loopback-only** port; the page tells
+it which delay you picked via a local request, the daemon waits, then re-runs
+the launcher. It self-exits when you dismiss normally or after the alert's
+auto-close window, so nothing lingers.
+
+Because the daemon is `python3`, snooze is unavailable when `python3` isn't on
+`PATH` — the buttons simply don't render and everything else behaves as before.
+Setting `IYF_SNOOZE_MINUTES=""` also hides them.
