@@ -61,20 +61,6 @@ fi
 
 url="file://${alert_file}?cmd=${encoded_cmd}&duration=${duration}&code=${code}&autoclose=${auto_close}${snooze_q}"
 
-# Close any alert still up so they never stack. Window/tab title is set by
-# alert.html and contains "Command Finished".
-__iyf_close_alerts() {
-  local app=$1
-  case "$app" in
-    *Chrome*|*Brave*|*Edge*)
-      osascript -e "tell app \"$app\" to close (every window whose name contains \"Command Finished\")" 2>/dev/null
-      ;;
-    *Safari*)
-      osascript -e "tell app \"Safari\" to close (every tab of every window whose name contains \"Command Finished\")" 2>/dev/null
-      ;;
-  esac
-}
-
 app=""
 if [[ -d "/Applications/Google Chrome.app" ]]; then
   app="Google Chrome"
@@ -85,17 +71,35 @@ elif [[ -d "/Applications/Microsoft Edge.app" ]]; then
 fi
 
 if [[ -n "$app" ]]; then
-  __iyf_close_alerts "$app"
-  # --start-maximized, not --start-fullscreen: a maximized window fills the
-  # screen in the *current* Space, while native fullscreen slides the alert onto
-  # its own Space — too much visual movement, and it stranded keyboard focus on
-  # the terminal. Maximized stays put, in place, and takes focus cleanly.
-  open -n -a "$app" --args --start-maximized --app="$url" &>/dev/null &
-  # `open -n` shows the window but macOS often leaves keyboard focus on the
-  # terminal, so Esc never reaches the alert (you'd have to click first). Pull
-  # the browser frontmost once the new window exists so it becomes the key
-  # window and receives keystrokes. Backgrounded so we don't stall the caller.
-  osascript -e 'delay 0.4' -e "tell application \"$app\" to activate" &>/dev/null &
+  # A maximized WINDOW, not native fullscreen. The macOS catch: when the browser
+  # is already running, `open --args` silently drops every startup flag, so an
+  # --app window just inherits native fullscreen (its own Space — the visual
+  # movement we're removing) no matter what --window-* / --start-* flags we pass.
+  # The fix is a dedicated, throwaway browser instance (its own --user-data-dir):
+  # that's a fresh process, so the geometry flags DO apply and the alert opens as
+  # an ordinary window in the current Space.
+  profile="${IYF_BROWSER_PROFILE:-$HOME/.iyf-alert-profile}"
+  mkdir -p "$profile" 2>/dev/null
+
+  # Quit any previous alert instance: stops windows stacking AND guarantees this
+  # launch is a genuinely fresh process (a reused instance would ignore the
+  # geometry flags — the whole bug we're sidestepping).
+  pkill -f "user-data-dir=$profile" 2>/dev/null
+  for _ in {1..20}; do pgrep -f "user-data-dir=$profile" >/dev/null 2>&1 || break; sleep 0.05; done
+
+  # Primary display's visible frame (below the menu bar, above the Dock), in the
+  # top-left coordinates --window-position expects. Read straight from AppKit via
+  # JXA — no Accessibility prompt, and correct on a multi-monitor setup.
+  geom=$(osascript -l JavaScript -e 'ObjC.import("AppKit");var p=$.NSScreen.screens.objectAtIndex(0);var f=p.frame,v=p.visibleFrame;[Math.round(v.origin.x),Math.round(f.size.height-(v.origin.y+v.size.height)),Math.round(v.size.width),Math.round(v.size.height)].join(",")' 2>/dev/null)
+  IFS=, read -r wx wy ww wh <<<"$geom"
+
+  args=(--user-data-dir="$profile" --no-first-run --no-default-browser-check --disable-session-crashed-bubble)
+  if [[ -n "$ww" && "$ww" -gt 0 ]]; then
+    args+=(--window-position="${wx},${wy}" --window-size="${ww},${wh}")
+  fi
+  # `open -na` starts the separate instance and brings it frontmost, so the
+  # ordinary in-Space window takes keyboard focus and Esc reaches it.
+  open -na "$app" --args "${args[@]}" --app="$url" &>/dev/null &
 else
   # Safari fallback: it can't open a Chrome-style --app window, so open a tab and
   # size it to fill the screen — deliberately NOT native fullscreen (Cmd-Ctrl-F),

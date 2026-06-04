@@ -30,6 +30,15 @@ The alert is a local HTML file opened as a Chrome / Brave / Edge `--app` window
 (falling back to Safari if none are installed). The command, duration, exit
 code, and auto-close timeout are passed as URL query params.
 
+To make the alert a **maximized window in your current Space** — rather than a
+macOS *native full-screen* window on its own Space, which animates in/out and
+steals keyboard focus — it's launched in a dedicated, throwaway browser instance
+with its own `--user-data-dir`. This is necessary because an already-running
+browser silently ignores window-geometry flags passed to a new `--app` window,
+so a separate instance is the only way to reliably size the alert. The window is
+sized to the primary display's visible area (below the menu bar), and the
+instance quits the moment the alert is dismissed.
+
 ## Install
 
 Clone the repo to `~/.iyf` and source it from your `~/.zshrc`:
@@ -56,6 +65,7 @@ All settings are environment variables. Set them before `iyf.sh` is sourced
 | `IYF_AUTO_CLOSE` | `90` | Seconds the alert stays up before auto-dismissing. Unset or non-positive falls back to 90. |
 | `IYF_IGNORE_CMDS` | interactive tools (see below) | Space-separated list of command names to never alert on. Matched against the command's basename. |
 | `IYF_ALERT_FILE` | `~/.iyf/alert.html` | Path to the alert HTML page. |
+| `IYF_BROWSER_PROFILE` | `~/.iyf-alert-profile` | Directory for the alert's dedicated, throwaway browser profile. The alert runs in its own browser instance (see [How it works](#how-it-works)) so it opens as a maximized window instead of native full-screen; this is where that instance's profile lives. |
 | `IYF_SKIP_OWN_TERMINAL` | `1` | When `1`, suppress the alert if the terminal that ran the command is the frontmost app when it finishes. Set to `0` to always alert. |
 | `IYF_SKIP_WHEN_ACTIVE` | _(empty)_ | Space-separated apps to also stay silent for when they're frontmost. Each entry matches a frontmost app's bundle id exactly, or its name as a substring. |
 | `IYF_CLAUDE_THRESHOLD` | `45` | Minimum Claude Code *turn* duration, in seconds, to trigger an alert. Only used by the [Claude Code integration](#claude-code). |
