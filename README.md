@@ -5,9 +5,10 @@ finishes, so you can switch away from the terminal and get yanked back the momen
 your build / test / deploy is done.
 
 When a command runs longer than a threshold, `iyf` opens a maximized browser
-window showing the command, how long it took, and its exit status (green for
-success, red for failure). Click anywhere or press `Esc` to dismiss; it also
-auto-closes after a configurable timeout. Not ready to deal with it yet? Hit a
+window showing the command, the git repo it ran in, how long it took, and its
+exit status (green for success, red for failure). Click anywhere or press `Esc`
+to dismiss; it also auto-closes after a configurable timeout. Not ready to deal
+with it yet? Hit a
 **Snooze** button (5/10/30/60 min by default) and it'll pop the same alert back
 up later.
 
@@ -27,8 +28,10 @@ the output is right in front of you and the alert is just noise — so by defaul
   ignore list, it opens `alert.html` in a maximized window.
 
 The alert is a local HTML file opened as a Chrome / Brave / Edge `--app` window
-(falling back to Safari if none are installed). The command, duration, exit
-code, and auto-close timeout are passed as URL query params.
+(falling back to Safari if none are installed). The command, repo name,
+duration, exit code, and auto-close timeout are passed as URL query params. The
+repo name is the basename of the command's git repository (`git rev-parse
+--show-toplevel`); outside a git repo it's omitted and the badge is hidden.
 
 To make the alert a **maximized window in your current Space** — rather than a
 macOS *native full-screen* window on its own Space, which animates in/out and
@@ -66,6 +69,8 @@ All settings are environment variables. Set them before `iyf.sh` is sourced
 | `IYF_IGNORE_CMDS` | interactive tools (see below) | Space-separated list of command names to never alert on. Matched against the command's basename. |
 | `IYF_ALERT_FILE` | `~/.iyf/alert.html` | Path to the alert HTML page. |
 | `IYF_BROWSER_PROFILE` | `~/.iyf-alert-profile` | Directory for the alert's dedicated, throwaway browser profile. The alert runs in its own browser instance (see [How it works](#how-it-works)) so it opens as a maximized window instead of native full-screen; this is where that instance's profile lives. |
+| `IYF_REPO` | _(auto: git repo name)_ | Repo name shown on the alert. Auto-detected as the basename of the command's git repository; set it to override the displayed name, or to empty (`IYF_REPO=""`) to hide the repo badge. A snooze re-launch reuses the value resolved on the first alert. |
+| `IYF_REPO_DIR` | _(where the command ran)_ | Directory whose git repo name is shown. Defaults to the launcher's working directory, which is almost always right; the [Claude Code integration](#claude-code) sets it to the turn's project directory automatically. Ignored when `IYF_REPO` is set. |
 | `IYF_SKIP_OWN_TERMINAL` | `1` | When `1`, suppress the alert if the terminal that ran the command is the frontmost app when it finishes. Set to `0` to always alert. |
 | `IYF_SKIP_WHEN_ACTIVE` | _(empty)_ | Space-separated apps to also stay silent for when they're frontmost. Each entry matches a frontmost app's bundle id exactly, or its name as a substring. |
 | `IYF_CLAUDE_THRESHOLD` | `45` | Minimum Claude Code *turn* duration, in seconds, to trigger an alert. Only used by the [Claude Code integration](#claude-code). |

@@ -34,6 +34,22 @@ encoded_cmd=$(printf '%s' "$cmd" \
   | python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.stdin.read().strip()))" 2>/dev/null \
   || printf '%s' "$cmd")
 
+# Repo name shown on the alert so you can tell which project a finished command
+# / turn belongs to. Resolved ONCE here and exported: a snoozed relaunch runs
+# from the detached daemon's unrelated cwd, but inherits this environment, so it
+# reuses the value instead of recomputing the wrong repo. Already-set (even
+# empty) => trust it; empty means "not a git repo" and the page hides the badge.
+# IYF_REPO_DIR lets a caller name the directory to inspect (the Claude hook does,
+# since its cwd isn't guaranteed to be the project); the zsh hook needs nothing —
+# the launcher already inherits the directory the command ran in.
+if [[ -z "${IYF_REPO+set}" ]]; then
+  repo=$(git -C "${IYF_REPO_DIR:-$PWD}" rev-parse --show-toplevel 2>/dev/null)
+  export IYF_REPO="${repo##*/}"
+fi
+encoded_repo=$(printf '%s' "$IYF_REPO" \
+  | python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.stdin.read().strip()))" 2>/dev/null \
+  || printf '%s' "$IYF_REPO")
+
 # Snooze: a sandboxed file:// page can't outlive its window, so we spawn a tiny
 # detached daemon that the page signals (no-cors fetch) with the chosen delay;
 # the daemon sleeps, then re-launches this same alert. Needs python3 — without
@@ -59,7 +75,7 @@ if [[ -n "$sport" && -n "$stoken" ]]; then
 fi
 [[ -n "${IYF_SNOOZED:-}" ]] && snooze_q="${snooze_q}&snoozed=1"
 
-url="file://${alert_file}?cmd=${encoded_cmd}&duration=${duration}&code=${code}&autoclose=${auto_close}${snooze_q}"
+url="file://${alert_file}?cmd=${encoded_cmd}&duration=${duration}&code=${code}&autoclose=${auto_close}&repo=${encoded_repo}${snooze_q}"
 
 app=""
 if [[ -d "/Applications/Google Chrome.app" ]]; then

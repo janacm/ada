@@ -133,6 +133,12 @@
   .badge.success { border-color: rgba(34, 197, 94, 0.4); color: #4ade80; }
   .badge.failure { border-color: rgba(239, 68, 68, 0.4); color: #f87171; }
 
+  /* Repo badge: indigo accent to match the theme. Hidden by default — note the
+     .badge rule sets display:inline-flex, which would beat the [hidden] UA rule,
+     so visibility is toggled with a class instead of the hidden attribute. */
+  .badge.repo { border-color: rgba(99, 102, 241, 0.4); color: #c7d2fe; display: none; }
+  .badge.repo.is-visible { display: inline-flex; }
+
   .dismiss-hint {
     color: #52525b;
     font-size: 0.85rem;
@@ -221,6 +227,10 @@
   </div>
 
   <div class="meta">
+    <span class="badge repo" id="repoBadge">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+      <span id="repoDisplay"></span>
+    </span>
     <span class="badge" id="durationBadge">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       <span id="durationDisplay">—</span>
@@ -251,6 +261,14 @@
 
   document.getElementById('cmdDisplay').textContent = cmd;
   document.getElementById('durationDisplay').textContent = duration;
+
+  // Repo name (git toplevel basename, resolved by the launcher). Absent/empty
+  // when the command didn't run inside a git repo — leave the badge hidden then.
+  const repo = params.get('repo');
+  if (repo) {
+    document.getElementById('repoDisplay').textContent = repo;
+    document.getElementById('repoBadge').classList.add('is-visible');
+  }
 
   if (params.get('snoozed') === '1') {
     document.querySelector('.subtitle').textContent = 'Snoozed reminder · the terminal is ready for you';

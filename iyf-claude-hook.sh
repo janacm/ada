@@ -39,12 +39,15 @@ except Exception:
     sys.exit(0)
 ev  = d.get("hook_event_name", "") or ""
 sid = d.get("session_id", "") or ""
+cwd = (d.get("cwd", "") or "").replace("\n", " ").replace("\t", " ").strip()
 pr  = (d.get("prompt", "") or "").replace("\n", " ").replace("\t", " ").strip()
-print(ev + "\t" + sid + "\t" + pr)
+# prompt stays LAST: read -r gives the final field every remaining tab, so only
+# a trailing free-text field is safe there.
+print(ev + "\t" + sid + "\t" + cwd + "\t" + pr)
 ' 2>/dev/null)
 [[ -z "$fields" ]] && exit 0
 
-IFS=$'\t' read -r event session_id prompt <<<"$fields"
+IFS=$'\t' read -r event session_id cwd prompt <<<"$fields"
 [[ -z "$session_id" ]] && exit 0
 
 __iyf_format_duration() {
@@ -99,7 +102,10 @@ case "$event" in
 
     label=${saved_prompt:-"Claude Code"}
     if (( ${#label} > 120 )); then label="${label:0:120}…"; fi
-    "$dir/iyf-show-alert.sh" "$label" "$(__iyf_format_duration "$elapsed")" 0 >/dev/null 2>&1 &
+    # IYF_REPO_DIR points the launcher at the turn's project so it shows the
+    # right repo (the hook's own cwd isn't guaranteed to be it). Empty falls
+    # back to the launcher's cwd, which is the project in the usual setup.
+    IYF_REPO_DIR="$cwd" "$dir/iyf-show-alert.sh" "$label" "$(__iyf_format_duration "$elapsed")" 0 >/dev/null 2>&1 &
     ;;
 esac
 
