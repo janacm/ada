@@ -1,10 +1,12 @@
 # CLAUDE.md — iyf (In Your Face)
 
-A maximized-window alert that pops when a long terminal command / Claude turn
-finishes. The alert is an HTML page (`alert.html`) opened by `iyf-show-alert.sh`
-as a Chrome/Brave/Edge `--app` window (Safari fallback). Entry points:
-`iyf.sh` (zsh hook) and `iyf-claude-hook.sh` (Claude Code hook) both call the
-shared launcher `iyf-show-alert.sh`.
+A maximized-window alert that pops when a long terminal command / Claude turn /
+Paseo agent turn finishes. The alert is an HTML page (`alert.html`) opened by
+`iyf-show-alert.sh` as a Chrome/Brave/Edge `--app` window (Safari fallback).
+Entry points all call the shared launcher `iyf-show-alert.sh`:
+`iyf.sh` (zsh hook), `iyf-claude-hook.sh` (Claude Code hook), and
+`iyf-paseo-watch.sh` → `iyf-paseo-watch.py` (a launchd watcher that polls the
+Paseo daemon — see [The Paseo watcher](#the-paseo-watcher-launchd-cant-run-from-tcc-protected-paths)).
 
 ## The #1 architectural gotcha: an already-running browser drops `--args`
 
@@ -26,6 +28,48 @@ Space-slide animation, focus lands correctly). A previous alert instance is
 **Debugging consequence:** the dedicated instance is **invisible to**
 `tell application "Google Chrome" ...` AppleScript (that targets the user's main
 instance). Use **PID-based** tools to inspect it (see below).
+
+## The Paseo watcher: launchd can't run from TCC-protected paths
+
+Paseo runs every agent (`opencode`, `claude`, `codex`, …) through **its own
+daemon runtime, not the provider CLIs**, so `~/.claude/settings.json` hooks never
+fire for a Paseo-managed agent — not even a `claude/*` one — and Paseo exposes no
+"run a command on agent event" hook. So instead of a hook, `iyf-paseo-watch.py`
+**polls** the daemon via the supported CLI and synthesizes the event by diffing
+status between snapshots:
+
+- `paseo ls --json` — `running → idle` = finished turn; `running → error` =
+  failed turn.
+- `paseo permit ls --json` — a new entry = an agent blocked on a permission.
+
+The loop is **Python, not bash**, because it needs per-agent state keyed by id
+(associative arrays) and macOS still ships **bash 3.2**, which has none. The
+`.sh` is just the front door (config, launchd, `test`). It skips alerts while the
+Paseo app (bundle id `sh.paseo.desktop`) is frontmost — you're already watching.
+
+**The gotcha:** a **LaunchAgent runs without your Full Disk Access**, so it
+**cannot exec a script under a TCC-protected folder** — `~/Documents`,
+`~/Desktop`, `~/Downloads`, *or a symlink into one*. Note **`~/.iyf` is a symlink
+to `~/Documents/GitHub/iyf`**, so pointing the plist at `~/.iyf/iyf-paseo-watch.sh`
+fails. Symptom: the job log shows `/bin/bash: <path>: Operation not permitted`
+and `last exit code = 126`, **even though the exact same script runs fine from
+your terminal** (Terminal/ghostty/etc. have been granted TCC access; launchd has
+not). This asymmetry is the tell.
+
+**The fix (current design):** `iyf-paseo-watch.sh install` **stages** the runtime
+it needs (`iyf-paseo-watch.sh`, `iyf-paseo-watch.py`, `iyf-show-alert.sh`,
+`iyf-snooze-daemon.py`, `alert.html`) into a non-TCC dir — `~/.local/share/iyf`
+(override `IYF_PASEO_INSTALL_DIR`) — and points the plist there. Re-run `install`
+after editing any of those scripts to re-stage. The env file lives alongside:
+`~/.local/share/iyf/paseo-watch.env`.
+
+**Debugging:**
+```bash
+launchctl print gui/$(id -u)/com.iyf.paseo-watch | grep -iE 'state =|pid =|last exit'
+tail -f "$TMPDIR/iyf-paseo-watch.log"     # clean = running fine; the loop is silent
+pgrep -fl iyf-paseo-watch.py              # shows the staged ~/.local/share/iyf path
+```
+A healthy job is `state = running` with a live `python …/.local/share/iyf/iyf-paseo-watch.py`.
 
 ## How to validate windowed-vs-fullscreen
 
