@@ -71,6 +71,12 @@ pgrep -fl iyf-paseo-watch.py              # shows the staged ~/.local/share/iyf 
 ```
 A healthy job is `state = running` with a live `python …/.local/share/iyf/iyf-paseo-watch.py`.
 
+`iyf-paseo-watch.sh status` now prints an emoji health line:
+- `✅ Paseo watcher: running (pid N)` — live poll loop
+- `⚠️  loaded but not running yet` — job registered, pid not up
+- `❌ not loaded — run: ... install` — off
+Plus `✅/❌ plist` and `✅ log clean` / `⚠️ log has output`.
+
 ## How to validate windowed-vs-fullscreen
 
 Two **verified** methods (ranked). The discriminator either way: a normal macOS

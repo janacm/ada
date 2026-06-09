@@ -194,7 +194,7 @@ install-once, like sourcing `iyf.sh`:
 
 ```sh
 ~/.iyf/iyf-paseo-watch.sh install     # stage runtime + load the LaunchAgent
-~/.iyf/iyf-paseo-watch.sh status      # check it's running / tail its log
+~/.iyf/iyf-paseo-watch.sh status      # check health: ✅ running (pid), ✅ plist, ✅ log clean
 ~/.iyf/iyf-paseo-watch.sh uninstall   # unload + remove it
 ```
 
