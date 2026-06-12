@@ -59,6 +59,8 @@
 #   IYF_ALERT_FILE             alert.html path     (default: alongside this script)
 #   IYF_AUTO_CLOSE             auto-dismiss seconds (default 90, via launcher)
 #   IYF_SNOOZE_MINUTES         snooze options       (default "5 10 30 60", via launcher)
+#   IYF_FOCUS_APP              bundle id to focus on click (default sh.paseo.desktop)
+#   IYF_FOCUS_APP_NAME         display name for the click hint (default Paseo)
 # =============================================================
 set -u
 
@@ -75,6 +77,9 @@ fi
 # the watcher works from any clone, not just ~/.iyf. The loop and the launcher
 # both read these from the environment, so export them.
 : "${IYF_ALERT_FILE:=$dir/alert.html}"; export IYF_ALERT_FILE
+if [[ -z "${IYF_FOCUS_APP+x}" ]]; then IYF_FOCUS_APP="sh.paseo.desktop"; fi
+if [[ -z "${IYF_FOCUS_APP_NAME+x}" ]]; then IYF_FOCUS_APP_NAME="Paseo"; fi
+export IYF_FOCUS_APP IYF_FOCUS_APP_NAME
 [[ -n "${IYF_AUTO_CLOSE:-}" ]] && export IYF_AUTO_CLOSE
 [[ -n "${IYF_SNOOZE_MINUTES+x}" ]] && export IYF_SNOOZE_MINUTES
 

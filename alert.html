@@ -241,7 +241,7 @@
     </span>
   </div>
 
-  <p class="dismiss-hint">Click anywhere or press <kbd>Esc</kbd> to dismiss</p>
+  <p class="dismiss-hint" id="dismissHint">Click anywhere or press <kbd>Esc</kbd> to dismiss</p>
 
   <div class="snooze" id="snoozeBar" hidden>
     <span class="snooze-label">
@@ -293,16 +293,28 @@
     document.querySelector('.title').style.webkitTextFillColor = 'transparent';
   }
 
-  // Snooze talks to the detached daemon iyf-show-alert.sh spawned for us. It's
-  // a no-cors fetch so the opaque file:// origin can reach loopback; we never
-  // read the (opaque) response, we only need the request to land. keepalive
+  // Snooze/focus talks to the detached daemon iyf-show-alert.sh spawned for us.
+  // It's a no-cors fetch so the opaque file:// origin can reach loopback; we
+  // never read the (opaque) response, we only need the request to land. keepalive
   // lets it complete even as the window closes a beat later.
   const sport = params.get('sport');
   const stoken = params.get('stoken');
-  const snoozeEnabled = params.get('snooze') === '1' && sport && stoken;
+  const daemonEnabled = Boolean(sport && stoken);
+  const snoozeEnabled = params.get('snooze') === '1' && daemonEnabled;
+  const focusEnabled = params.get('focus') === '1' && daemonEnabled;
+
+  if (focusEnabled) {
+    const focusName = params.get('focusname');
+    const hint = document.getElementById('dismissHint');
+    hint.textContent = 'Click anywhere to return' + (focusName ? ' to ' + focusName : '') + ' or press ';
+    const kbd = document.createElement('kbd');
+    kbd.textContent = 'Esc';
+    hint.appendChild(kbd);
+    hint.appendChild(document.createTextNode(' to dismiss'));
+  }
 
   function signal(path) {
-    if (!snoozeEnabled) return;
+    if (!daemonEnabled) return;
     try {
       fetch(`http://127.0.0.1:${sport}/${stoken}/${path}`, {
         method: 'GET', mode: 'no-cors', keepalive: true,
@@ -321,10 +333,10 @@
     setTimeout(() => { window.blur?.(); }, 150);
   }
 
-  function dismiss() {
+  function dismiss(action = 'dismiss') {
     if (dismissed || decided) return;
     dismissed = true;
-    signal('dismiss'); // let the daemon exit promptly instead of waiting out its deadline
+    signal(action); // let the daemon exit promptly instead of waiting out its deadline
     closeWindow();
   }
 
@@ -339,9 +351,9 @@
     setTimeout(closeWindow, 650);
   }
 
-  document.addEventListener('click', dismiss);
+  document.addEventListener('click', () => dismiss(focusEnabled ? 'focus' : 'dismiss'));
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') dismiss();
+    if (e.key === 'Escape') dismiss('dismiss');
   });
 
   // Render the snooze options the launcher passed through (IYF_SNOOZE_MINUTES).
@@ -369,7 +381,7 @@
 
   function tick() {
     remaining--;
-    if (remaining <= 0) { dismiss(); return; }
+    if (remaining <= 0) { dismiss('dismiss'); return; }
     progressBar.style.width = (remaining / total * 100) + '%';
     setTimeout(tick, 1000);
   }

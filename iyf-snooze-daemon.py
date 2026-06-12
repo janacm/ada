@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # =============================================================
-# iyf-snooze-daemon — re-arms the alert after a snooze
+# iyf-snooze-daemon — re-arms the alert after a snooze, or focuses the source app
 # -------------------------------------------------------------
 # The alert is a sandboxed file:// page in a browser window; once
 # it closes, its JS dies, so it cannot bring itself forcefully
@@ -15,6 +15,7 @@
 # then signals a decision with a no-cors fetch:
 #
 #   GET /<token>/snooze/<minutes>  -> sleep, then relaunch the alert
+#   GET /<token>/focus             -> focus the source app, no relaunch
 #   GET /<token>/dismiss           -> exit, no relaunch
 #
 # If the user never decides (plain dismiss with the beacon blocked,
@@ -22,7 +23,8 @@
 #
 # Usage:
 #   iyf-snooze-daemon.py <handoff> <deadline> <alert_script> \
-#       <cmd> <duration> <code> <alert_file> <auto_close> <snooze_minutes>
+#       <cmd> <duration> <code> <alert_file> <auto_close> <snooze_minutes> \
+#       [focus_bundle_id]
 #
 # Set IYF_SNOOZE_LOG=/path to append a trace line per request/decision (debug).
 # =============================================================
@@ -45,6 +47,7 @@ try:
      alert_file, auto_close, snooze_minutes) = sys.argv[1:10]
 except ValueError:
     sys.exit(0)
+focus_app = sys.argv[10] if len(sys.argv) > 10 else os.environ.get("IYF_FOCUS_APP", "")
 
 try:
     deadline = float(deadline_s)
@@ -108,6 +111,9 @@ class Handler(BaseHTTPRequestHandler):
         elif action == "dismiss":
             self.server.iyf_result = ("dismiss", 0)
             self.server.iyf_done = True
+        elif action == "focus" and focus_app:
+            self.server.iyf_result = ("focus", 0)
+            self.server.iyf_done = True
 
     def log_message(self, *args):
         pass
@@ -158,6 +164,19 @@ def main():
     httpd.server_close()
 
     result = httpd.iyf_result
+    if result and result[0] == "focus":
+        trace("focus %s" % focus_app)
+        try:
+            subprocess.Popen(
+                ["open", "-b", focus_app],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            pass
+        return
+
     if not result or result[0] != "snooze":
         trace("exit without snooze: %r" % (result,))
         return
@@ -169,6 +188,8 @@ def main():
     env["IYF_ALERT_FILE"] = alert_file
     env["IYF_AUTO_CLOSE"] = auto_close
     env["IYF_SNOOZE_MINUTES"] = snooze_minutes
+    if focus_app:
+        env["IYF_FOCUS_APP"] = focus_app
     try:
         subprocess.Popen(
             [alert_script, cmd, duration, code],

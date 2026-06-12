@@ -12,6 +12,8 @@
 #   IYF_ALERT_FILE      path to alert.html        (default ~/.iyf/alert.html)
 #   IYF_AUTO_CLOSE      seconds before auto-close (default 90)
 #   IYF_SNOOZE_MINUTES  snooze button options     (default "5 10 30 60")
+#   IYF_FOCUS_APP       bundle id to focus on click (default $__CFBundleIdentifier)
+#   IYF_FOCUS_APP_NAME  optional display name for the click hint
 #   IYF_SNOOZED         set by the snooze daemon when re-arming an alert
 # =============================================================
 set -u
@@ -24,6 +26,12 @@ alert_file=${IYF_ALERT_FILE:-$HOME/.iyf/alert.html}
 auto_close=${IYF_AUTO_CLOSE:-90}
 # Colon-less default: unset -> the defaults, but an explicit "" disables snooze.
 snooze_minutes=${IYF_SNOOZE_MINUTES-"5 10 30 60"}
+if [[ -n "${IYF_FOCUS_APP+x}" ]]; then
+  focus_app=$IYF_FOCUS_APP
+else
+  focus_app=${__CFBundleIdentifier:-}
+fi
+focus_app_name=${IYF_FOCUS_APP_NAME:-}
 
 # Where this script lives, so the snooze daemon can be found and re-invoked.
 selfdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -49,19 +57,24 @@ fi
 encoded_repo=$(printf '%s' "$IYF_REPO" \
   | python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.stdin.read().strip()))" 2>/dev/null \
   || printf '%s' "$IYF_REPO")
+encoded_focus_app_name=$(printf '%s' "$focus_app_name" \
+  | python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.stdin.read().strip()))" 2>/dev/null \
+  || printf '%s' "$focus_app_name")
 
-# Snooze: a sandboxed file:// page can't outlive its window, so we spawn a tiny
-# detached daemon that the page signals (no-cors fetch) with the chosen delay;
-# the daemon sleeps, then re-launches this same alert. Needs python3 — without
-# it the page hides the snooze controls and behaves exactly as before.
+# Snooze/focus: a sandboxed file:// page can't outlive its window or activate
+# another app itself, so we spawn a tiny detached daemon that the page signals
+# with a no-cors fetch. Needs python3 — without it the page hides the snooze
+# controls and click-anywhere degrades to plain dismiss.
 sport=""; stoken=""
-if [[ -n "${snooze_minutes// /}" ]] && command -v python3 >/dev/null 2>&1 \
+needs_daemon=0
+[[ -n "${snooze_minutes// /}" || -n "${focus_app// /}" ]] && needs_daemon=1
+if [[ "$needs_daemon" == 1 ]] && command -v python3 >/dev/null 2>&1 \
    && [[ -f "$selfdir/iyf-snooze-daemon.py" ]]; then
   handoff=$(mktemp -t iyf-snooze.XXXXXX 2>/dev/null) || handoff="${TMPDIR:-/tmp}/iyf-snooze.$$"
   deadline=$(( ${auto_close%%.*} + 15 )); (( deadline > 0 )) || deadline=105
   python3 "$selfdir/iyf-snooze-daemon.py" "$handoff" "$deadline" \
     "$selfdir/iyf-show-alert.sh" "$cmd" "$duration" "$code" \
-    "$alert_file" "$auto_close" "$snooze_minutes" >/dev/null 2>&1 &
+    "$alert_file" "$auto_close" "$snooze_minutes" "$focus_app" >/dev/null 2>&1 &
   for _ in {1..60}; do
     [[ -s "$handoff" ]] && { read -r sport stoken < "$handoff"; break; }
     sleep 0.03
@@ -69,13 +82,24 @@ if [[ -n "${snooze_minutes// /}" ]] && command -v python3 >/dev/null 2>&1 \
   rm -f "$handoff"
 fi
 
-snooze_q="&snooze=0"
+daemon_q="&snooze=0&focus=0"
 if [[ -n "$sport" && -n "$stoken" ]]; then
-  snooze_q="&snooze=1&sport=${sport}&stoken=${stoken}&snoozemins=${snooze_minutes// /,}"
+  daemon_q="&sport=${sport}&stoken=${stoken}"
+  if [[ -n "${snooze_minutes// /}" ]]; then
+    daemon_q="${daemon_q}&snooze=1&snoozemins=${snooze_minutes// /,}"
+  else
+    daemon_q="${daemon_q}&snooze=0"
+  fi
+  if [[ -n "${focus_app// /}" ]]; then
+    daemon_q="${daemon_q}&focus=1"
+    [[ -n "$encoded_focus_app_name" ]] && daemon_q="${daemon_q}&focusname=${encoded_focus_app_name}"
+  else
+    daemon_q="${daemon_q}&focus=0"
+  fi
 fi
-[[ -n "${IYF_SNOOZED:-}" ]] && snooze_q="${snooze_q}&snoozed=1"
+[[ -n "${IYF_SNOOZED:-}" ]] && daemon_q="${daemon_q}&snoozed=1"
 
-url="file://${alert_file}?cmd=${encoded_cmd}&duration=${duration}&code=${code}&autoclose=${auto_close}&repo=${encoded_repo}${snooze_q}"
+url="file://${alert_file}?cmd=${encoded_cmd}&duration=${duration}&code=${code}&autoclose=${auto_close}&repo=${encoded_repo}${daemon_q}"
 
 app=""
 if [[ -d "/Applications/Google Chrome.app" ]]; then

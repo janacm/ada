@@ -71,6 +71,8 @@ All settings are environment variables. Set them before `iyf.sh` is sourced
 | `IYF_BROWSER_PROFILE` | `~/.iyf-alert-profile` | Directory for the alert's dedicated, throwaway browser profile. The alert runs in its own browser instance (see [How it works](#how-it-works)) so it opens as a maximized window instead of native full-screen; this is where that instance's profile lives. |
 | `IYF_REPO` | _(auto: git repo name)_ | Repo name shown on the alert. Auto-detected as the basename of the command's git repository; set it to override the displayed name, or to empty (`IYF_REPO=""`) to hide the repo badge. A snooze re-launch reuses the value resolved on the first alert. |
 | `IYF_REPO_DIR` | _(where the command ran)_ | Directory whose git repo name is shown. Defaults to the launcher's working directory, which is almost always right; the [Claude Code integration](#claude-code) sets it to the turn's project directory automatically. Ignored when `IYF_REPO` is set. |
+| `IYF_FOCUS_APP` | `__CFBundleIdentifier` | Bundle id to activate when you click the alert. Set to empty to make click-anywhere only dismiss. The Paseo watcher defaults this to `sh.paseo.desktop`. |
+| `IYF_FOCUS_APP_NAME` | _(empty)_ | Optional display name shown in the click hint. The Paseo watcher defaults this to `Paseo`. |
 | `IYF_SKIP_OWN_TERMINAL` | `1` | When `1`, suppress the alert if the terminal that ran the command is the frontmost app when it finishes. Set to `0` to always alert. |
 | `IYF_SKIP_WHEN_ACTIVE` | _(empty)_ | Space-separated apps to also stay silent for when they're frontmost. Each entry matches a frontmost app's bundle id exactly, or its name as a substring. |
 | `IYF_CLAUDE_THRESHOLD` | `45` | Minimum Claude Code *turn* duration, in seconds, to trigger an alert. Only used by the [Claude Code integration](#claude-code). |
@@ -234,11 +236,14 @@ IYF_PASEO_EVENTS="finish permission"
 > desktop app installed at its default location). The watcher finds both
 > automatically.
 
-## Dismissing the alert
+## Returning from the alert
 
-- Click anywhere, or press `Esc`.
+- Click anywhere to bring the originating app forward, when IYF knows its bundle
+  id. Terminal and agent hooks usually inherit this from macOS as
+  `__CFBundleIdentifier`; the Paseo watcher sets it to `sh.paseo.desktop`.
+- Press `Esc` for a plain dismiss without changing focus.
 - It auto-dismisses after `IYF_AUTO_CLOSE` seconds — the progress bar along the
-  bottom shows the time remaining.
+  bottom shows the time remaining. Auto-dismiss is also a plain dismiss.
 - Opening a new alert first closes any previous alert window, so they don't
   stack up.
 
@@ -258,9 +263,11 @@ re-launches a *fresh* alert from the shell side. To bridge the two,
 `iyf-show-alert.sh` spawns a tiny detached `python3` daemon
 (`iyf-snooze-daemon.py`) on an ephemeral **loopback-only** port; the page tells
 it which delay you picked via a local request, the daemon waits, then re-runs
-the launcher. It self-exits when you dismiss normally or after the alert's
-auto-close window, so nothing lingers.
+the launcher. The same daemon also handles click-to-focus without exposing the
+target bundle id in the page URL. It self-exits when you dismiss normally or
+after the alert's auto-close window, so nothing lingers.
 
-Because the daemon is `python3`, snooze is unavailable when `python3` isn't on
-`PATH` — the buttons simply don't render and everything else behaves as before.
-Setting `IYF_SNOOZE_MINUTES=""` also hides them.
+Because the daemon is `python3`, snooze and click-to-focus are unavailable when
+`python3` isn't on `PATH` — the buttons simply don't render, click-anywhere
+becomes a plain dismiss, and everything else behaves as before. Setting
+`IYF_SNOOZE_MINUTES=""` also hides the snooze buttons.
