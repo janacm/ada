@@ -2,7 +2,7 @@
 # =============================================================
 # iyf-show-alert — canonical maximized-window alert launcher
 # -------------------------------------------------------------
-# The browser-launching half of "In Your Face", factored out so
+# The alert-launching half of "In Your Face", factored out so
 # both entry points share one implementation and can't drift:
 #   - iyf.sh             (zsh preexec/precmd terminal hook)
 #   - iyf-claude-hook.sh (Claude Code Stop hook)
@@ -15,6 +15,7 @@
 #   IYF_FOCUS_APP       bundle id to focus on click (default $__CFBundleIdentifier)
 #   IYF_FOCUS_APP_NAME  optional display name for the click hint
 #   IYF_SNOOZED         set by the snooze daemon when re-arming an alert
+#   IYF_NATIVE_ALERT    path to iyf-alert native helper
 # =============================================================
 set -u
 
@@ -35,6 +36,59 @@ focus_app_name=${IYF_FOCUS_APP_NAME:-}
 
 # Where this script lives, so the snooze daemon can be found and re-invoked.
 selfdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+__iyf_find_native_alert() {
+  local p
+  if [[ -n "${IYF_NATIVE_ALERT:-}" ]]; then
+    [[ -x "$IYF_NATIVE_ALERT" ]] && { printf '%s\n' "$IYF_NATIVE_ALERT"; return 0; }
+    return 1
+  fi
+
+  for p in "$selfdir/iyf-alert" \
+           "$selfdir/.build/release/iyf-alert" \
+           "$selfdir/.build/debug/iyf-alert"; do
+    [[ -x "$p" ]] && { printf '%s\n' "$p"; return 0; }
+  done
+  return 1
+}
+
+__iyf_kill_previous_native_alert() {
+  local pid_file pid command_name
+  pid_file=${IYF_NATIVE_PID_FILE:-${TMPDIR:-/tmp}/iyf-alert.pid}
+  [[ -r "$pid_file" ]] || return 0
+  read -r pid < "$pid_file" || return 0
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+
+  command_name=$(ps -p "$pid" -o comm= 2>/dev/null)
+  [[ "${command_name##*/}" == "iyf-alert" ]] || return 0
+
+  kill "$pid" 2>/dev/null || return 0
+  for _ in {1..20}; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.05
+  done
+}
+
+__iyf_kill_legacy_browser_alert() {
+  local profile
+  profile="$HOME/.iyf-alert-profile"
+  # Migration cleanup only: old iyf versions launched a dedicated browser
+  # profile. Native-only iyf never launches this process.
+  pgrep -f "user-data-dir=$profile" >/dev/null 2>&1 || return 0
+  pkill -f "user-data-dir=$profile" 2>/dev/null || return 0
+  for _ in {1..20}; do
+    pgrep -f "user-data-dir=$profile" >/dev/null 2>&1 || break
+    sleep 0.05
+  done
+}
+
+native_alert=$(__iyf_find_native_alert 2>/dev/null || true)
+if [[ -z "$native_alert" ]]; then
+  echo "iyf-show-alert: native helper iyf-alert was not found or executable." >&2
+  echo "  Build it with: swift build -c release --product iyf-alert" >&2
+  exit 1
+fi
 
 # URL-encode the label so query parsing in alert.html stays intact; degrade to
 # the raw string if python3 isn't around.
@@ -63,8 +117,8 @@ encoded_focus_app_name=$(printf '%s' "$focus_app_name" \
 
 # Snooze/focus: a sandboxed file:// page can't outlive its window or activate
 # another app itself, so we spawn a tiny detached daemon that the page signals
-# with a no-cors fetch. Needs python3 — without it the page hides the snooze
-# controls and click-anywhere degrades to plain dismiss.
+# through the native WebKit bridge. Needs python3 — without it the page hides the
+# snooze controls and click-anywhere degrades to plain dismiss.
 sport=""; stoken=""
 needs_daemon=0
 [[ -n "${snooze_minutes// /}" || -n "${focus_app// /}" ]] && needs_daemon=1
@@ -101,60 +155,8 @@ fi
 
 url="file://${alert_file}?cmd=${encoded_cmd}&duration=${duration}&code=${code}&autoclose=${auto_close}&repo=${encoded_repo}${daemon_q}"
 
-app=""
-if [[ -d "/Applications/Google Chrome.app" ]]; then
-  app="Google Chrome"
-elif [[ -d "/Applications/Brave Browser.app" ]]; then
-  app="Brave Browser"
-elif [[ -d "/Applications/Microsoft Edge.app" ]]; then
-  app="Microsoft Edge"
-fi
-
-if [[ -n "$app" ]]; then
-  # A maximized WINDOW, not native fullscreen. The macOS catch: when the browser
-  # is already running, `open --args` silently drops every startup flag, so an
-  # --app window just inherits native fullscreen (its own Space — the visual
-  # movement we're removing) no matter what --window-* / --start-* flags we pass.
-  # The fix is a dedicated, throwaway browser instance (its own --user-data-dir):
-  # that's a fresh process, so the geometry flags DO apply and the alert opens as
-  # an ordinary window in the current Space.
-  profile="${IYF_BROWSER_PROFILE:-$HOME/.iyf-alert-profile}"
-  mkdir -p "$profile" 2>/dev/null
-
-  # Quit any previous alert instance: stops windows stacking AND guarantees this
-  # launch is a genuinely fresh process (a reused instance would ignore the
-  # geometry flags — the whole bug we're sidestepping).
-  pkill -f "user-data-dir=$profile" 2>/dev/null
-  for _ in {1..20}; do pgrep -f "user-data-dir=$profile" >/dev/null 2>&1 || break; sleep 0.05; done
-
-  # Primary display's visible frame (below the menu bar, above the Dock), in the
-  # top-left coordinates --window-position expects. Read straight from AppKit via
-  # JXA — no Accessibility prompt, and correct on a multi-monitor setup.
-  geom=$(osascript -l JavaScript -e 'ObjC.import("AppKit");var p=$.NSScreen.screens.objectAtIndex(0);var f=p.frame,v=p.visibleFrame;[Math.round(v.origin.x),Math.round(f.size.height-(v.origin.y+v.size.height)),Math.round(v.size.width),Math.round(v.size.height)].join(",")' 2>/dev/null)
-  IFS=, read -r wx wy ww wh <<<"$geom"
-
-  args=(--user-data-dir="$profile" --no-first-run --no-default-browser-check --disable-session-crashed-bubble)
-  if [[ -n "$ww" && "$ww" -gt 0 ]]; then
-    args+=(--window-position="${wx},${wy}" --window-size="${ww},${wh}")
-  fi
-  # `open -na` starts the separate instance and brings it frontmost, so the
-  # ordinary in-Space window takes keyboard focus and Esc reaches it.
-  open -na "$app" --args "${args[@]}" --app="$url" &>/dev/null &
-else
-  # Safari fallback: it can't open a Chrome-style --app window, so open a tab and
-  # size it to fill the screen — deliberately NOT native fullscreen (Cmd-Ctrl-F),
-  # which slides the alert to a new Space (the visual movement we're removing).
-  open -a Safari "$url" &>/dev/null &
-  # Finder's desktop bounds are {0,0,w,h} on a single display but the union of
-  # all screens on multi-monitor; only resize when it's anchored at the origin,
-  # otherwise just bring Safari forward as a normal (still non-fullscreen) window.
-  osascript &>/dev/null \
-    -e 'delay 0.5' \
-    -e 'tell application "Safari" to activate' \
-    -e 'tell application "Finder" to set b to bounds of window of desktop' \
-    -e 'if (item 1 of b is 0) and (item 2 of b is 0) then' \
-    -e 'try' \
-    -e 'tell application "Safari" to set bounds of front window to b' \
-    -e 'end try' \
-    -e 'end if' &
-fi
+__iyf_kill_previous_native_alert
+__iyf_kill_legacy_browser_alert
+"$native_alert" "$url" &>/dev/null &
+native_pid=$!
+printf '%s\n' "$native_pid" > "${IYF_NATIVE_PID_FILE:-${TMPDIR:-/tmp}/iyf-alert.pid}" 2>/dev/null || true

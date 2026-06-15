@@ -57,6 +57,7 @@
 #                              LaunchAgent can run it without Full Disk Access
 #                              (default ~/.local/share/iyf; see `install`)
 #   IYF_ALERT_FILE             alert.html path     (default: alongside this script)
+#   IYF_NATIVE_ALERT           path to iyf-alert native helper (via launcher)
 #   IYF_AUTO_CLOSE             auto-dismiss seconds (default 90, via launcher)
 #   IYF_SNOOZE_MINUTES         snooze options       (default "5 10 30 60", via launcher)
 #   IYF_FOCUS_APP              bundle id to focus on click (default sh.paseo.desktop)
@@ -150,8 +151,31 @@ iyf_install() {
       cp "$dir/$f" "$install_dir/$f"
     fi
   done
+
+  local native_alert=""
+  for f in "${IYF_NATIVE_ALERT:-}" "$dir/iyf-alert" \
+           "$dir/.build/release/iyf-alert" "$dir/.build/debug/iyf-alert"; do
+    if [[ -x "$f" ]]; then native_alert="$f"; break; fi
+  done
+  if [[ -z "$native_alert" && -f "$dir/Package.swift" ]] && command -v swift >/dev/null 2>&1; then
+    echo "Building native alert helper..."
+    if (cd "$dir" && swift build -c release --product iyf-alert >/dev/null 2>&1); then
+      native_alert="$dir/.build/release/iyf-alert"
+    else
+      echo "iyf-paseo-watch: native helper build failed." >&2
+    fi
+  fi
+  if [[ -z "$native_alert" ]]; then
+    echo "iyf-paseo-watch: native helper iyf-alert is required." >&2
+    echo "  Build it with: swift build -c release --product iyf-alert" >&2
+    return 1
+  fi
+  if [[ -n "$native_alert" ]] && ! [[ "$native_alert" -ef "$install_dir/iyf-alert" ]]; then
+    cp "$native_alert" "$install_dir/iyf-alert"
+  fi
+
   chmod +x "$install_dir/iyf-paseo-watch.sh" "$install_dir/iyf-paseo-watch.py" \
-           "$install_dir/iyf-show-alert.sh" 2>/dev/null
+           "$install_dir/iyf-show-alert.sh" "$install_dir/iyf-alert" 2>/dev/null
   local script="$install_dir/iyf-paseo-watch.sh"
   if [[ ! -f "$install_dir/iyf-paseo-watch.py" || ! -f "$install_dir/iyf-show-alert.sh" ]]; then
     echo "iyf-paseo-watch: couldn't stage the runtime into $install_dir" >&2

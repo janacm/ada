@@ -316,6 +316,12 @@
   function signal(path) {
     if (!daemonEnabled) return;
     try {
+      if (window.webkit?.messageHandlers?.iyfSignal) {
+        window.webkit.messageHandlers.iyfSignal.postMessage(path);
+        return;
+      }
+    } catch (e) {}
+    try {
       fetch(`http://127.0.0.1:${sport}/${stoken}/${path}`, {
         method: 'GET', mode: 'no-cors', keepalive: true,
       }).catch(() => {});
@@ -325,7 +331,7 @@
   let dismissed = false;
   let decided = false; // a snooze was chosen — don't also fire a dismiss
   function closeWindow() {
-    // Chrome/Brave/Edge --app windows (and script-opened Safari windows) self-close here.
+    // The native helper replaces window.close() with a WebKit message bridge.
     // Never navigate to dismiss: window.open('','_self') blanks the page to about:blank.
     window.close();
     // Fallback if the OS denies the close: drop to the background so the terminal

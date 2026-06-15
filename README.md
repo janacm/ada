@@ -5,7 +5,7 @@ finishes, so you can switch away from the terminal and get yanked back the momen
 your build / test / deploy is done.
 
 When a terminal command, Claude Code turn, Codex turn, or Paseo agent turn runs
-longer than a threshold, `iyf` opens a maximized browser window showing the
+longer than a threshold, `iyf` opens a maximized alert window showing the
 command or prompt, the git repo it ran in, how long it took, and its exit status
 (green for success, red for failure). Click anywhere or press `Esc` to dismiss;
 it also auto-closes after a configurable timeout. Not ready to deal with it yet?
@@ -30,37 +30,65 @@ cross-system contracts change.
 - `precmd` runs after the command returns, measures elapsed time, and captures
   the exit code.
 - If the command took longer than `IYF_THRESHOLD` seconds and isn't in the
-  ignore list, it opens `alert.html` in a maximized window.
+  ignore list, it opens the shared alert in a maximized window.
 
-The alert is a local HTML file opened as a Chrome / Brave / Edge `--app` window
-(falling back to Safari if none are installed). The command, repo name,
-duration, exit code, and auto-close timeout are passed as URL query params. The
-repo name is the basename of the command's git repository (`git rev-parse
---show-toplevel`); outside a git repo it's omitted and the badge is hidden.
+The renderer is the native SwiftPM helper, `iyf-alert`, which opens `alert.html`
+in a small AppKit / WebKit window. The command, repo name, duration, exit code,
+and auto-close timeout are passed as URL query params. The repo name is the
+basename of the command's git repository (`git rev-parse --show-toplevel`);
+outside a git repo it's omitted and the badge is hidden.
 
-To make the alert a **maximized window in your current Space** — rather than a
-macOS *native full-screen* window on its own Space, which animates in/out and
-steals keyboard focus — it's launched in a dedicated, throwaway browser instance
-with its own `--user-data-dir`. This is necessary because an already-running
-browser silently ignores window-geometry flags passed to a new `--app` window,
-so a separate instance is the only way to reliably size the alert. The window is
-sized to the primary display's visible area (below the menu bar), and the
-instance quits the moment the alert is dismissed.
+The native helper sizes the alert to the primary display's visible area (below
+the menu bar and above the Dock), activates it in the current Space, and exits
+when the alert is dismissed. It is used automatically when `iyf-alert` is built
+beside the scripts or via SwiftPM's `.build` output.
+
+There is no browser fallback. If `iyf-alert` is missing or not executable, the
+launcher exits with an error instead of opening Chrome, Brave, Edge, or Safari.
 
 ## Install
 
-Clone the repo to `~/.iyf` and source it from your `~/.zshrc`:
+Clone the repo and run the installer:
 
 ```sh
 git clone <repo-url> ~/.iyf
+~/.iyf/iyf-install.sh
+```
+
+The installer builds the native renderer when needed, then shows an interactive
+selector for the integrations you want:
+
+- **Terminal commands** — adds a managed `iyf` block to `~/.zshrc`.
+- **Claude Code** — merges `UserPromptSubmit` and `Stop` hooks into
+  `~/.claude/settings.json`.
+- **Codex** — merges `UserPromptSubmit` and `Stop` hooks into
+  `~/.codex/hooks.json`.
+- **Paseo** — stages and loads the LaunchAgent watcher.
+
+It detects which targets exist, preserves existing hook config, writes timestamped
+backups before JSON edits, and can be re-run to change the selected integrations.
+Then open a new shell (or run `source ~/.zshrc`).
+
+For a scriptable install, pass a comma-separated list:
+
+```sh
+~/.iyf/iyf-install.sh --agents terminal,claude,codex
+~/.iyf/iyf-install.sh --agents all --no-test
+~/.iyf/iyf-install.sh --list
+```
+
+Manual setup still works if you only want the shell hook:
+
+```sh
+cd ~/.iyf
+swift build -c release --product iyf-alert
 echo 'source ~/.iyf/iyf.sh' >> ~/.zshrc
 ```
 
-Then open a new shell (or run `source ~/.zshrc`).
-
-Requires **zsh** on **macOS**. `python3` is used to URL-encode the command and
-to power the [snooze](#snoozing-the-alert) buttons; without it the alert still
-works, just minus snooze.
+Requires **zsh** on **macOS**. SwiftPM is used only to build the native helper;
+without a built helper the alert launcher fails closed. `python3` is used to
+URL-encode the command and to power the [snooze](#snoozing-the-alert) buttons;
+without it the alert still works, just minus snooze.
 
 ## Configuration
 
@@ -73,7 +101,7 @@ All settings are environment variables. Set them before `iyf.sh` is sourced
 | `IYF_AUTO_CLOSE` | `90` | Seconds the alert stays up before auto-dismissing. Unset or non-positive falls back to 90. |
 | `IYF_IGNORE_CMDS` | interactive tools (see below) | Space-separated list of command names to never alert on. Matched against the command's basename. |
 | `IYF_ALERT_FILE` | `~/.iyf/alert.html` | Path to the alert HTML page. |
-| `IYF_BROWSER_PROFILE` | `~/.iyf-alert-profile` | Directory for the alert's dedicated, throwaway browser profile. The alert runs in its own browser instance (see [How it works](#how-it-works)) so it opens as a maximized window instead of native full-screen; this is where that instance's profile lives. |
+| `IYF_NATIVE_ALERT` | _(auto)_ | Path to a specific `iyf-alert` executable. Defaults to `iyf-alert`, `.build/release/iyf-alert`, or `.build/debug/iyf-alert` beside `iyf-show-alert.sh`. |
 | `IYF_REPO` | _(auto: git repo name)_ | Repo name shown on the alert. Auto-detected as the basename of the command's git repository; set it to override the displayed name, or to empty (`IYF_REPO=""`) to hide the repo badge. A snooze re-launch reuses the value resolved on the first alert. |
 | `IYF_REPO_DIR` | _(where the command ran)_ | Directory whose git repo name is shown. Defaults to the launcher's working directory, which is almost always right; the [Claude/Codex hook integration](#claude-code-and-codex) sets it to the turn's project directory automatically. Ignored when `IYF_REPO` is set. |
 | `IYF_FOCUS_APP` | `__CFBundleIdentifier` | Bundle id to activate when you click the alert. Set to empty to make click-anywhere only dismiss. The Paseo watcher defaults this to `sh.paseo.desktop`. |
@@ -150,8 +178,14 @@ No zsh sourcing required — it's driven by two agent hooks pointing at
   than `IYF_CLAUDE_THRESHOLD` seconds (default `45`) and you're not already
   looking at the terminal the agent is running in.
 
-Add this to `~/.claude/settings.json` (merge into any existing `hooks`), pointing
-at wherever you cloned the repo:
+The installer can wire this for you:
+
+```sh
+~/.iyf/iyf-install.sh --agents claude,codex
+```
+
+For manual Claude Code setup, add this to `~/.claude/settings.json` (merge into
+any existing `hooks`), pointing at wherever you cloned the repo:
 
 ```json
 {
@@ -166,10 +200,11 @@ at wherever you cloned the repo:
 }
 ```
 
-For Codex, wire the same script to the equivalent `UserPromptSubmit` and `Stop`
-hook events. The script accepts the same JSON payload shape; if Codex sends a
-`Stop` event with a different or missing `session_id`, it falls back to the most
-recent start stamp that is still younger than `IYF_CLAUDE_STALE_MAX`.
+For manual Codex setup, wire the same script to the equivalent
+`UserPromptSubmit` and `Stop` hook events in `~/.codex/hooks.json`. The script
+accepts the same JSON payload shape; if Codex sends a `Stop` event with a
+different or missing `session_id`, it falls back to the most recent start stamp
+that is still younger than `IYF_CLAUDE_STALE_MAX`.
 
 Tune the trigger independently of the terminal threshold with
 `IYF_CLAUDE_THRESHOLD`. The own-terminal / `IYF_SKIP_WHEN_ACTIVE` silencing
@@ -212,12 +247,14 @@ install-once, like sourcing `iyf.sh`:
 ~/.iyf/iyf-paseo-watch.sh uninstall   # unload + remove it
 ```
 
-`install` copies the few files it needs into `~/.local/share/iyf` and points the
-LaunchAgent there. This matters: a launchd job runs **without your Full Disk
-Access**, so it can't execute scripts from TCC-protected folders like
-`~/Documents` — and `~/.iyf` is often a symlink into exactly that. Running from a
-staged, non-TCC copy sidesteps the `Operation not permitted` failure entirely.
-Override the location with `IYF_PASEO_INSTALL_DIR`.
+`install` copies the few files it needs into `~/.local/share/iyf`, builds and
+stages the required `iyf-alert` helper when needed, and points the LaunchAgent
+there. If it cannot stage `iyf-alert`, installation fails. This matters: a
+launchd job runs **without your Full Disk Access**, so it can't execute scripts
+from TCC-protected folders like `~/Documents` — and `~/.iyf` is often a symlink
+into exactly that. Running from a staged, non-TCC copy sidesteps the `Operation
+not permitted` failure entirely. Override the location with
+`IYF_PASEO_INSTALL_DIR`.
 
 Or run it in the foreground to try it out (Ctrl-C to stop), and fire a one-off
 sample alert to confirm the visuals:
@@ -268,10 +305,9 @@ the *same* alert (same command, duration, exit code) pops back up after the
 delay, labelled as a snoozed reminder. You can snooze a reminder again.
 
 Why it needs a helper: the alert is a sandboxed `file://` page, and once its
-window closes its JavaScript is gone — and browsers won't let a background page
-bring itself forward or steal focus on a timer, so a pure in-page timer
-couldn't yank you back the way the original alert does. So picking a snooze
-re-launches a *fresh* alert from the shell side. To bridge the two,
+window closes its JavaScript is gone. A pure in-page timer cannot relaunch the
+alert later or bring another app forward, so picking a snooze re-launches a
+*fresh* alert from the shell side. To bridge the page and launcher,
 `iyf-show-alert.sh` spawns a tiny detached `python3` daemon
 (`iyf-snooze-daemon.py`) on an ephemeral **loopback-only** port; the page tells
 it which delay you picked via a local request, the daemon waits, then re-runs

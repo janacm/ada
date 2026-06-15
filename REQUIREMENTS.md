@@ -14,6 +14,35 @@ removed.
   implementation detail, but it must capture externally visible behavior and
   cross-system contracts.
 
+## Onboarding Installer
+
+- `iyf-install.sh` must provide the coworker-ready onboarding entry point for
+  choosing which integrations trigger IYF.
+- The installer must offer an interactive terminal selector when run from a TTY
+  and a scriptable `--agents` path for non-interactive install flows.
+- The selector must include Terminal commands, Claude Code, Codex, and Paseo as
+  independently selectable integrations.
+- The shared alert runtime files, including the native `iyf-alert` helper, must
+  be treated as always included; the selector controls integration wiring, not
+  whether the launcher exists.
+- The installer must build or validate the native `iyf-alert` helper before it
+  installs integrations or fires a sample alert.
+- The installer must detect whether each integration target is available before
+  selecting or installing it.
+- The installer must be idempotent: re-running it must update existing managed
+  IYF wiring without duplicating shell source blocks or hook entries.
+- Shell setup must use a clearly marked managed block in `~/.zshrc`.
+- Claude Code setup must merge `UserPromptSubmit` and `Stop` hooks into
+  `~/.claude/settings.json` without removing unrelated hooks.
+- Codex setup must merge `UserPromptSubmit` and `Stop` hooks into
+  `~/.codex/hooks.json` without removing unrelated hooks.
+- JSON hook setup must write a timestamped backup before changing an existing
+  settings file.
+- Paseo setup through the installer must delegate to `iyf-paseo-watch.sh install`
+  so the LaunchAgent staging behavior stays centralized.
+- The installer must support `--list`, `--dry-run`, and `--no-test` for
+  validation, documentation, and automation.
+
 ## Terminal Command Alerts
 
 - `iyf.sh` must register zsh `preexec` and `precmd` hooks.
@@ -50,22 +79,28 @@ removed.
   to bring a source app forward and show a human-readable hint.
 - Pressing `Esc`, clicking for a plain dismiss, or auto-close must dismiss the
   alert without requiring a snooze.
-- Opening a new alert must close any previous dedicated alert browser instance
-  so alert windows do not stack.
+- Opening a new alert in native mode must close any previous native alert helper
+  process so alert windows do not stack.
 
-## Browser Window Behavior
+## Native Window Behavior
 
-- Chrome, Brave, and Edge alerts must open as browser `--app` windows when one
-  of those browsers is installed.
+- The SwiftPM package must expose an `iyf-alert` executable product.
+- The launcher must use the native `iyf-alert` helper when it is executable at
+  `IYF_NATIVE_ALERT`, beside `iyf-show-alert.sh`, or in the SwiftPM
+  `.build/release` or `.build/debug` output beside the launcher.
+- The launcher must fail closed when `iyf-alert` is missing or not executable;
+  it must not open Chrome, Brave, Edge, Safari, or any other browser as a
+  fallback.
+- The native helper must render the configured `IYF_ALERT_FILE` URL in a WebKit
+  view without opening Chrome, Brave, Edge, or Safari.
 - The alert must be an ordinary maximized window in the current Space, not a
   macOS native full-screen window in a new Space.
-- The launcher must use a dedicated browser profile directory
-  (`IYF_BROWSER_PROFILE`, default `~/.iyf-alert-profile`) so startup geometry
-  flags are honored by a fresh browser process.
-- The alert window geometry must be based on the primary display's visible
+- The native alert window geometry must be based on the primary display's visible
   frame, below the menu bar and above the Dock.
-- On Safari fallback, the alert may open as a normal browser window or tab, but
-  it must not intentionally enter native full-screen mode.
+- Pressing `Esc`, clicking, auto-close, and snooze must close the native helper
+  process instead of relying on browser `window.close()` behavior.
+- The native WebKit renderer must bridge snooze/focus requests to the existing
+  loopback daemon so snooze and click-to-focus behavior remains available.
 
 ## Snooze And Focus
 
@@ -139,6 +174,10 @@ removed.
 - The staged runtime must include `iyf-paseo-watch.sh`,
   `iyf-paseo-watch.py`, `iyf-show-alert.sh`, `iyf-snooze-daemon.py`, and
   `alert.html`.
+- `iyf-paseo-watch.sh install` must stage a native helper executable. If
+  `iyf-alert` is not already built, it may build it with SwiftPM when the source
+  checkout contains `Package.swift`; if it cannot stage the helper, install must
+  fail instead of relying on a browser fallback.
 - The LaunchAgent must run from the staged path so it does not fail when the
   live checkout is under `~/Documents`, `~/Desktop`, `~/Downloads`, or a symlink
   into those TCC-protected locations.
@@ -161,14 +200,18 @@ removed.
   and snooze/focus support.
 - The base terminal alert must still work without `python3`, but URL encoding,
   snooze, and click-to-focus may degrade.
+- SwiftPM is required to build the native `iyf-alert` helper.
+- A browser is not a runtime dependency. Missing Chrome, Brave, Edge, or Safari
+  must not affect `iyf` when the native helper is built.
 - `paseo` is required only for the Paseo watcher and may be found on `PATH`,
   under `~/.local/bin`, or in the Paseo application bundle.
-- Browser preference order must remain Chrome, Brave, Edge, then Safari fallback.
 
 ## Documentation Requirements
 
 - `README.md` must explain user-facing installation, configuration, integrations,
   and behavior.
+- `README.md` must document the installer selector as the primary onboarding
+  path and keep manual hook examples available for troubleshooting.
 - `CLAUDE.md` and `AGENTS.md` must explain architectural gotchas, validation
   methods, and known dead ends for maintainer agents.
 - This file must be updated when a durable requirement changes, even if the
@@ -178,6 +221,11 @@ removed.
 
 ## Change Log
 
+- 2026-06-15: Added the onboarding installer requirement: users can select
+  Terminal, Claude Code, Codex, and Paseo integrations through
+  `iyf-install.sh`, with scriptable and dry-run modes.
+- 2026-06-15: Made native SwiftPM `iyf-alert` the only alert renderer; removed
+  all browser fallback requirements.
 - 2026-06-15: Added the initial requirements baseline. No implementation commits
   were present after the previous docs-automation boundary; this captures the
   current shipped behavior so future docs runs have a requirements record to

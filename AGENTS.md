@@ -2,38 +2,40 @@
 
 A maximized-window alert that pops when a long terminal command / Claude Code
 or Codex turn / Paseo agent turn finishes. The alert is an HTML page
-(`alert.html`) opened by `iyf-show-alert.sh` as a Chrome/Brave/Edge `--app`
-window (Safari fallback). Entry points all call the shared launcher
-`iyf-show-alert.sh`: `iyf.sh` (zsh hook), `iyf-claude-hook.sh` (shared Claude
-Code / Codex hook), and
-`iyf-paseo-watch.sh` → `iyf-paseo-watch.py` (a launchd watcher that polls the
-Paseo daemon — see [The Paseo watcher](#the-paseo-watcher-launchd-cant-run-from-tcc-protected-paths)).
+(`alert.html`) rendered only by the native SwiftPM helper `iyf-alert`. Entry
+points all call the shared launcher `iyf-show-alert.sh`: `iyf.sh` (zsh hook),
+`iyf-claude-hook.sh` (shared Claude Code / Codex hook), and
+`iyf-paseo-watch.sh` -> `iyf-paseo-watch.py` (a launchd watcher that polls the
+Paseo daemon; see [The Paseo watcher](#the-paseo-watcher-launchd-cant-run-from-tcc-protected-paths)).
 
 Docs of record are `README.md` for user-facing behavior, `REQUIREMENTS.md` for
 durable product/integration requirements, and this file plus `CLAUDE.md` for
 maintainer-agent guidance. Update `REQUIREMENTS.md` whenever a requirement
 changes, even if the implementation diff is small.
 
-## The #1 architectural gotcha: an already-running browser drops `--args`
+## Onboarding installer
 
-When the browser is **already running**, `open -a "Google Chrome" --args <flags>`
-**silently discards every startup flag** — `--start-fullscreen`,
-`--start-maximized`, `--window-size`, `--window-position`. The new `--app` window
-just inherits whatever state macOS gives it (here: native full-screen). So you
-**cannot** size or position the alert with flags passed to the user's main
-browser instance. This is why swapping `--start-fullscreen`→`--start-maximized`
-did nothing.
+`iyf-install.sh` is the coworker-facing onboarding entry point. It presents a
+terminal selector for the integrations that should trigger IYF: Terminal
+commands, Claude Code, Codex, and Paseo. Keep it idempotent: shell setup uses a
+managed block in `~/.zshrc`; Claude/Codex setup must merge JSON hooks without
+removing unrelated hooks; Paseo setup must delegate to `iyf-paseo-watch.sh
+install` so LaunchAgent staging stays centralized. The installer must build or
+validate `iyf-alert` because there is no browser fallback. Preserve the
+scriptable `--agents`, `--list`, `--dry-run`, and `--no-test` paths because
+those are the future curl/Homebrew automation surface.
 
-**The fix (current design):** launch the alert in a **dedicated, throwaway
-browser instance** with its own `--user-data-dir` (default `~/.iyf-alert-profile`,
-override `IYF_BROWSER_PROFILE`). A *fresh process* honors the geometry flags, so
-the alert opens as an ordinary maximized window in the current Space (no
-Space-slide animation, focus lands correctly). A previous alert instance is
-`pkill`ed first so windows don't stack and every launch is a fresh process.
+## Native helper is the only renderer
 
-**Debugging consequence:** the dedicated instance is **invisible to**
-`tell application "Google Chrome" ...` AppleScript (that targets the user's main
-instance). Use **PID-based** tools to inspect it (see below).
+`iyf-alert` is a SwiftPM executable that opens `alert.html` in an AppKit/WebKit
+window sized to the primary display's `visibleFrame`. The launcher looks for
+`IYF_NATIVE_ALERT`, then `iyf-alert`, `.build/release/iyf-alert`, and
+`.build/debug/iyf-alert` beside `iyf-show-alert.sh`.
+
+There is intentionally **no browser fallback**. If the native helper is missing
+or not executable, `iyf-show-alert.sh` exits with an error rather than opening
+Chrome, Brave, Edge, Safari, or any other browser. Do not reintroduce browser
+fallbacks when working on alert rendering.
 
 ## The Paseo watcher: launchd can't run from TCC-protected paths
 
@@ -64,9 +66,11 @@ not). This asymmetry is the tell.
 
 **The fix (current design):** `iyf-paseo-watch.sh install` **stages** the runtime
 it needs (`iyf-paseo-watch.sh`, `iyf-paseo-watch.py`, `iyf-show-alert.sh`,
-`iyf-snooze-daemon.py`, `alert.html`) into a non-TCC dir — `~/.local/share/iyf`
-(override `IYF_PASEO_INSTALL_DIR`) — and points the plist there. Re-run `install`
-after editing any of those scripts to re-stage. The env file lives alongside:
+`iyf-snooze-daemon.py`, `alert.html`, and `iyf-alert`) into a non-TCC dir —
+`~/.local/share/iyf` (override `IYF_PASEO_INSTALL_DIR`) — and points the plist
+there. The installer builds `iyf-alert` with SwiftPM when needed and fails if it
+cannot stage the helper. Re-run `install` after editing any of those scripts or
+rebuilding the helper to re-stage. The env file lives alongside:
 `~/.local/share/iyf/paseo-watch.env`.
 
 **Debugging:**
@@ -85,68 +89,27 @@ Plus `✅/❌ plist` and `✅ log clean` / `⚠️ log has output`.
 
 ## How to validate windowed-vs-fullscreen
 
-Two **verified** methods (ranked). The discriminator either way: a normal macOS
-window cannot sit under the menu bar, so the alert covering the menu bar /
-reporting `display-mode: fullscreen` = fullscreen; sitting below it = windowed.
+First verify that `swift build --product iyf-alert` succeeds and that a test
+launch uses `iyf-alert`, not Chrome:
+```bash
+IYF_AUTO_CLOSE=5 IYF_SNOOZE_MINUTES="" ~/.iyf/iyf-show-alert.sh "validate native" "1s" 0
+pgrep -fl iyf-alert
+pgrep -fl "Google Chrome.*iyf"  # should be empty
+```
 
-1. **Ask the user to look** — fastest and definitive. "Run `iyf test`: is there a
-   *'press and hold esc to exit full screen'* banner, and is the menu bar
-   visible?" Banner present / menu bar hidden = fullscreen. (You can't reliably
-   screenshot it yourself — see dead-ends.)
+For visual geometry, the discriminator is: a normal macOS window cannot sit
+under the menu bar, so the alert covering the menu bar is fullscreen; sitting
+below it is windowed.
 
-2. **Page-reported display-mode via a one-shot local listener** — the verified
-   programmatic check. The alert runs in a *separate* browser instance you can't
-   read JS state out of, so a diagnostic page (swapped in via `IYF_ALERT_FILE`)
-   `fetch`es its own `display-mode` to a tiny local HTTP listener:
-   ```bash
-   cd /tmp; PORT=47125; rm -f /tmp/iyf-probe-result
-   python3 - "$PORT" <<'PY' &
-   import http.server, sys
-   class H(http.server.BaseHTTPRequestHandler):
-       def do_GET(self): open('/tmp/iyf-probe-result','w').write(self.path); self.send_response(204); self.end_headers()
-       def log_message(self,*a): pass
-   s=http.server.HTTPServer(("127.0.0.1",int(sys.argv[1])),H); s.timeout=40; s.handle_request()
-   PY
-   L=$!
-   cat > /tmp/iyf-diag.html <<HTML
-   <!DOCTYPE html><html><head><title>Command Finished</title></head><body>
-   <script>
-   var dm=matchMedia('(display-mode: fullscreen)').matches?'FULLSCREEN'
-     :(matchMedia('(display-mode: standalone)').matches?'standalone-window':'browser');
-   fetch('http://127.0.0.1:${PORT}/r?dm='+dm+'&outH='+outerHeight,{mode:'no-cors'}).catch(function(){});
-   </script></body></html>
-   HTML
-   IYF_ALERT_FILE=/tmp/iyf-diag.html IYF_AUTO_CLOSE=20 IYF_SNOOZE_MINUTES="" \
-     ~/.iyf/iyf-show-alert.sh "validate" "1s" 0
-   for i in $(seq 1 60); do [ -s /tmp/iyf-probe-result ] && break; sleep 0.5; done
-   cat /tmp/iyf-probe-result   # dm=standalone-window & outH<screenH => maximized ✓ ; dm=FULLSCREEN => ✗
-   pkill -f "user-data-dir=$HOME/.iyf-alert-profile"; kill $L 2>/dev/null
-   ```
-   Caveat: a **brand-new** `~/.iyf-alert-profile` is slow on first launch (profile
-   init) and can miss the probe window — warm it with one throwaway launch first.
-
-CGWindowList-by-PID geometry *sounds* cleaner (permission-free, no temp page) but
-is **not reliable here**: JXA's CoreGraphics binding returns garbage
-(`ObjC.deepUnwrap(CGWindowListCopyWindowInfo(...))` isn't an array) and the system
-`python3` has no `Quartz` module. Only pursue it after `pip install
-pyobjc-framework-Quartz`, then filter `CGWindowListCopyWindowInfo` by
-`kCGWindowOwnerPID` + `kCGWindowLayer==0` and treat `bounds.Y > 0` as windowed.
+Ask the user to look: "Run `iyf test`: is there a *'press and hold esc to exit
+full screen'* banner, and is the menu bar visible?" Banner present / menu bar
+hidden = fullscreen. Menu bar visible = windowed.
 
 ## Dead-ends — don't waste time here
 
-- **AppleScript Chrome window `mode`** is `"normal"` vs `"incognito"` — it has
-  **nothing to do with fullscreen.** Do not use it to check fullscreen.
-- **AppleScript `bounds`** is ambiguous: fullscreen *and* maximized both report a
-  ~full-screen rect; only the **y-origin** (0 vs menu-bar height) disambiguates.
-  And `set bounds` on a native-fullscreen window fails (`-1728`, handle
-  invalidated) — that failure itself confirms native fullscreen.
 - **`screencapture` CLI** and **System Events `AXFullScreen`** need permissions
   the terminal usually lacks (Screen Recording / Accessibility) and fail with
   *"could not create image from display"* / *"not allowed assistive access"*.
-  (CGWindowList geometry is permission-free, but its JXA binding is unreliable —
-  see the validation section.)
-- **`osascript -l JavaScript ... $.NSScreen`** throws *"undefined is not an
-  object"* without `ObjC.import('AppKit')`.
 
 ## Testing the launcher safely
 
@@ -154,8 +117,6 @@ pyobjc-framework-Quartz`, then filter `CGWindowListCopyWindowInfo` by
   `IYF_AUTO_CLOSE=20 IYF_SNOOZE_MINUTES="" ~/.iyf/iyf-show-alert.sh "cmd" "1s" 0`
 - `IYF_SNOOZE_MINUTES=""` skips spawning the snooze daemon during tests.
 - `IYF_ALERT_FILE=/path/diag.html` swaps in a probe page.
-- Between runs, kill the dedicated instance:
-  `pkill -f "user-data-dir=$HOME/.iyf-alert-profile"`.
 - The shell hook execs `~/.iyf/iyf-show-alert.sh` **fresh each time**, so edits to
   the launcher take effect on the next alert **without re-sourcing**. Re-sourcing
   `iyf.sh` only matters for changes to the hook logic in `iyf.sh` itself.
@@ -165,7 +126,6 @@ pyobjc-framework-Quartz`, then filter `CGWindowListCopyWindowInfo` by
 ## Window geometry
 
 Size = the **primary** display's `visibleFrame` (below the menu bar, above the
-Dock), converted to the top-left coordinates `--window-position` expects. Read it
-via JXA `NSScreen.screens[0]` — **not** Finder's `bounds of window of desktop`,
-which returns the **union of all displays** on a multi-monitor setup and would
-span every monitor.
+Dock), read in the native helper with `NSScreen.main ?? NSScreen.screens.first`.
+Do not use Finder's `bounds of window of desktop`, which returns the **union of
+all displays** on a multi-monitor setup and would span every monitor.

@@ -23,6 +23,7 @@
 # Environment knobs (shared with iyf.sh where noted):
 #   IYF_CLAUDE_THRESHOLD  min turn seconds to alert   (default 45)
 #   IYF_ALERT_FILE        alert.html path             (default ~/.iyf/alert.html)
+#   IYF_NATIVE_ALERT      path to iyf-alert helper    (default auto, via launcher)
 #   IYF_AUTO_CLOSE        auto-dismiss seconds        (default 90)
 #   IYF_SKIP_OWN_TERMINAL silence when terminal is frontmost (default 1)
 #   IYF_SKIP_WHEN_ACTIVE  extra frontmost apps to stay silent for
