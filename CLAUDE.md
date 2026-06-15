@@ -9,6 +9,11 @@ Code / Codex hook), and
 `iyf-paseo-watch.sh` → `iyf-paseo-watch.py` (a launchd watcher that polls the
 Paseo daemon — see [The Paseo watcher](#the-paseo-watcher-launchd-cant-run-from-tcc-protected-paths)).
 
+Docs of record are `README.md` for user-facing behavior, `REQUIREMENTS.md` for
+durable product/integration requirements, and this file plus `AGENTS.md` for
+maintainer-agent guidance. Update `REQUIREMENTS.md` whenever a requirement
+changes, even if the implementation diff is small.
+
 ## The #1 architectural gotcha: an already-running browser drops `--args`
 
 When the browser is **already running**, `open -a "Google Chrome" --args <flags>`

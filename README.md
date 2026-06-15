@@ -18,6 +18,10 @@ the output is right in front of you and the alert is just noise — so by defaul
 `iyf` stays silent in that case (see
 [Staying silent while you're at the terminal](#staying-silent-while-youre-at-the-terminal)).
 
+Durable product and integration requirements are tracked in
+[REQUIREMENTS.md](REQUIREMENTS.md). Update that file whenever behavior or
+cross-system contracts change.
+
 ## How it works
 
 `iyf.sh` registers zsh `preexec` / `precmd` hooks:
