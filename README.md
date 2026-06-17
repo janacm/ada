@@ -1,4 +1,6 @@
-# In Your Face for Terminal
+# iyf
+
+Developer alerts for long-running terminal commands and coding-agent turns.
 
 A maximized-window alert that pops up when a long-running terminal command
 finishes, so you can switch away from the terminal and get yanked back the moment
@@ -21,6 +23,20 @@ the output is right in front of you and the alert is just noise — so by defaul
 Durable product and integration requirements are tracked in
 [REQUIREMENTS.md](REQUIREMENTS.md). Update that file whenever behavior or
 cross-system contracts change.
+
+## Open Source
+
+`iyf` is open source under the [MIT License](LICENSE). The core utility is
+local-first: it does not send telemetry, prompts, command labels, repository
+names, or local paths to a remote service.
+
+The installer can modify shell startup files, Claude Code hooks, Codex hooks,
+and LaunchAgent state when you opt into those integrations. It preserves
+unrelated hook config, writes timestamped backups before JSON edits, and exposes
+`--dry-run` / `--list` paths so changes are auditable before install.
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Please report
+security issues privately; see [SECURITY.md](SECURITY.md).
 
 ## How it works
 
@@ -51,7 +67,7 @@ launcher exits with an error instead of opening Chrome, Brave, Edge, or Safari.
 Clone the repo and run the installer:
 
 ```sh
-git clone <repo-url> ~/.iyf
+git clone https://github.com/janacm/iyf.git ~/.iyf
 ~/.iyf/iyf-install.sh
 ```
 

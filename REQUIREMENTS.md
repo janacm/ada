@@ -7,12 +7,28 @@ removed.
 ## Baseline
 
 - `iyf` must run on macOS from a zsh shell hook for terminal command alerts.
+- `iyf` must be distributed as open source under the MIT License.
 - The user-facing documentation of record is `README.md`.
 - Maintainer/debugging documentation is duplicated in `CLAUDE.md` and
   `AGENTS.md`; keep those files aligned when changing maintainer guidance.
 - This file tracks durable behavior requirements. It should not duplicate every
   implementation detail, but it must capture externally visible behavior and
   cross-system contracts.
+
+## Open Source Distribution
+
+- The repository must include `LICENSE` with the MIT License text.
+- `README.md` must link to the license, contribution guide, and security policy.
+- `CONTRIBUTING.md` must document the basic development setup, validation
+  commands, docs requirements, and security-sensitive contribution boundaries.
+- `SECURITY.md` must explain how to report vulnerabilities privately and call
+  out the security-sensitive local surfaces: shell startup, agent hooks,
+  LaunchAgents, prompt or command capture, loopback control, and file staging.
+- The public documentation must state that the core utility is local-first and
+  does not send telemetry, prompts, command labels, repository names, or local
+  paths to a remote service.
+- Open-source distribution must not require publishing generated SwiftPM build
+  output or local machine configuration.
 
 ## Onboarding Installer
 
@@ -221,6 +237,8 @@ removed.
 
 ## Change Log
 
+- 2026-06-17: Added open-source distribution requirements: MIT license,
+  contribution guide, security policy, and local-first public documentation.
 - 2026-06-15: Added the onboarding installer requirement: users can select
   Terminal, Claude Code, Codex, and Paseo integrations through
   `iyf-install.sh`, with scriptable and dry-run modes.

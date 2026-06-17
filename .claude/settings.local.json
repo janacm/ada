@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(git -C /Users/janac/Documents/GitHub/iyf log --oneline -5)",
-      "Bash(git -C /Users/janac/Documents/GitHub/iyf status --short)"
-    ]
-  }
-}
