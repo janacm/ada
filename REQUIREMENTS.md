@@ -103,6 +103,14 @@ removed.
 ## Native Window Behavior
 
 - The SwiftPM package must expose an `iyf-alert` executable product.
+- The SwiftPM package must expose an optional `iyf-menubar` executable product
+  that runs as a native macOS menu bar status item.
+- The menu bar helper must not be an alert renderer or a replacement for the
+  terminal, Claude/Codex, or Paseo integrations; it may provide convenience
+  actions such as firing a sample alert and opening the IYF folder.
+- The menu bar helper must trigger alerts through `iyf-show-alert.sh` so it
+  shares the same native-only rendering path and configuration as every other
+  entry point.
 - The launcher must use the native `iyf-alert` helper when it is executable at
   `IYF_NATIVE_ALERT`, beside `iyf-show-alert.sh`, or in the SwiftPM
   `.build/release` or `.build/debug` output beside the launcher.
@@ -241,6 +249,8 @@ removed.
 
 - 2026-06-17: Added open-source distribution requirements: MIT license,
   contribution guide, security policy, and local-first public documentation.
+- 2026-06-17: Added an optional native SwiftPM `iyf-menubar` status item for
+  convenience actions without changing the canonical alert launcher.
 - 2026-06-15: Added the onboarding installer requirement: users can select
   Terminal, Claude Code, Codex, and Paseo integrations through
   `iyf-install.sh`, with scriptable and dry-run modes.

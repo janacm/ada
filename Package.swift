@@ -9,6 +9,7 @@ let package = Package(
     ],
     products: [
         .executable(name: "iyf-alert", targets: ["IYFAlert"]),
+        .executable(name: "iyf-menubar", targets: ["IYFMenuBar"]),
     ],
     targets: [
         .target(name: "IYFAlertCore"),
@@ -16,6 +17,7 @@ let package = Package(
             name: "IYFAlert",
             dependencies: ["IYFAlertCore"]
         ),
+        .executableTarget(name: "IYFMenuBar"),
         .testTarget(
             name: "IYFAlertCoreTests",
             dependencies: ["IYFAlertCore"]

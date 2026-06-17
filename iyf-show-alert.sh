@@ -5,7 +5,7 @@
 # The alert-launching half of "In Your Face", factored out so
 # both entry points share one implementation and can't drift:
 #   - iyf.sh             (zsh preexec/precmd terminal hook)
-#   - iyf-claude-hook.sh (Claude Code Stop hook)
+#   - iyf-claude-hook.sh (shared Claude Code / Codex hook)
 #
 # Usage: iyf-show-alert.sh <label> <formatted-duration> <exit-code>
 # Reads from the environment:

@@ -101,6 +101,20 @@ swift build -c release --product iyf-alert
 echo 'source ~/.iyf/iyf.sh' >> ~/.zshrc
 ```
 
+Optional menu bar helper:
+
+```sh
+cd ~/.iyf
+swift build -c release --product iyf-menubar
+.build/release/iyf-menubar &
+```
+
+`iyf-menubar` is a lightweight native macOS status item. It does not replace the
+terminal, Claude/Codex, or Paseo integrations; it gives you a persistent **IYF**
+menu with **Test Alert**, **Open IYF Folder**, and **Quit IYF Menu Bar**. The
+helper expects `iyf-show-alert.sh` next to the executable, or you can set
+`IYF_HOME=/path/to/iyf` before launching it.
+
 Requires **zsh** on **macOS**. SwiftPM is used only to build the native helper;
 without a built helper the alert launcher fails closed. `python3` is used to
 encode alert text and to power the [snooze](#snoozing-the-alert) buttons;

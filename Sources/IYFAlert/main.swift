@@ -1,3 +1,4 @@
+#if canImport(AppKit) && canImport(WebKit)
 import AppKit
 import Foundation
 import IYFAlertCore
@@ -129,3 +130,10 @@ case .failure(let error):
     fputs(error.message + "\n", stderr)
     exit(2)
 }
+
+#else
+import Foundation
+
+fputs("iyf-alert requires macOS AppKit/WebKit.\n", stderr)
+exit(1)
+#endif
