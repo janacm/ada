@@ -132,6 +132,9 @@ removed.
 
 - `IYF_SNOOZE_MINUTES` must define the snooze button options, preserving an
   explicit empty value as "hide snooze buttons".
+- The snooze bar must offer a "Custom" option that reveals a minutes input only
+  once clicked; submitting it must request a snooze for the entered duration,
+  subject to the same positive/≤24h bound as the preset buttons.
 - Snooze and click-to-focus must use a detached `python3` loopback daemon because
   a sandboxed `file://` page cannot reliably outlive its window or activate
   another app later.

@@ -197,6 +197,58 @@
 
   .snooze-btn:active { transform: scale(0.95); }
 
+  /* Custom-duration field: hidden until the "Custom" pill is clicked. Note the
+     base rule sets display:none so the [hidden]-vs-display pitfall (see .badge.repo)
+     can't apply — visibility is toggled with the .is-open class instead. */
+  .snooze-custom {
+    display: none;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .snooze-custom.is-open { display: inline-flex; }
+
+  .snooze-custom-input {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 5rem;
+    font: inherit;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #e4e4e7;
+    text-align: center;
+    padding: 0.45rem 0.9rem;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    cursor: text;
+    user-select: text;
+    -webkit-user-select: text;
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+
+  .snooze-custom-input::placeholder { color: #71717a; font-weight: 500; }
+  .snooze-custom-input:focus { border-color: rgba(129, 140, 248, 0.8); }
+
+  .snooze-custom-input.invalid {
+    border-color: rgba(239, 68, 68, 0.7);
+    animation: snooze-shake 0.3s ease;
+  }
+
+  /* Strip the number-input spinners so it reads as a pill, not a form field. */
+  .snooze-custom-input::-webkit-inner-spin-button,
+  .snooze-custom-input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  @keyframes snooze-shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    75% { transform: translateX(4px); }
+  }
+
   .progress-ring {
     position: fixed;
     bottom: 0;
@@ -211,6 +263,7 @@
   @media (prefers-reduced-motion: reduce) {
     .icon { animation: none; }
     .container { animation: none; }
+    .snooze-custom-input.invalid { animation: none; }
   }
 </style>
 </head>
@@ -405,6 +458,68 @@
       btn.addEventListener('click', (e) => { e.stopPropagation(); snooze(m); });
       bar.appendChild(btn);
     }
+
+    // Custom duration: a pill that reveals a number input only once clicked.
+    // The daemon accepts 1..1440 minutes (see iyf-snooze-daemon.py), so mirror
+    // that range here and reject anything outside it.
+    const customBtn = document.createElement('button');
+    customBtn.type = 'button';
+    customBtn.className = 'snooze-btn';
+    customBtn.textContent = 'Custom';
+
+    const customWrap = document.createElement('span');
+    customWrap.className = 'snooze-custom';
+
+    const customInput = document.createElement('input');
+    customInput.type = 'number';
+    customInput.min = '1';
+    customInput.max = '1440';
+    customInput.inputMode = 'numeric';
+    customInput.className = 'snooze-custom-input';
+    customInput.placeholder = 'min';
+    customInput.setAttribute('aria-label', 'Custom snooze minutes');
+
+    const customSet = document.createElement('button');
+    customSet.type = 'button';
+    customSet.className = 'snooze-btn';
+    customSet.textContent = 'Set';
+
+    function openCustom() {
+      customBtn.style.display = 'none';
+      customWrap.classList.add('is-open');
+      customInput.value = '';
+      customInput.focus();
+    }
+    function cancelCustom() {
+      customWrap.classList.remove('is-open');
+      customInput.classList.remove('invalid');
+      customBtn.style.display = '';
+    }
+    function submitCustom() {
+      const v = parseInt(customInput.value, 10);
+      if (Number.isFinite(v) && v > 0 && v <= 1440) { snooze(v); return; }
+      // Out of range / empty: flash the field, keep it open for another try.
+      customInput.classList.remove('invalid');
+      void customInput.offsetWidth; // restart the shake animation
+      customInput.classList.add('invalid');
+      customInput.focus();
+      customInput.select();
+    }
+
+    customBtn.addEventListener('click', (e) => { e.stopPropagation(); openCustom(); });
+    customSet.addEventListener('click', (e) => { e.stopPropagation(); submitCustom(); });
+    customInput.addEventListener('keydown', (e) => {
+      // Keep keystrokes off the global Esc-to-dismiss handler while typing.
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); submitCustom(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancelCustom(); }
+    });
+
+    customWrap.appendChild(customInput);
+    customWrap.appendChild(customSet);
+    bar.appendChild(customBtn);
+    bar.appendChild(customWrap);
+
     // Clicks on the bar's empty space shouldn't bubble to the dismiss handler.
     bar.addEventListener('click', (e) => e.stopPropagation());
     bar.hidden = false;

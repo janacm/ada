@@ -354,6 +354,10 @@ configurable with `IYF_SNOOZE_MINUTES`. Click one and the window closes now and
 the *same* alert (same command, duration, exit code) pops back up after the
 delay, labelled as a snoozed reminder. You can snooze a reminder again.
 
+Need a duration that isn't on the list? Click **Custom** to reveal a minutes
+input, type any value (1–1440), and press Enter or **Set**. `Esc` while it's
+open just cancels the field instead of dismissing the alert.
+
 Why it needs a helper: the alert is a sandboxed `file://` page, and once its
 window closes its JavaScript is gone. A pure in-page timer cannot relaunch the
 alert later or bring another app forward, so picking a snooze re-launches a
