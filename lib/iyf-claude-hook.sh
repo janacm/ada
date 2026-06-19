@@ -132,10 +132,31 @@ case "$event" in
 
     label=${saved_prompt:-"Claude Code"}
     if (( ${#label} > 120 )); then label="${label:0:120}…"; fi
+
+    # Clicking the alert can jump straight to this turn's conversation in the
+    # Claude macOS app via its claude://resume?session=<id> deep link. Only wire
+    # it for genuine Claude Code sessions: the id must be a UUID AND have a
+    # transcript on disk. Codex shares this hook but its sessions can't be
+    # imported into Claude.app, so skipping the link avoids a "Couldn't open
+    # session" dialog. The id is the basename of the resolved start stamp, which
+    # is the right session even on the Codex fallback path above.
+    resolved_sid=$(basename "$start_file" .start)
+    click_url=""; focus_name=""
+    if [[ "$resolved_sid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+      claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+      if [[ -n "$(find "$claude_dir/projects" -maxdepth 2 -name "$resolved_sid.jsonl" -print -quit 2>/dev/null)" ]]; then
+        click_url="claude://resume?session=$resolved_sid"
+        focus_name="Claude"
+      fi
+    fi
+
     # IYF_REPO_DIR points the launcher at the turn's project so it shows the
     # right repo (the hook's own cwd isn't guaranteed to be it). Empty falls
     # back to the launcher's cwd, which is the project in the usual setup.
-    IYF_REPO_DIR="$cwd" "$dir/iyf-show-alert.sh" "$label" "$(__iyf_format_duration "$elapsed")" 0 >/dev/null 2>&1 &
+    # IYF_CLICK_URL makes clicking the alert open the deep link above (empty =
+    # plain dismiss). IYF_FOCUS_APP_NAME labels the click hint ("…return to Claude").
+    IYF_REPO_DIR="$cwd" IYF_CLICK_URL="$click_url" IYF_FOCUS_APP_NAME="$focus_name" \
+      "$dir/iyf-show-alert.sh" "$label" "$(__iyf_format_duration "$elapsed")" 0 >/dev/null 2>&1 &
     ;;
 esac
 

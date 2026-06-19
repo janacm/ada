@@ -174,3 +174,45 @@ run_hook() { run bash -c "printf '%s' '$1' | '$HOOK'"; }
   wait_for_file "$IYF_PROBE_OUT" || { echo "fresh fallback should fire"; false; }
   assert_file_contains "$IYF_PROBE_OUT" "cmd=fresh%20task"
 }
+
+# --- claude://resume deep link (click-to-open the conversation) ---------------
+# The hook builds IYF_CLICK_URL only for a genuine Claude Code session: a UUID id
+# that has a transcript on disk. fake-iyf-alert records the inherited value into
+# IYF_PROBE_ENV_OUT, so these assert the gate without the loopback daemon.
+
+UUID="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+
+@test "Stop sets the resume deep link when the session has a transcript" {
+  export IYF_PROBE_ENV_OUT="$BATS_TEST_TMPDIR/probe-env.txt"
+  export CLAUDE_CONFIG_DIR="$BATS_TEST_TMPDIR/claude"
+  export IYF_AUTO_CLOSE=1   # the click target spawns the daemon; keep it short-lived
+  mkdir -p "$CLAUDE_CONFIG_DIR/projects/some-proj"
+  : > "$CLAUDE_CONFIG_DIR/projects/some-proj/$UUID.jsonl"
+  stamp_session "$UUID" "$(( $(/bin/date +%s) - 120 ))" "deep link task"
+  run_hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"$UUID\",\"cwd\":\"/tmp\"}"
+  assert_success
+  wait_for_file "$IYF_PROBE_ENV_OUT" || { echo "alert never fired"; false; }
+  assert_file_contains "$IYF_PROBE_ENV_OUT" "IYF_CLICK_URL=claude://resume?session=$UUID"
+}
+
+@test "Stop sets no deep link when a UUID session has no transcript on disk" {
+  export IYF_PROBE_ENV_OUT="$BATS_TEST_TMPDIR/probe-env.txt"
+  export CLAUDE_CONFIG_DIR="$BATS_TEST_TMPDIR/claude"
+  mkdir -p "$CLAUDE_CONFIG_DIR/projects"   # exists but holds no transcript
+  stamp_session "$UUID" "$(( $(/bin/date +%s) - 120 ))" "no transcript"
+  run_hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"$UUID\",\"cwd\":\"/tmp\"}"
+  assert_success
+  wait_for_file "$IYF_PROBE_ENV_OUT" || { echo "alert never fired"; false; }
+  run cat "$IYF_PROBE_ENV_OUT"
+  assert_equal "$output" "IYF_CLICK_URL="
+}
+
+@test "Stop sets no deep link for a non-UUID (Codex-style) session id" {
+  export IYF_PROBE_ENV_OUT="$BATS_TEST_TMPDIR/probe-env.txt"
+  stamp_session "codex-session-7" "$(( $(/bin/date +%s) - 120 ))" "codex turn"
+  run_hook '{"hook_event_name":"Stop","session_id":"codex-session-7","cwd":"/tmp"}'
+  assert_success
+  wait_for_file "$IYF_PROBE_ENV_OUT" || { echo "alert never fired"; false; }
+  run cat "$IYF_PROBE_ENV_OUT"
+  assert_equal "$output" "IYF_CLICK_URL="
+}

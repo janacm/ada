@@ -130,6 +130,33 @@ hidden = fullscreen. Menu bar visible = windowed.
 - `~/.iyf` is the installed clone the live hooks run from; it's separate from any
   dev checkout. After changing the launcher, `git -C ~/.iyf pull` to go live.
 
+## Click-to-open the Claude conversation (deep link)
+
+Clicking a Claude Code alert opens that turn's conversation in the Claude macOS
+app. The mechanism reuses the **existing click-to-focus path**: the click signals
+the snooze daemon, which `open`s a URL instead of `open -b <bundle>`. The new
+plumbing is one env var threaded end to end — `iyf-claude-hook.sh` sets
+`IYF_CLICK_URL`, `iyf-show-alert.sh` enables `focus=1` and passes it to the
+daemon, and `iyf-snooze-daemon.py` prefers the URL over the bundle id on `focus`.
+
+The URL is **`claude://resume?session=<session_id>`**. `<session_id>` is the
+Claude Code `session_id` from the hook payload, which is also the basename of the
+transcript at `~/.claude/projects/*/<id>.jsonl`. The app's `open-url` handler
+imports that CLI transcript and navigates to it. The hook gates the link on
+*UUID-shaped id AND transcript-exists*, so Codex turns (same hook, not
+importable) get no link instead of a "couldn't open session" dialog.
+
+This scheme is **undocumented and reverse-engineered** from `Claude.app`'s
+minified `app.asar` (`open-url` → `claudeURLHandler`; hosts `resume`, `code`,
+`cowork`, …), so it can change across app versions. Keep it best-effort: a dead
+link just no-ops. To re-derive or validate it: `npx @electron/asar extract
+/Applications/Claude.app/Contents/Resources/app.asar <dir>` then grep the main
+`index.js` for `claude://`, `importCliSession`, and the `.Resume=`/`.Code=` enum
+values. To confirm a deep link lands live, fire `open "claude://resume?session=
+<real-id>"` and watch `~/Library/Logs/Claude/main.log` for
+`Resume deep link: importing CLI session <id>` → `Imported CLI session … as
+Desktop session local_<id>`.
+
 ## Window geometry
 
 Size = the **primary** display's `visibleFrame` (below the menu bar, above the

@@ -148,7 +148,9 @@ removed.
   the chosen delay.
 - Snooze delays must be positive and no longer than 24 hours.
 - A focus request must use the configured bundle id to bring the originating app
-  forward.
+  forward, or, when `IYF_CLICK_URL` is set, `open` that URL instead (which both
+  activates the target app and deep-links into it). The URL must take precedence
+  over the bundle id, and a snooze relaunch must preserve it.
 - The daemon must self-exit after the alert decision window if the user dismisses
   normally, the beacon is blocked, or the alert auto-closes.
 - If `python3` or the daemon script is unavailable, snooze and focus must degrade
@@ -167,6 +169,13 @@ removed.
 - The hook must set `IYF_REPO_DIR` from the payload `cwd` so the launcher can
   display the project repository even when the hook's own current directory is
   different.
+- On a `Stop` event, the hook must make the alert click open that turn's
+  conversation in the Claude macOS app via the `claude://resume?session=<id>`
+  deep link (passed through `IYF_CLICK_URL`). It must wire this only for genuine
+  Claude Code sessions — the resolved session id must be a UUID and have a
+  transcript at `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/*/<id>.jsonl` — so
+  Codex turns, which share the hook but cannot be imported into Claude.app, get
+  no link rather than a "couldn't open session" error.
 - If a Codex `Stop` payload has a different or missing `session_id`, the hook
   must fall back to the most recent start stamp only while it is younger than
   `IYF_CLAUDE_STALE_MAX`.
@@ -257,6 +266,11 @@ removed.
 
 ## Change Log
 
+- 2026-06-19: Clicking a Claude Code alert now opens that turn's conversation in
+  the Claude macOS app via the `claude://resume?session=<id>` deep link. Added a
+  generic `IYF_CLICK_URL` click target (precedence over `IYF_FOCUS_APP`) wired
+  through the launcher and snooze/focus daemon; the hook sets it only for real
+  Claude Code sessions (UUID id with an on-disk transcript).
 - 2026-06-17: Added open-source distribution requirements: MIT license,
   contribution guide, security policy, and local-first public documentation.
 - 2026-06-17: Added an optional native SwiftPM `iyf-menubar` status item for

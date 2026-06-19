@@ -74,3 +74,35 @@ http_code() { curl -s -o /dev/null -w '%{http_code}' "$1"; }
   run bash -c "grep -q 'relaunch after sleep' '$IYF_SNOOZE_LOG'"
   assert_failure   # must NOT have armed a snooze
 }
+
+# A focus request with a click URL must `open` that URL (e.g. claude://resume…)
+# instead of `open -b <bundle>`. An isolated `open` stub on PATH records the call
+# so nothing actually launches; the stub dir is per-test so the suite is unaffected.
+@test "focus with a click URL opens the URL, not a bundle id" {
+  export IYF_SNOOZE_LOG="$BATS_TEST_TMPDIR/snooze.log"
+  local openlog="$BATS_TEST_TMPDIR/open.log"
+  local stubbin="$BATS_TEST_TMPDIR/openbin"
+  mkdir -p "$stubbin"
+  cat > "$stubbin/open" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$openlog"
+exit 0
+EOF
+  chmod +x "$stubbin/open"
+  export PATH="$stubbin:$PATH"   # the detached daemon inherits this PATH
+
+  local url="claude://resume?session=abc12345-0000-4000-8000-000000000000"
+  local handoff="$BATS_TEST_TMPDIR/handoff"; rm -f "$handoff"
+  # arg10 focus_app="" (no bundle), arg11 click_url set -> focus must open the URL.
+  python3 "$DAEMON" "$handoff" 5 /usr/bin/true \
+    "cmd" "1s" 0 "$REPO_ROOT/alert.html" 90 "" "" "$url" >/dev/null 2>&1 &
+  wait_for_file "$handoff" 100 || { echo "daemon never came up"; false; }
+  read -r port token < "$handoff"
+  http_code "http://127.0.0.1:$port/$token/focus" >/dev/null
+
+  run bash -c "for _ in \$(seq 1 60); do grep -qF '$url' '$openlog' 2>/dev/null && exit 0; sleep 0.1; done; exit 1"
+  assert_success
+  # and it must NOT have shelled out to a bundle-id activation
+  run bash -c "grep -q -- '-b' '$openlog' 2>/dev/null"
+  assert_failure
+}

@@ -14,6 +14,8 @@
 #   IYF_SNOOZE_MINUTES  snooze button options     (default "5 10 30 60")
 #   IYF_FOCUS_APP       bundle id to focus on click (default $__CFBundleIdentifier)
 #   IYF_FOCUS_APP_NAME  optional display name for the click hint
+#   IYF_CLICK_URL       URL to `open` on click (e.g. claude://resume?session=…);
+#                       takes precedence over IYF_FOCUS_APP for the click action
 #   IYF_SNOOZED         set by the snooze daemon when re-arming an alert
 #   IYF_NATIVE_ALERT    path to iyf-alert native helper
 # =============================================================
@@ -33,6 +35,7 @@ else
   focus_app=${__CFBundleIdentifier:-}
 fi
 focus_app_name=${IYF_FOCUS_APP_NAME:-}
+click_url=${IYF_CLICK_URL:-}
 
 # Where this script lives, so the snooze daemon can be found and re-invoked.
 selfdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -134,14 +137,14 @@ encoded_focus_app_name_b64=$(__iyf_b64url_encode "$focus_app_name")
 # snooze controls and click-anywhere degrades to plain dismiss.
 sport=""; stoken=""
 needs_daemon=0
-[[ -n "${snooze_minutes// /}" || -n "${focus_app// /}" ]] && needs_daemon=1
+[[ -n "${snooze_minutes// /}" || -n "${focus_app// /}" || -n "${click_url// /}" ]] && needs_daemon=1
 if [[ "$needs_daemon" == 1 ]] && command -v python3 >/dev/null 2>&1 \
    && [[ -f "$selfdir/iyf-snooze-daemon.py" ]]; then
   handoff=$(mktemp -t iyf-snooze.XXXXXX 2>/dev/null) || handoff="${TMPDIR:-/tmp}/iyf-snooze.$$"
   deadline=$(( ${auto_close%%.*} + 15 )); (( deadline > 0 )) || deadline=105
   python3 "$selfdir/iyf-snooze-daemon.py" "$handoff" "$deadline" \
     "$selfdir/iyf-show-alert.sh" "$cmd" "$duration" "$code" \
-    "$alert_file" "$auto_close" "$snooze_minutes" "$focus_app" >/dev/null 2>&1 &
+    "$alert_file" "$auto_close" "$snooze_minutes" "$focus_app" "$click_url" >/dev/null 2>&1 &
   for _ in {1..60}; do
     [[ -s "$handoff" ]] && { read -r sport stoken < "$handoff"; break; }
     sleep 0.03
@@ -157,7 +160,7 @@ if [[ -n "$sport" && -n "$stoken" ]]; then
   else
     daemon_q="${daemon_q}&snooze=0"
   fi
-  if [[ -n "${focus_app// /}" ]]; then
+  if [[ -n "${focus_app// /}" || -n "${click_url// /}" ]]; then
     daemon_q="${daemon_q}&focus=1"
     [[ -n "$encoded_focus_app_name" ]] && daemon_q="${daemon_q}&focusname=${encoded_focus_app_name}"
     [[ -n "$encoded_focus_app_name_b64" ]] && daemon_q="${daemon_q}&focusnameb64=${encoded_focus_app_name_b64}"

@@ -156,6 +156,7 @@ All settings are environment variables. Set them before `iyf.sh` is sourced
 | `IYF_REPO_DIR` | _(where the command ran)_ | Directory whose git repo name is shown. Defaults to the launcher's working directory, which is almost always right; the [Claude/Codex hook integration](#claude-code-and-codex) sets it to the turn's project directory automatically. Ignored when `IYF_REPO` is set. |
 | `IYF_FOCUS_APP` | `__CFBundleIdentifier` | Bundle id to activate when you click the alert. Set to empty to make click-anywhere only dismiss. The Paseo watcher defaults this to `sh.paseo.desktop`. |
 | `IYF_FOCUS_APP_NAME` | _(empty)_ | Optional display name shown in the click hint. The Paseo watcher defaults this to `Paseo`. |
+| `IYF_CLICK_URL` | _(empty)_ | URL to `open` when you click the alert, instead of just activating `IYF_FOCUS_APP`. Takes precedence over the bundle id and is preserved across a snooze. The [Claude Code hook](#claude-code-and-codex) sets it to `claude://resume?session=<id>` so a click opens that turn's conversation in the Claude macOS app. Requires `python3` (the click daemon). |
 | `IYF_SKIP_OWN_TERMINAL` | `1` | When `1`, suppress the alert if the terminal that ran the command is the frontmost app when it finishes. Set to `0` to always alert. |
 | `IYF_SKIP_WHEN_ACTIVE` | _(empty)_ | Space-separated apps to also stay silent for when they're frontmost. Each entry matches a frontmost app's bundle id exactly, or its name as a substring. |
 | `IYF_CLAUDE_THRESHOLD` | `45` | Minimum Claude Code / Codex *turn* duration, in seconds, to trigger an alert. Only used by the [Claude/Codex hook integration](#claude-code-and-codex). |
@@ -260,8 +261,17 @@ Tune the trigger independently of the terminal threshold with
 `IYF_CLAUDE_THRESHOLD`. The own-terminal / `IYF_SKIP_WHEN_ACTIVE` silencing
 rules apply here too, so an alert only pops when you've actually walked away.
 
-> Requires `python3` (used to parse the hook payload). Subagent turns don't
-> fire it — only the main agent's `Stop`.
+**Click to open the conversation.** For a Claude Code turn, clicking the alert
+jumps straight to *that* conversation in the [Claude macOS app](https://claude.ai/download)
+— it uses the app's `claude://resume?session=<id>` deep link to import and focus
+the session. This is wired automatically and only for real Claude Code sessions
+(the hook checks the session id is a UUID with a transcript on disk), so Codex
+turns — which share the hook but can't be resumed in Claude.app — just dismiss on
+click as before. Requires the desktop app installed and signed in.
+
+> Requires `python3` (used to parse the hook payload, and to run the
+> click-to-open / snooze daemon). Subagent turns don't fire it — only the main
+> agent's `Stop`.
 
 ## Paseo
 
@@ -340,6 +350,10 @@ IYF_PASEO_EVENTS="finish permission"
 - Click anywhere to bring the originating app forward, when IYF knows its bundle
   id. Terminal and agent hooks usually inherit this from macOS as
   `__CFBundleIdentifier`; the Paseo watcher sets it to `sh.paseo.desktop`.
+- For a Claude Code turn, clicking instead deep-links to that exact conversation
+  in the Claude macOS app (see [Claude Code and Codex](#claude-code-and-codex)).
+  Set `IYF_CLICK_URL` yourself to make the click `open` any URL — it takes
+  precedence over `IYF_FOCUS_APP`.
 - Press `Esc` for a plain dismiss without changing focus.
 - It auto-dismisses after `IYF_AUTO_CLOSE` seconds — the progress bar along the
   bottom shows the time remaining. Auto-dismiss is also a plain dismiss.

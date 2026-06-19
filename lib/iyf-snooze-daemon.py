@@ -15,7 +15,9 @@
 # then signals a decision with a no-cors fetch:
 #
 #   GET /<token>/snooze/<minutes>  -> sleep, then relaunch the alert
-#   GET /<token>/focus             -> focus the source app, no relaunch
+#   GET /<token>/focus             -> `open` the click URL if one was provided
+#                                     (e.g. claude://resume?session=…), else
+#                                     focus the source app; no relaunch
 #   GET /<token>/dismiss           -> exit, no relaunch
 #
 # If the user never decides (plain dismiss with the beacon blocked,
@@ -24,7 +26,7 @@
 # Usage:
 #   iyf-snooze-daemon.py <handoff> <deadline> <alert_script> \
 #       <cmd> <duration> <code> <alert_file> <auto_close> <snooze_minutes> \
-#       [focus_bundle_id]
+#       [focus_bundle_id] [click_url]
 #
 # Set IYF_SNOOZE_LOG=/path to append a trace line per request/decision (debug).
 # =============================================================
@@ -48,6 +50,7 @@ try:
 except ValueError:
     sys.exit(0)
 focus_app = sys.argv[10] if len(sys.argv) > 10 else os.environ.get("IYF_FOCUS_APP", "")
+click_url = sys.argv[11] if len(sys.argv) > 11 else os.environ.get("IYF_CLICK_URL", "")
 
 try:
     deadline = float(deadline_s)
@@ -111,7 +114,7 @@ class Handler(BaseHTTPRequestHandler):
         elif action == "dismiss":
             self.server.iyf_result = ("dismiss", 0)
             self.server.iyf_done = True
-        elif action == "focus" and focus_app:
+        elif action == "focus" and (click_url or focus_app):
             self.server.iyf_result = ("focus", 0)
             self.server.iyf_done = True
 
@@ -165,10 +168,17 @@ def main():
 
     result = httpd.iyf_result
     if result and result[0] == "focus":
-        trace("focus %s" % focus_app)
+        # A click URL (e.g. claude://resume?session=…) both launches/focuses the
+        # target app and navigates it, so prefer it over a bare bundle-id focus.
+        if click_url:
+            trace("focus url %s" % click_url)
+            open_cmd = ["open", click_url]
+        else:
+            trace("focus %s" % focus_app)
+            open_cmd = ["open", "-b", focus_app]
         try:
             subprocess.Popen(
-                ["open", "-b", focus_app],
+                open_cmd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -190,6 +200,8 @@ def main():
     env["IYF_SNOOZE_MINUTES"] = snooze_minutes
     if focus_app:
         env["IYF_FOCUS_APP"] = focus_app
+    if click_url:
+        env["IYF_CLICK_URL"] = click_url
     try:
         subprocess.Popen(
             [alert_script, cmd, duration, code],

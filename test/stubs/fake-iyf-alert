@@ -3,4 +3,8 @@
 # launched with (its first arg) so tests can assert on the query string. The
 # real helper opens a window; here we just write the URL and exit.
 [ -n "${IYF_PROBE_OUT:-}" ] && printf '%s\n' "${1:-}" > "$IYF_PROBE_OUT"
+# Also surface the inherited click target so the hook's IYF_CLICK_URL gate can be
+# asserted without spawning the loopback daemon (the var is in our environment
+# because the launcher execs us with it inherited).
+[ -n "${IYF_PROBE_ENV_OUT:-}" ] && printf 'IYF_CLICK_URL=%s\n' "${IYF_CLICK_URL:-}" > "$IYF_PROBE_ENV_OUT"
 exit 0
