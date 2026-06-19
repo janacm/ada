@@ -157,6 +157,22 @@ values. To confirm a deep link lands live, fire `open "claude://resume?session=
 `Resume deep link: importing CLI session <id>` → `Imported CLI session … as
 Desktop session local_<id>`.
 
+## The feedback note opens links via the iyfOpen bridge
+
+The alert carries a small feedback note in its corner (`#feedbackBox` in
+`alert.html`). Its link must open in the user's **default browser**, not navigate
+the alert's own WebView away — a plain `<a href>` in this `file://` page would
+either be swallowed (no UI delegate) or replace the alert page.
+
+So the link routes through a dedicated native bridge: `alert.html` posts the URL
+to `window.webkit.messageHandlers.iyfOpen`, and the helper opens it with
+`NSWorkspace.shared.open`, restricted to `http`/`https` schemes. This is separate
+from the click-to-focus deep-link path above (which signals the snooze daemon to
+`open` a URL/bundle on a plain alert click): `iyfOpen` opens directly from the
+helper, needs no daemon, and fires only for the feedback link — clicks inside the
+note are kept off the dismiss handler with `stopPropagation`. The link currently
+points at the project's GitHub issues.
+
 ## Window geometry
 
 Size = the **primary** display's `visibleFrame` (below the menu bar, above the

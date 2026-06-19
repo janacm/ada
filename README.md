@@ -387,3 +387,13 @@ Because the daemon is `python3`, snooze and click-to-focus are unavailable when
 `python3` isn't on `PATH` — the buttons simply don't render, click-anywhere
 becomes a plain dismiss, and everything else behaves as before. Setting
 `IYF_SNOOZE_MINUTES=""` also hides the snooze buttons.
+
+## Feedback
+
+Every alert carries a small **Feedback** note in the corner — for when you want
+to support the project, want IYF to support a different agent, or the pop-up
+didn't fire the way you expected. Its link opens the project's
+[GitHub issues](https://github.com/janacm/iyf/issues) in your default browser
+(the native helper hands the URL to macOS, so it opens externally instead of
+taking over the alert window). Clicking the note doesn't dismiss the alert —
+click elsewhere or press `Esc` for that.
