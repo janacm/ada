@@ -99,6 +99,10 @@ removed.
   alert without requiring a snooze.
 - Opening a new alert in native mode must close any previous native alert helper
   process so alert windows do not stack.
+- The alert must show a corner feedback note inviting users to reach out (to
+  support the project, request a different agent integration, or report a
+  misfired pop-up); its link must open in the user's default browser rather than
+  navigating the alert's own WebView away.
 
 ## Native Window Behavior
 

@@ -50,6 +50,7 @@ final class AlertAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         ))
         userContentController.add(self, name: "iyfClose")
         userContentController.add(self, name: "iyfSignal")
+        userContentController.add(self, name: "iyfOpen")
 
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = userContentController
@@ -85,6 +86,16 @@ final class AlertAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         case "iyfSignal":
             if let path = message.body as? String {
                 sendSignal(path)
+            }
+        case "iyfOpen":
+            // Open external links (e.g. the feedback link) in the user's default
+            // browser rather than navigating the alert's own WebView away. Only
+            // http(s) is honored so an unexpected scheme can't launch something else.
+            if let urlString = message.body as? String,
+               let url = URL(string: urlString),
+               let scheme = url.scheme?.lowercased(),
+               scheme == "http" || scheme == "https" {
+                NSWorkspace.shared.open(url)
             }
         default:
             break

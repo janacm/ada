@@ -249,6 +249,53 @@
     75% { transform: translateX(4px); }
   }
 
+  /* Feedback note tucked into the corner. cursor:default so it doesn't read as
+     part of the click-anywhere-to-dismiss surface; the link gets its own pointer.
+     Clicks inside are kept off the global dismiss handler in JS. */
+  .feedback {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    max-width: 22rem;
+    text-align: left;
+    padding: 0.85rem 1.05rem;
+    border-radius: 12px;
+    background: rgba(39, 39, 42, 0.45);
+    border: 1px solid rgba(63, 63, 70, 0.4);
+    backdrop-filter: blur(6px);
+    cursor: default;
+    z-index: 11;
+  }
+
+  .feedback-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #a1a1aa;
+    margin-bottom: 0.35rem;
+  }
+
+  .feedback-text {
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: #71717a;
+  }
+
+  .feedback-link {
+    color: #c7d2fe;
+    text-decoration: none;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(99, 102, 241, 0.4);
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+
+  .feedback-link:hover {
+    color: #e0e7ff;
+    border-bottom-color: rgba(129, 140, 248, 0.8);
+  }
+
   .progress-ring {
     position: fixed;
     bottom: 0;
@@ -302,6 +349,11 @@
       Snooze
     </span>
   </div>
+</div>
+
+<div class="feedback" id="feedbackBox">
+  <p class="feedback-title">Feedback</p>
+  <p class="feedback-text">Want to support us, want us to support a different agent, or the pop-up didn't fire the right way? <a class="feedback-link" id="feedbackLink" href="https://github.com/janacm/iyf/issues/new">Let us know.</a></p>
 </div>
 
 <div class="progress-ring" id="progressBar"></div>
@@ -443,6 +495,26 @@
   document.addEventListener('click', () => dismiss(focusEnabled ? 'focus' : 'dismiss'));
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') dismiss('dismiss');
+  });
+
+  // Feedback note. Clicks inside the box must not bubble to the dismiss handler,
+  // and the link must open in the real browser rather than navigating the alert's
+  // own WebView away. The native helper exposes an iyfOpen bridge for that; if it's
+  // absent we fall back to window.open (a no-op in the bare WebView, but harmless).
+  const feedbackBox = document.getElementById('feedbackBox');
+  const feedbackLink = document.getElementById('feedbackLink');
+  feedbackBox.addEventListener('click', (e) => e.stopPropagation());
+  feedbackLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const url = feedbackLink.href;
+    try {
+      if (window.webkit?.messageHandlers?.iyfOpen) {
+        window.webkit.messageHandlers.iyfOpen.postMessage(url);
+        return;
+      }
+    } catch (e) {}
+    try { window.open(url, '_blank'); } catch (e) {}
   });
 
   // Render the snooze options the launcher passed through (IYF_SNOOZE_MINUTES).
