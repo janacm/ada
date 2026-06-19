@@ -19,9 +19,21 @@
 #                       payload's session id doesn't match the
 #                       stamped one (Codex parity), fall back to the
 #                       most recent stamp so the alert still fires.
+#                       Additionally, if the turn ended in an API
+#                       error (the transcript's last assistant entry
+#                       has isApiErrorMessage:true), alert REGARDLESS
+#                       of the duration threshold — an error is worth
+#                       interrupting for even when it aborts fast.
+#                       Note: this catches errors that abort a turn
+#                       after it starts. Client pre-flight guards like
+#                       "context window is full" reject the prompt
+#                       before a turn runs, fire no Stop hook, and so
+#                       cannot be caught here.
 #
 # Environment knobs (shared with iyf.sh where noted):
 #   IYF_CLAUDE_THRESHOLD  min turn seconds to alert   (default 45)
+#   IYF_CLAUDE_ALERT_ON_ERROR  alert on a turn-ending API error even
+#                         below the duration threshold (default 1)
 #   IYF_ALERT_FILE        alert.html path             (default ~/.iyf/alert.html)
 #   IYF_NATIVE_ALERT      path to iyf-alert helper    (default auto, via launcher)
 #   IYF_AUTO_CLOSE        auto-dismiss seconds        (default 90)
@@ -47,14 +59,16 @@ except Exception:
 ev  = d.get("hook_event_name", "") or ""
 sid = d.get("session_id", "") or ""
 cwd = (d.get("cwd", "") or "").replace("\n", " ").replace("\t", " ").strip()
+tp  = (d.get("transcript_path", "") or "").replace("\n", " ").replace("\t", " ").strip()
 pr  = (d.get("prompt", "") or "").replace("\n", " ").replace("\t", " ").strip()
 # prompt stays LAST: read -r gives the final field every remaining tab, so only
-# a trailing free-text field is safe there.
-print(ev + "\t" + sid + "\t" + cwd + "\t" + pr)
+# a trailing free-text field is safe there. transcript_path is a clean fs path,
+# so it sits safely before the prompt.
+print(ev + "\t" + sid + "\t" + cwd + "\t" + tp + "\t" + pr)
 ' 2>/dev/null)
 [[ -z "$fields" ]] && exit 0
 
-IFS=$'\t' read -r event session_id cwd prompt <<<"$fields"
+IFS=$'\t' read -r event session_id cwd transcript_path prompt <<<"$fields"
 [[ -z "$event" ]] && exit 0
 
 # Opt-in breadcrumb for debugging Codex-vs-Claude payload shapes. Triggered by
@@ -67,6 +81,41 @@ if [[ -n "${IYF_DEBUG_LOG:-}" || -e "${TMPDIR:-/tmp}/iyf-claude-debug.on" ]]; th
     "$(date '+%F %T')" "$event" "$session_id" "$cwd" "$prompt" \
     >> "$__iyf_dbg_log" 2>/dev/null
 fi
+
+# Inspect the transcript tail: if the turn's last assistant entry is an API
+# error, echo the error text (stdout) and return 0; otherwise echo nothing and
+# return 1. Claude Code writes failed turns as a type:"assistant" JSONL entry
+# with "isApiErrorMessage":true and the message text in message.content.
+__iyf_turn_error_text() {
+  local tpath=$1
+  [[ -n "$tpath" && -f "$tpath" ]] || return 1
+  tail -n 80 "$tpath" 2>/dev/null | python3 -c '
+import json, sys
+err = None
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    if d.get("type") != "assistant":
+        continue
+    if d.get("isApiErrorMessage"):
+        c = d.get("message", {}).get("content", "")
+        if isinstance(c, list):
+            c = " ".join(b.get("text", "") for b in c if isinstance(b, dict))
+        err = (c or "").replace("\n", " ").strip()
+    else:
+        # a normal assistant turn after the error clears the error state
+        err = None
+if err:
+    print(err)
+    sys.exit(0)
+sys.exit(1)
+' 2>/dev/null
+}
 
 __iyf_format_duration() {
   local s=$1
@@ -127,10 +176,24 @@ case "$event" in
     [[ -z "$local_start" ]] && exit 0
 
     elapsed=$(( $(date +%s) - local_start ))
-    (( elapsed < threshold )) && exit 0
+
+    # Did the turn end in an API error? If so, alert regardless of duration —
+    # a fast-failing turn is exactly the case the plain threshold would drop.
+    err_text=""
+    if [[ "${IYF_CLAUDE_ALERT_ON_ERROR:-1}" == 1 ]]; then
+      err_text=$(__iyf_turn_error_text "$transcript_path") || err_text=""
+    fi
+
+    if [[ -z "$err_text" ]]; then
+      (( elapsed < threshold )) && exit 0
+    fi
     __iyf_should_skip_active && exit 0
 
-    label=${saved_prompt:-"Claude Code"}
+    if [[ -n "$err_text" ]]; then
+      label="⚠️ Error: ${err_text}"
+    else
+      label=${saved_prompt:-"Claude Code"}
+    fi
     if (( ${#label} > 120 )); then label="${label:0:120}…"; fi
     # IYF_REPO_DIR points the launcher at the turn's project so it shows the
     # right repo (the hook's own cwd isn't guaranteed to be it). Empty falls
