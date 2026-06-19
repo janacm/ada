@@ -1,0 +1,11 @@
+{
+  "name": "iyf",
+  "private": true,
+  "description": "Playwright tests for the iyf alert page (alert.html)",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0"
+  }
+}

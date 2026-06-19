@@ -3,3 +3,8 @@
 .claude/settings.local.json
 __pycache__/
 *.pyc
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/.playwright/
