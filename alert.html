@@ -353,7 +353,7 @@
 
 <div class="feedback" id="feedbackBox">
   <p class="feedback-title">Feedback</p>
-  <p class="feedback-text">Want to support us, want us to support a different agent, or the pop-up didn't fire the right way? <a class="feedback-link" id="feedbackLink" href="https://github.com/janacm/iyf/issues/new">Let us know.</a></p>
+  <p class="feedback-text">Want to support us, want us to support a different agent, or the pop-up didn't fire the right way? <a class="feedback-link" id="feedbackLink" href="https://github.com/janacm/ada/issues/new">Let us know.</a></p>
 </div>
 
 <div class="progress-ring" id="progressBar"></div>
@@ -382,7 +382,7 @@
 
     // WKWebView loadFileURL can re-escape percent-encoded file:// query values.
     // Decode one extra layer for older launcher URLs that do not include base64.
-    if (window.iyfNative && /%[0-9a-f]{2}/i.test(value)) {
+    if (window.adaNative && /%[0-9a-f]{2}/i.test(value)) {
       try {
         return decodeURIComponent(value);
       } catch (e) {}
@@ -428,7 +428,7 @@
     document.querySelector('.title').style.webkitTextFillColor = 'transparent';
   }
 
-  // Snooze/focus talks to the detached daemon iyf-show-alert.sh spawned for us.
+  // Snooze/focus talks to the detached daemon ada-show-alert.sh spawned for us.
   // It's a no-cors fetch so the opaque file:// origin can reach loopback; we
   // never read the (opaque) response, we only need the request to land. keepalive
   // lets it complete even as the window closes a beat later.
@@ -451,8 +451,8 @@
   function signal(path) {
     if (!daemonEnabled) return;
     try {
-      if (window.webkit?.messageHandlers?.iyfSignal) {
-        window.webkit.messageHandlers.iyfSignal.postMessage(path);
+      if (window.webkit?.messageHandlers?.adaSignal) {
+        window.webkit.messageHandlers.adaSignal.postMessage(path);
         return;
       }
     } catch (e) {}
@@ -499,7 +499,7 @@
 
   // Feedback note. Clicks inside the box must not bubble to the dismiss handler,
   // and the link must open in the real browser rather than navigating the alert's
-  // own WebView away. The native helper exposes an iyfOpen bridge for that; if it's
+  // own WebView away. The native helper exposes an adaOpen bridge for that; if it's
   // absent we fall back to window.open (a no-op in the bare WebView, but harmless).
   const feedbackBox = document.getElementById('feedbackBox');
   const feedbackLink = document.getElementById('feedbackLink');
@@ -509,15 +509,15 @@
     e.stopPropagation();
     const url = feedbackLink.href;
     try {
-      if (window.webkit?.messageHandlers?.iyfOpen) {
-        window.webkit.messageHandlers.iyfOpen.postMessage(url);
+      if (window.webkit?.messageHandlers?.adaOpen) {
+        window.webkit.messageHandlers.adaOpen.postMessage(url);
         return;
       }
     } catch (e) {}
     try { window.open(url, '_blank'); } catch (e) {}
   });
 
-  // Render the snooze options the launcher passed through (IYF_SNOOZE_MINUTES).
+  // Render the snooze options the launcher passed through (ADA_SNOOZE_MINUTES).
   if (snoozeEnabled) {
     const bar = document.getElementById('snoozeBar');
     const mins = (params.get('snoozemins') || '5,10,30,60')
@@ -532,7 +532,7 @@
     }
 
     // Custom duration: a pill that reveals a number input only once clicked.
-    // The daemon accepts 1..1440 minutes (see iyf-snooze-daemon.py), so mirror
+    // The daemon accepts 1..1440 minutes (see ada-snooze-daemon.py), so mirror
     // that range here and reject anything outside it.
     const customBtn = document.createElement('button');
     customBtn.type = 'button';

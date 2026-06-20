@@ -3,24 +3,24 @@
 import PackageDescription
 
 let package = Package(
-    name: "iyf",
+    name: "ada",
     platforms: [
         .macOS(.v12),
     ],
     products: [
-        .executable(name: "iyf-alert", targets: ["IYFAlert"]),
-        .executable(name: "iyf-menubar", targets: ["IYFMenuBar"]),
+        .executable(name: "ada-alert", targets: ["ADAAlert"]),
+        .executable(name: "ada-menubar", targets: ["ADAMenuBar"]),
     ],
     targets: [
-        .target(name: "IYFAlertCore"),
+        .target(name: "ADAAlertCore"),
         .executableTarget(
-            name: "IYFAlert",
-            dependencies: ["IYFAlertCore"]
+            name: "ADAAlert",
+            dependencies: ["ADAAlertCore"]
         ),
-        .executableTarget(name: "IYFMenuBar"),
+        .executableTarget(name: "ADAMenuBar"),
         .testTarget(
-            name: "IYFAlertCoreTests",
-            dependencies: ["IYFAlertCore"]
+            name: "ADAAlertCoreTests",
+            dependencies: ["ADAAlertCore"]
         ),
     ]
 )

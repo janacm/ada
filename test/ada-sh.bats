@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for iyf.sh — the zsh terminal hook. iyf.sh is zsh (preexec/precmd,
+# Tests for ada.sh — the zsh terminal hook. ada.sh is zsh (preexec/precmd,
 # zsh-only param expansions), so its pure-logic helpers are exercised under zsh.
 
 setup() {
@@ -8,61 +8,61 @@ setup() {
   command -v zsh >/dev/null 2>&1 || skip "zsh not available"
 }
 
-# Source iyf.sh in zsh, then run the given zsh snippet; capture stdout.
+# Source ada.sh in zsh, then run the given zsh snippet; capture stdout.
 zsh_eval() {
-  zsh -c "source '$REPO_ROOT/iyf.sh' >/dev/null 2>&1; $1"
+  zsh -c "source '$REPO_ROOT/ada.sh' >/dev/null 2>&1; $1"
 }
 
 @test "format_duration: sub-minute prints tenths of a second" {
-  run zsh_eval '__iyf_format_duration 5'
+  run zsh_eval '__ada_format_duration 5'
   assert_success
   assert_equal "$output" "5.0s"
 }
 
 @test "format_duration: minutes and seconds" {
-  run zsh_eval '__iyf_format_duration 75'
+  run zsh_eval '__ada_format_duration 75'
   assert_success
   assert_equal "$output" "1m 15s"
 }
 
 @test "format_duration: hours and minutes" {
-  run zsh_eval '__iyf_format_duration 3661'
+  run zsh_eval '__ada_format_duration 3661'
   assert_success
   assert_equal "$output" "1h 1m"
 }
 
 @test "is_ignored: editors are ignored" {
-  run zsh_eval 'if __iyf_is_ignored "vim notes.txt"; then echo IGNORED; else echo NO; fi'
+  run zsh_eval 'if __ada_is_ignored "vim notes.txt"; then echo IGNORED; else echo NO; fi'
   assert_success
   assert_equal "$output" "IGNORED"
 }
 
 @test "is_ignored: an absolute path to an editor is ignored (basename match)" {
-  run zsh_eval 'if __iyf_is_ignored "/usr/bin/nvim x"; then echo IGNORED; else echo NO; fi'
+  run zsh_eval 'if __ada_is_ignored "/usr/bin/nvim x"; then echo IGNORED; else echo NO; fi'
   assert_success
   assert_equal "$output" "IGNORED"
 }
 
 @test "is_ignored: ordinary commands are not ignored" {
-  run zsh_eval 'if __iyf_is_ignored "npm test"; then echo IGNORED; else echo NO; fi'
+  run zsh_eval 'if __ada_is_ignored "npm test"; then echo IGNORED; else echo NO; fi'
   assert_success
   assert_equal "$output" "NO"
 }
 
 # --- the precmd decision gate (elapsed AND not-ignored AND not-skip-active) ---
 
-# Drive __iyf_precmd under zsh with the alert + skip-active calls stubbed, so the
+# Drive __ada_precmd under zsh with the alert + skip-active calls stubbed, so the
 # AND-ed gate (the actual decision) is exercised, not just its sub-helpers.
 run_precmd() {
   # args: cmd elapsed threshold
   run zsh -c "
-    source '$REPO_ROOT/iyf.sh' >/dev/null 2>&1
-    IYF_THRESHOLD=$3
-    __iyf_should_skip_active() { return 1; }              # never skip
-    __iyf_show_alert() { print -r -- \"FIRED cmd=[\$1] code=[\$3]\"; }
-    __iyf_cmd='$1'
-    __iyf_start_time=\$(( EPOCHREALTIME - $2 ))
-    __iyf_precmd
+    source '$REPO_ROOT/ada.sh' >/dev/null 2>&1
+    ADA_THRESHOLD=$3
+    __ada_should_skip_active() { return 1; }              # never skip
+    __ada_show_alert() { print -r -- \"FIRED cmd=[\$1] code=[\$3]\"; }
+    __ada_cmd='$1'
+    __ada_start_time=\$(( EPOCHREALTIME - $2 ))
+    __ada_precmd
   "
 }
 
@@ -86,14 +86,14 @@ run_precmd() {
 
 @test "precmd clears the stored command so it fires at most once" {
   run zsh -c "
-    source '$REPO_ROOT/iyf.sh' >/dev/null 2>&1
-    IYF_THRESHOLD=10
-    __iyf_should_skip_active() { return 1; }
-    __iyf_show_alert() { print -r -- FIRED; }
-    __iyf_cmd='npm test'
-    __iyf_start_time=\$(( EPOCHREALTIME - 50 ))
-    __iyf_precmd     # fires
-    __iyf_precmd     # __iyf_cmd cleared -> no second alert
+    source '$REPO_ROOT/ada.sh' >/dev/null 2>&1
+    ADA_THRESHOLD=10
+    __ada_should_skip_active() { return 1; }
+    __ada_show_alert() { print -r -- FIRED; }
+    __ada_cmd='npm test'
+    __ada_start_time=\$(( EPOCHREALTIME - 50 ))
+    __ada_precmd     # fires
+    __ada_precmd     # __ada_cmd cleared -> no second alert
   "
   assert_success
   assert_equal "$output" "FIRED"

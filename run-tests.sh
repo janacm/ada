@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================
-# run-tests.sh — run the iyf BATS test suite
+# run-tests.sh — run the ada BATS test suite
 # -------------------------------------------------------------
 # Unit tests for the shell scripts (launcher, hooks, watcher,
 # installer) and the zsh helper logic. Hermetic: each test runs
@@ -10,7 +10,7 @@
 #
 # Usage:
 #   ./run-tests.sh            # run everything in test/
-#   ./run-tests.sh test/iyf-claude-hook.bats   # a single file
+#   ./run-tests.sh test/ada-claude-hook.bats   # a single file
 # =============================================================
 set -u
 

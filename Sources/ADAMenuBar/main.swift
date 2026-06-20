@@ -10,32 +10,32 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "IYF"
-        item.button?.toolTip = "In Your Face"
+        item.button?.title = "ADA"
+        item.button?.toolTip = "Agent Done Alert"
 
         let menu = NSMenu()
         menu.addItem(menuItem(title: "Test Alert", action: #selector(showTestAlert)))
-        menu.addItem(menuItem(title: "Open IYF Folder", action: #selector(openFolder)))
+        menu.addItem(menuItem(title: "Open ADA Folder", action: #selector(openFolder)))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(menuItem(title: "Quit IYF Menu Bar", action: #selector(quit)))
+        menu.addItem(menuItem(title: "Quit ADA Menu Bar", action: #selector(quit)))
         item.menu = menu
 
         statusItem = item
     }
 
     @objc private func showTestAlert() {
-        let launcher = scriptDirectory.appendingPathComponent("iyf-show-alert.sh")
+        let launcher = scriptDirectory.appendingPathComponent("ada-show-alert.sh")
         guard FileManager.default.isExecutableFile(atPath: launcher.path) else {
-            presentError("Missing launcher", informativeText: "Could not find executable iyf-show-alert.sh next to iyf-menubar or in IYF_HOME.")
+            presentError("Missing launcher", informativeText: "Could not find executable ada-show-alert.sh next to ada-menubar or in ADA_HOME.")
             return
         }
 
         let process = Process()
         process.executableURL = launcher
-        process.arguments = ["iyf menu bar test", "1s", "0"]
+        process.arguments = ["ada menu bar test", "1s", "0"]
 
         var environment = ProcessInfo.processInfo.environment
-        environment["IYF_AUTO_CLOSE"] = environment["IYF_AUTO_CLOSE"] ?? "20"
+        environment["ADA_AUTO_CLOSE"] = environment["ADA_AUTO_CLOSE"] ?? "20"
         process.environment = environment
 
         do {
@@ -61,8 +61,8 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate {
 
     private func resolveScriptDirectory() -> URL {
         let environment = ProcessInfo.processInfo.environment
-        if let iyfHome = environment["IYF_HOME"], !iyfHome.isEmpty {
-            return URL(fileURLWithPath: iyfHome, isDirectory: true)
+        if let adaHome = environment["ADA_HOME"], !adaHome.isEmpty {
+            return URL(fileURLWithPath: adaHome, isDirectory: true)
         }
 
         let executableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
@@ -84,7 +84,7 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate {
 
 switch Array(CommandLine.arguments.dropFirst()) {
 case ["--check"]:
-    print("iyf-menubar native helper ok")
+    print("ada-menubar native helper ok")
 default:
     let app = NSApplication.shared
     let delegate = MenuBarAppDelegate()
@@ -94,6 +94,6 @@ default:
 #else
 import Foundation
 
-fputs("iyf-menubar requires macOS AppKit.\n", stderr)
+fputs("ada-menubar requires macOS AppKit.\n", stderr)
 exit(1)
 #endif

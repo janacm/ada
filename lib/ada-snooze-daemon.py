@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # =============================================================
-# iyf-snooze-daemon — re-arms the alert after a snooze, or focuses the source app
+# ada-snooze-daemon — re-arms the alert after a snooze, or focuses the source app
 # -------------------------------------------------------------
 # The alert is a sandboxed file:// page in a browser window; once
 # it closes, its JS dies, so it cannot bring itself forcefully
@@ -10,7 +10,7 @@
 #
 # It binds an ephemeral loopback port, then fully detaches
 # (double-fork + setsid) so it survives the terminal that spawned
-# it closing. iyf-show-alert.sh reads the port + token it writes
+# it closing. ada-show-alert.sh reads the port + token it writes
 # to a handoff file and bakes them into the alert URL. The page
 # then signals a decision with a no-cors fetch:
 #
@@ -24,11 +24,11 @@
 # or auto-close), the daemon self-exits at <deadline> seconds.
 #
 # Usage:
-#   iyf-snooze-daemon.py <handoff> <deadline> <alert_script> \
+#   ada-snooze-daemon.py <handoff> <deadline> <alert_script> \
 #       <cmd> <duration> <code> <alert_file> <auto_close> <snooze_minutes> \
 #       [focus_bundle_id] [click_url]
 #
-# Set IYF_SNOOZE_LOG=/path to append a trace line per request/decision (debug).
+# Set ADA_SNOOZE_LOG=/path to append a trace line per request/decision (debug).
 # =============================================================
 import os
 import sys
@@ -49,8 +49,8 @@ try:
      alert_file, auto_close, snooze_minutes) = sys.argv[1:10]
 except ValueError:
     sys.exit(0)
-focus_app = sys.argv[10] if len(sys.argv) > 10 else os.environ.get("IYF_FOCUS_APP", "")
-click_url = sys.argv[11] if len(sys.argv) > 11 else os.environ.get("IYF_CLICK_URL", "")
+focus_app = sys.argv[10] if len(sys.argv) > 10 else os.environ.get("ADA_FOCUS_APP", "")
+click_url = sys.argv[11] if len(sys.argv) > 11 else os.environ.get("ADA_CLICK_URL", "")
 
 try:
     deadline = float(deadline_s)
@@ -61,8 +61,8 @@ if deadline <= 0:
 
 token = token_urlsafe(8)
 
-# Opt-in tracing: set IYF_SNOOZE_LOG=/path to append a line per request/decision.
-_log_path = os.environ.get("IYF_SNOOZE_LOG", "")
+# Opt-in tracing: set ADA_SNOOZE_LOG=/path to append a line per request/decision.
+_log_path = os.environ.get("ADA_SNOOZE_LOG", "")
 
 
 def trace(msg):
@@ -109,14 +109,14 @@ class Handler(BaseHTTPRequestHandler):
         if action == "snooze" and len(parts) >= 3 and parts[2].isdigit():
             mins = int(parts[2])
             if 0 < mins <= 24 * 60:
-                self.server.iyf_result = ("snooze", mins)
-                self.server.iyf_done = True
+                self.server.ada_result = ("snooze", mins)
+                self.server.ada_done = True
         elif action == "dismiss":
-            self.server.iyf_result = ("dismiss", 0)
-            self.server.iyf_done = True
+            self.server.ada_result = ("dismiss", 0)
+            self.server.ada_done = True
         elif action == "focus" and (click_url or focus_app):
-            self.server.iyf_result = ("focus", 0)
-            self.server.iyf_done = True
+            self.server.ada_result = ("focus", 0)
+            self.server.ada_done = True
 
     def log_message(self, *args):
         pass
@@ -142,8 +142,8 @@ def main():
     # while we still share stderr with the caller.
     httpd = HTTPServer(("127.0.0.1", 0), Handler)
     httpd.timeout = 1  # handle_request() returns after 1s of idle
-    httpd.iyf_done = False
-    httpd.iyf_result = None
+    httpd.ada_done = False
+    httpd.ada_result = None
     port = httpd.server_address[1]
 
     daemonize()
@@ -159,14 +159,14 @@ def main():
         return
 
     start = time.time()
-    while not httpd.iyf_done and (time.time() - start) < deadline:
+    while not httpd.ada_done and (time.time() - start) < deadline:
         try:
             httpd.handle_request()
         except Exception:
             break
     httpd.server_close()
 
-    result = httpd.iyf_result
+    result = httpd.ada_result
     if result and result[0] == "focus":
         # A click URL (e.g. claude://resume?session=…) both launches/focuses the
         # target app and navigates it, so prefer it over a bare bundle-id focus.
@@ -194,14 +194,14 @@ def main():
     trace("snooze %dm -> relaunch after sleep" % result[1])
     time.sleep(result[1] * 60)
     env = dict(os.environ)
-    env["IYF_SNOOZED"] = "1"
-    env["IYF_ALERT_FILE"] = alert_file
-    env["IYF_AUTO_CLOSE"] = auto_close
-    env["IYF_SNOOZE_MINUTES"] = snooze_minutes
+    env["ADA_SNOOZED"] = "1"
+    env["ADA_ALERT_FILE"] = alert_file
+    env["ADA_AUTO_CLOSE"] = auto_close
+    env["ADA_SNOOZE_MINUTES"] = snooze_minutes
     if focus_app:
-        env["IYF_FOCUS_APP"] = focus_app
+        env["ADA_FOCUS_APP"] = focus_app
     if click_url:
-        env["IYF_CLICK_URL"] = click_url
+        env["ADA_CLICK_URL"] = click_url
     try:
         subprocess.Popen(
             [alert_script, cmd, duration, code],

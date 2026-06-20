@@ -1,4 +1,4 @@
-# Shared BATS helpers for the iyf test suite.
+# Shared BATS helpers for the ada test suite.
 #
 # Each *.bats file calls `load test_helper` then `setup_common` from its own
 # setup(). This keeps every test hermetic: a private TMPDIR (so the Claude-hook
@@ -12,40 +12,40 @@ setup_common() {
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
   STUBS="$BATS_TEST_DIRNAME/stubs"
 
-  # Clear any IYF_* / app knobs that could bleed in from the developer's shell
-  # and re-enable a real side effect (e.g. an exported IYF_PASEO_ENV that points
+  # Clear any ADA_* / app knobs that could bleed in from the developer's shell
+  # and re-enable a real side effect (e.g. an exported ADA_PASEO_ENV that points
   # at a file re-enabling the snooze daemon). The suite must depend only on what
   # setup_common sets below, not on the parent environment.
-  unset IYF_PASEO_ENV IYF_PASEO_INSTALL_DIR IYF_AUTO_CLOSE \
-        IYF_SKIP_OWN_TERMINAL IYF_SKIP_WHEN_ACTIVE IYF_PASEO_SKIP_WHEN_ACTIVE \
-        IYF_PASEO_EVENTS IYF_PASEO_THRESHOLD IYF_PASEO_POLL \
-        IYF_CLAUDE_THRESHOLD IYF_CLAUDE_STALE_MAX IYF_DEBUG_LOG \
-        IYF_REPO IYF_REPO_DIR IYF_FOCUS_APP_NAME IYF_SNOOZED \
+  unset ADA_PASEO_ENV ADA_PASEO_INSTALL_DIR ADA_AUTO_CLOSE \
+        ADA_SKIP_OWN_TERMINAL ADA_SKIP_WHEN_ACTIVE ADA_PASEO_SKIP_WHEN_ACTIVE \
+        ADA_PASEO_EVENTS ADA_PASEO_THRESHOLD ADA_PASEO_POLL \
+        ADA_CLAUDE_THRESHOLD ADA_CLAUDE_STALE_MAX ADA_DEBUG_LOG \
+        ADA_REPO ADA_REPO_DIR ADA_FOCUS_APP_NAME ADA_SNOOZED \
         __CFBundleIdentifier
 
-  # Private temp so the Claude-hook state dir ($TMPDIR/iyf-claude), the paseo
-  # logfile ($TMPDIR/iyf-paseo-watch.log) and friends are isolated per test.
+  # Private temp so the Claude-hook state dir ($TMPDIR/ada-claude), the paseo
+  # logfile ($TMPDIR/ada-paseo-watch.log) and friends are isolated per test.
   export TMPDIR="$BATS_TEST_TMPDIR"
 
   # Override HOME so anything that reads ~/.zshrc, ~/.claude, ~/.codex, a real
-  # paseo install, or the legacy ~/.iyf-alert-profile sees an empty fixture, not
+  # paseo install, or the legacy ~/.ada-alert-profile sees an empty fixture, not
   # the developer's real config. Tests that need a populated HOME create it.
   export HOME="$BATS_TEST_TMPDIR/home"
   mkdir -p "$HOME"
 
   # Never touch the real alert PID file — killing it would close a live alert.
-  export IYF_NATIVE_PID_FILE="$BATS_TEST_TMPDIR/iyf-alert.pid"
+  export ADA_NATIVE_PID_FILE="$BATS_TEST_TMPDIR/ada-alert.pid"
 
   # An "alert" is the fake helper; it just records the file:// URL it gets.
-  export IYF_NATIVE_ALERT="$STUBS/fake-iyf-alert"
-  export IYF_PROBE_OUT="$BATS_TEST_TMPDIR/probe-url.txt"
+  export ADA_NATIVE_ALERT="$STUBS/fake-ada-alert"
+  export ADA_PROBE_OUT="$BATS_TEST_TMPDIR/probe-url.txt"
 
   # Disable the snooze daemon and click-to-focus so no real socket is opened
-  # and no app is activated during tests. (Empty, not unset — see iyf-show-alert.)
-  export IYF_SNOOZE_MINUTES=""
-  export IYF_FOCUS_APP=""
+  # and no app is activated during tests. (Empty, not unset — see ada-show-alert.)
+  export ADA_SNOOZE_MINUTES=""
+  export ADA_FOCUS_APP=""
 
-  export IYF_ALERT_FILE="$REPO_ROOT/alert.html"
+  export ADA_ALERT_FILE="$REPO_ROOT/alert.html"
 
   # Always shadow the process-touching tools (pgrep/pkill) and the macOS
   # introspection tools (lsappinfo/launchctl) so no test can ever signal or
@@ -82,10 +82,10 @@ refute_file_appears() {
 # Skip a test when the native helper isn't built (install paths that aren't
 # --dry-run call ensure_native_alert, which would otherwise try to swift-build).
 require_native_helper() {
-  [ -x "$REPO_ROOT/iyf-alert" ] \
-    || [ -x "$REPO_ROOT/.build/release/iyf-alert" ] \
-    || [ -x "$REPO_ROOT/.build/debug/iyf-alert" ] \
-    || skip "native iyf-alert not built (swift build -c release --product iyf-alert)"
+  [ -x "$REPO_ROOT/ada-alert" ] \
+    || [ -x "$REPO_ROOT/.build/release/ada-alert" ] \
+    || [ -x "$REPO_ROOT/.build/debug/ada-alert" ] \
+    || skip "native ada-alert not built (swift build -c release --product ada-alert)"
 }
 
 # --- tiny assertion helpers (we don't vendor bats-assert) --------------------
@@ -122,4 +122,9 @@ refute_output_contains() {
 assert_file_contains() {
   grep -qF -- "$2" "$1" && return 0
   echo "expected file $1 to contain: $2"; echo "--- file ---"; cat "$1" 2>/dev/null; return 1
+}
+
+refute_file_contains() {
+  grep -qF -- "$2" "$1" || return 0
+  echo "expected file $1 to NOT contain: $2"; echo "--- file ---"; cat "$1" 2>/dev/null; return 1
 }

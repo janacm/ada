@@ -1,13 +1,13 @@
 #!/bin/bash
 # =============================================================
-# iyf-install — onboarding installer for In Your Face integrations
+# ada-install — onboarding installer for Agent Done Alert integrations
 # -------------------------------------------------------------
-# Interactive by default: pick the local surfaces that should trigger IYF.
+# Interactive by default: pick the local surfaces that should trigger ADA.
 # Scriptable for docs/Homebrew/curl flows:
 #
-#   ./iyf-install.sh --agents terminal,claude,codex
-#   ./iyf-install.sh --agents all --no-test
-#   ./iyf-install.sh --dry-run
+#   ./ada-install.sh --agents terminal,claude,codex
+#   ./ada-install.sh --agents all --no-test
+#   ./ada-install.sh --dry-run
 # =============================================================
 set -u
 
@@ -24,12 +24,12 @@ explicit_agents=""
 usage() {
   cat <<'USAGE'
 Usage:
-  iyf-install.sh                         # interactive selector
-  iyf-install.sh --agents LIST           # comma/space-separated ids
-  iyf-install.sh --agents all            # install every available integration
-  iyf-install.sh --dry-run               # print actions without writing
-  iyf-install.sh --no-test               # skip final sample alert
-  iyf-install.sh --list                  # show known integrations
+  ada-install.sh                         # interactive selector
+  ada-install.sh --agents LIST           # comma/space-separated ids
+  ada-install.sh --agents all            # install every available integration
+  ada-install.sh --dry-run               # print actions without writing
+  ada-install.sh --no-test               # skip final sample alert
+  ada-install.sh --list                  # show known integrations
 
 Integration ids:
   terminal   zsh long-command alerts
@@ -40,7 +40,7 @@ USAGE
 }
 
 say() { printf '%s\n' "$*"; }
-die() { printf 'iyf-install: %s\n' "$*" >&2; exit 1; }
+die() { printf 'ada-install: %s\n' "$*" >&2; exit 1; }
 
 find_python() {
   local p
@@ -72,9 +72,9 @@ find_swift() {
 
 find_native_alert() {
   local p
-  for p in "$dir/iyf-alert" \
-           "$dir/.build/release/iyf-alert" \
-           "$dir/.build/debug/iyf-alert"; do
+  for p in "$dir/ada-alert" \
+           "$dir/.build/release/ada-alert" \
+           "$dir/.build/debug/ada-alert"; do
     [[ -x "$p" ]] && { printf '%s' "$p"; return 0; }
   done
   return 1
@@ -87,19 +87,19 @@ ensure_native_alert() {
     return 0
   fi
 
-  [[ -f "$dir/Package.swift" ]] || die "missing Package.swift; cannot build native iyf-alert"
+  [[ -f "$dir/Package.swift" ]] || die "missing Package.swift; cannot build native ada-alert"
 
   if [[ "$dry_run" == 1 ]]; then
-    say "dry-run: would run swift build -c release --product iyf-alert"
+    say "dry-run: would run swift build -c release --product ada-alert"
     return 0
   fi
 
-  swift_bin=$(find_swift) || die "swift is required to build native iyf-alert"
-  say "Building native alert helper -> $dir/.build/release/iyf-alert"
-  (cd "$dir" && "$swift_bin" build -c release --product iyf-alert) ||
-    die "failed to build native iyf-alert"
+  swift_bin=$(find_swift) || die "swift is required to build native ada-alert"
+  say "Building native alert helper -> $dir/.build/release/ada-alert"
+  (cd "$dir" && "$swift_bin" build -c release --product ada-alert) ||
+    die "failed to build native ada-alert"
 
-  helper=$(find_native_alert) || die "native helper build did not produce an executable iyf-alert"
+  helper=$(find_native_alert) || die "native helper build did not produce an executable ada-alert"
   say "Native alert helper -> $helper"
 }
 
@@ -174,14 +174,14 @@ parse_agent_list() {
 render_selector() {
   local cursor=$1 i id marker pointer availability
   printf '\033[H\033[J'
-  say "iyf"
+  say "ada"
   say
   say "Source: $dir"
   say "Found ${#AGENT_IDS[@]} integrations"
   say "Which integrations do you want to install?"
   say
   say "-- Core alert runtime -- always included"
-  say "   iyf-alert, iyf-show-alert.sh, alert.html, snooze helper"
+  say "   ada-alert, ada-show-alert.sh, alert.html, snooze helper"
   say
   say "-- Integrations --"
   for (( i=0; i<${#AGENT_IDS[@]}; i++ )); do
@@ -291,10 +291,10 @@ interactive_select() {
 
 install_terminal() {
   local zshrc="$HOME/.zshrc"
-  local source_line="source \"$dir/iyf.sh\""
+  local source_line="source \"$dir/ada.sh\""
   say "Installing terminal integration -> $zshrc"
   if [[ "$dry_run" == 1 ]]; then
-    say "dry-run: would add managed iyf block sourcing $dir/iyf.sh"
+    say "dry-run: would add managed ada block sourcing $dir/ada.sh"
     return 0
   fi
   mkdir -p "$(dirname "$zshrc")"
@@ -305,16 +305,27 @@ install_terminal() {
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
 source_line = sys.argv[2]
-start = "# >>> iyf >>>"
-end = "# <<< iyf <<<"
-block = f"{start}\n# In Your Face terminal command alerts\n{source_line}\n{end}\n"
+start = "# >>> ada >>>"
+end = "# <<< ada <<<"
+block = f"{start}\n# Agent Done Alert terminal command alerts\n{source_line}\n{end}\n"
 text = path.read_text() if path.exists() else ""
+
+def strip_block(text, start, end):
+    while start in text and end in text:
+        before, rest = text.split(start, 1)
+        _, after = rest.split(end, 1)
+        text = before.rstrip("\n") + "\n" + after.lstrip("\n")
+    return text
+
+# Migration: drop the legacy "iyf" managed block from pre-rename installs so we
+# replace it instead of appending a second block that sources a stale
+# ~/.iyf/iyf.sh path (which would either error or fire duplicate alerts).
+text = strip_block(text, "# >>> iyf >>>", "# <<< iyf <<<")
+
 if start in text and end in text:
-    before, rest = text.split(start, 1)
-    _, after = rest.split(end, 1)
-    text = before.rstrip() + "\n\n" + block + after.lstrip("\n")
+    text = strip_block(text, start, end).rstrip() + "\n\n" + block
 elif source_line in text:
-    pass
+    pass  # a bare manual `source .../ada.sh` line is already present
 else:
     text = text.rstrip() + "\n\n" + block
 path.write_text(text)
@@ -325,7 +336,7 @@ install_hook_json() {
   local label=$1 settings=$2 stop_async=$3
   local python
   python=$(find_python) || die "python3 is required for $label hook installation"
-  local hook="$dir/lib/iyf-claude-hook.sh"
+  local hook="$dir/lib/ada-claude-hook.sh"
   say "Installing $label integration -> $settings"
   if [[ "$dry_run" == 1 ]]; then
     say "dry-run: would merge UserPromptSubmit and Stop hooks for $hook"
@@ -344,18 +355,23 @@ if settings.exists() and settings.read_text().strip():
 else:
     data = {}
 
-backup = settings.with_name(settings.name + ".bak.iyf-" + time.strftime("%Y%m%d-%H%M%S"))
+backup = settings.with_name(settings.name + ".bak.ada-" + time.strftime("%Y%m%d-%H%M%S"))
 if settings.exists():
     shutil.copy2(settings, backup)
 
 hooks_root = data.setdefault("hooks", {})
 
-def has_iyf_command(group):
-    for hook_obj in group.get("hooks", []):
-        command = hook_obj.get("command", "")
-        if command == hook or command.endswith("/iyf-claude-hook.sh"):
-            return True
-    return False
+# Recognize our own hook in any form so re-running replaces it instead of
+# stacking duplicates. The legacy "iyf-claude-hook.sh" suffix is included so
+# pre-rename installs are migrated, not left to fire a stale path alongside the
+# new one (duplicate alerts, or a dead ~/.iyf path if that clone was removed).
+def is_managed_command(command):
+    return (command == hook
+            or command.endswith("/ada-claude-hook.sh")
+            or command.endswith("/iyf-claude-hook.sh"))
+
+def has_managed_command(group):
+    return any(is_managed_command(h.get("command", "")) for h in group.get("hooks", []))
 
 def make_group(event):
     command = {"type": "command", "command": hook, "timeout": 10}
@@ -367,7 +383,7 @@ for event in ("UserPromptSubmit", "Stop"):
     groups = hooks_root.setdefault(event, [])
     if not isinstance(groups, list):
         raise SystemExit(f"hooks.{event} must be a list")
-    groups[:] = [group for group in groups if not has_iyf_command(group)]
+    groups[:] = [group for group in groups if not has_managed_command(group)]
     groups.append(make_group(event))
 
 settings.write_text(json.dumps(data, indent=2) + "\n")
@@ -387,20 +403,20 @@ install_paseo() {
   find_paseo >/dev/null 2>&1 || die "Paseo CLI/app not found"
   say "Installing Paseo integration -> LaunchAgent"
   if [[ "$dry_run" == 1 ]]; then
-    say "dry-run: would run $dir/iyf-paseo-watch.sh install"
+    say "dry-run: would run $dir/ada-paseo-watch.sh install"
     return 0
   fi
-  "$dir/iyf-paseo-watch.sh" install
+  "$dir/ada-paseo-watch.sh" install
 }
 
 run_test_alert() {
   [[ "$run_test" == 1 ]] || return 0
   say "Firing a sample alert"
   if [[ "$dry_run" == 1 ]]; then
-    say "dry-run: would run $dir/lib/iyf-show-alert.sh \"iyf install test\" \"1s\" 0"
+    say "dry-run: would run $dir/lib/ada-show-alert.sh \"ada install test\" \"1s\" 0"
     return 0
   fi
-  IYF_AUTO_CLOSE="${IYF_AUTO_CLOSE:-20}" "$dir/lib/iyf-show-alert.sh" "iyf install test" "1s" 0
+  ADA_AUTO_CLOSE="${ADA_AUTO_CLOSE:-20}" "$dir/lib/ada-show-alert.sh" "ada install test" "1s" 0
 }
 
 while [[ $# -gt 0 ]]; do
@@ -437,9 +453,9 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-[[ "$(uname -s)" == "Darwin" ]] || die "iyf currently supports macOS only"
-[[ -x "$dir/lib/iyf-show-alert.sh" ]] || die "missing executable $dir/lib/iyf-show-alert.sh"
-[[ -x "$dir/lib/iyf-claude-hook.sh" ]] || die "missing executable $dir/lib/iyf-claude-hook.sh"
+[[ "$(uname -s)" == "Darwin" ]] || die "ada currently supports macOS only"
+[[ -x "$dir/lib/ada-show-alert.sh" ]] || die "missing executable $dir/lib/ada-show-alert.sh"
+[[ -x "$dir/lib/ada-claude-hook.sh" ]] || die "missing executable $dir/lib/ada-claude-hook.sh"
 
 if [[ -n "$explicit_agents" ]]; then
   parse_agent_list "$explicit_agents"

@@ -1,7 +1,7 @@
 #if canImport(AppKit) && canImport(WebKit)
 import AppKit
 import Foundation
-import IYFAlertCore
+import ADAAlertCore
 import WebKit
 
 final class AlertWindow: NSWindow {
@@ -48,9 +48,9 @@ final class AlertAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
-        userContentController.add(self, name: "iyfClose")
-        userContentController.add(self, name: "iyfSignal")
-        userContentController.add(self, name: "iyfOpen")
+        userContentController.add(self, name: "adaClose")
+        userContentController.add(self, name: "adaSignal")
+        userContentController.add(self, name: "adaOpen")
 
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = userContentController
@@ -81,13 +81,13 @@ final class AlertAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         switch message.name {
-        case "iyfClose":
+        case "adaClose":
             NSApp.terminate(nil)
-        case "iyfSignal":
+        case "adaSignal":
             if let path = message.body as? String {
                 sendSignal(path)
             }
-        case "iyfOpen":
+        case "adaOpen":
             // Open external links (e.g. the feedback link) in the user's default
             // browser rather than navigating the alert's own WebView away. Only
             // http(s) is honored so an unexpected scheme can't launch something else.
@@ -129,7 +129,7 @@ final class AlertAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
 switch AlertCommandLine.parse(Array(CommandLine.arguments.dropFirst())) {
 case .success(.check):
-    print("iyf-alert native helper ok")
+    print("ada-alert native helper ok")
 case .success(.help):
     print(AlertCommandLine.usage)
 case .success(.show(let url)):
@@ -145,6 +145,6 @@ case .failure(let error):
 #else
 import Foundation
 
-fputs("iyf-alert requires macOS AppKit/WebKit.\n", stderr)
+fputs("ada-alert requires macOS AppKit/WebKit.\n", stderr)
 exit(1)
 #endif

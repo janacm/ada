@@ -1,6 +1,6 @@
 # Security Policy
 
-`iyf` is a local macOS utility. It can edit shell startup files, agent hook
+`ada` is a local macOS utility. It can edit shell startup files, agent hook
 configuration, and LaunchAgent state when you ask the installer to wire those
 integrations. Treat those surfaces as security-sensitive.
 

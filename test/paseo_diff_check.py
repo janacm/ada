@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Component test for the iyf-paseo-watch poll/diff loop.
+"""Component test for the ada-paseo-watch poll/diff loop.
 
 The .py is the heart of the Paseo integration (running->idle finish, running->
-error fail, the seeding gate, permission dedupe, and IYF_PASEO_EVENTS subsetting)
+error fail, the seeding gate, permission dedupe, and ADA_PASEO_EVENTS subsetting)
 and the bats front-door tests can't reach it. This drives main() directly with a
 scripted sequence of `paseo --json` snapshots and a pinned clock, capturing the
-fire() calls. Run by test/iyf-paseo-watch.bats; exits non-zero on any failure.
+fire() calls. Run by test/ada-paseo-watch.bats; exits non-zero on any failure.
 """
 import importlib.util
 import os
 
 MOD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "..", "lib", "iyf-paseo-watch.py")
+                        "..", "lib", "ada-paseo-watch.py")
 
 
 class StopLoop(Exception):
@@ -80,39 +80,39 @@ def check(name, cond, detail=""):
 
 
 # 1. running -> idle fires a finish (code 0) when elapsed >= threshold.
-m = load_mod({"IYF_PASEO_THRESHOLD": "45", "IYF_PASEO_EVENTS": "finish error permission",
-              "IYF_PASEO_SKIP_WHEN_ACTIVE": ""})
+m = load_mod({"ADA_PASEO_THRESHOLD": "45", "ADA_PASEO_EVENTS": "finish error permission",
+              "ADA_PASEO_SKIP_WHEN_ACTIVE": ""})
 fires = run_loop(m, [[agent("a1", "running")], [agent("a1", "idle")]],
                  [[], []], [1000, 1050])  # elapsed 50 >= 45
 check("running->idle fires finish above threshold",
       len(fires) == 1 and fires[0][2] == 0 and "Paseo" in fires[0][0], fires)
 
 # 1b. boundary: elapsed == threshold must fire (proves the gate is `>=`, not `>`).
-m = load_mod({"IYF_PASEO_THRESHOLD": "45", "IYF_PASEO_EVENTS": "finish error permission",
-              "IYF_PASEO_SKIP_WHEN_ACTIVE": ""})
+m = load_mod({"ADA_PASEO_THRESHOLD": "45", "ADA_PASEO_EVENTS": "finish error permission",
+              "ADA_PASEO_SKIP_WHEN_ACTIVE": ""})
 fires = run_loop(m, [[agent("a1", "running")], [agent("a1", "idle")]],
                  [[], []], [1000, 1045])  # elapsed == 45
 check("running->idle fires at exactly the threshold", len(fires) == 1, fires)
 
 # 2. running -> idle does NOT fire when elapsed < threshold.
-m = load_mod({"IYF_PASEO_THRESHOLD": "45", "IYF_PASEO_EVENTS": "finish error permission",
-              "IYF_PASEO_SKIP_WHEN_ACTIVE": ""})
+m = load_mod({"ADA_PASEO_THRESHOLD": "45", "ADA_PASEO_EVENTS": "finish error permission",
+              "ADA_PASEO_SKIP_WHEN_ACTIVE": ""})
 fires = run_loop(m, [[agent("a1", "running")], [agent("a1", "idle")]],
                  [[], []], [1000, 1030])  # elapsed 30 < 45
 check("running->idle stays silent below threshold", fires == [], fires)
 
 # 3. seeding: an agent already running at the first poll must not fire a bogus
 #    finish; the finish only fires on the later transition.
-m = load_mod({"IYF_PASEO_THRESHOLD": "0", "IYF_PASEO_EVENTS": "finish error permission",
-              "IYF_PASEO_SKIP_WHEN_ACTIVE": ""})
+m = load_mod({"ADA_PASEO_THRESHOLD": "0", "ADA_PASEO_EVENTS": "finish error permission",
+              "ADA_PASEO_SKIP_WHEN_ACTIVE": ""})
 fires = run_loop(m, [[agent("a1", "running")], [agent("a1", "running")], [agent("a1", "idle")]],
                  [[], [], []], [1000, 1001, 1002])
 check("no spurious fire on the seeding poll; finish fires once on transition",
       len(fires) == 1 and fires[0][2] == 0, fires)
 
 # 4. running -> error fires a failure (code 1), no threshold gate.
-m = load_mod({"IYF_PASEO_THRESHOLD": "999", "IYF_PASEO_EVENTS": "finish error permission",
-              "IYF_PASEO_SKIP_WHEN_ACTIVE": ""})
+m = load_mod({"ADA_PASEO_THRESHOLD": "999", "ADA_PASEO_EVENTS": "finish error permission",
+              "ADA_PASEO_SKIP_WHEN_ACTIVE": ""})
 fires = run_loop(m, [[agent("a1", "running")], [agent("a1", "error")]],
                  [[], []], [1000, 1001])  # elapsed 1, but error ignores threshold
 check("running->error fires failure (code 1) regardless of threshold",
@@ -123,19 +123,19 @@ check("running->error fires failure (code 1) regardless of threshold",
 #    re-alerts on later polls.
 perm_a = {"toolName": "bash", "agentId": "a1"}     # pre-existing at startup
 perm_b = {"toolName": "write", "agentId": "a2"}    # appears at poll 2
-m = load_mod({"IYF_PASEO_EVENTS": "finish error permission",
-              "IYF_PASEO_SKIP_WHEN_ACTIVE": ""})
+m = load_mod({"ADA_PASEO_EVENTS": "finish error permission",
+              "ADA_PASEO_SKIP_WHEN_ACTIVE": ""})
 fires = run_loop(m, [[], [], []],
                  [[perm_a], [perm_a, perm_b], [perm_a, perm_b]], [1, 2, 3])
 check("pre-existing permit is seeded silently; only the new one fires, once",
       len(fires) == 1 and "needs you" in fires[0][0], fires)
 
-# 6. IYF_PASEO_EVENTS subsetting: with only 'error', a finish is suppressed.
-m = load_mod({"IYF_PASEO_THRESHOLD": "0", "IYF_PASEO_EVENTS": "error",
-              "IYF_PASEO_SKIP_WHEN_ACTIVE": ""})
+# 6. ADA_PASEO_EVENTS subsetting: with only 'error', a finish is suppressed.
+m = load_mod({"ADA_PASEO_THRESHOLD": "0", "ADA_PASEO_EVENTS": "error",
+              "ADA_PASEO_SKIP_WHEN_ACTIVE": ""})
 fires = run_loop(m, [[agent("a1", "running")], [agent("a1", "idle")]],
                  [[], []], [1000, 1100])
-check("IYF_PASEO_EVENTS='error' suppresses finish alerts", fires == [], fires)
+check("ADA_PASEO_EVENTS='error' suppresses finish alerts", fires == [], fires)
 
 if FAILURES:
     raise SystemExit("paseo diff-loop checks failed: %s" % ", ".join(FAILURES))
