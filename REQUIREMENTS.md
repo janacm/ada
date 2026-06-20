@@ -1,13 +1,13 @@
 # Requirements
 
-This is the living requirements record for `iyf`. Update it whenever a product,
+This is the living requirements record for `ada`. Update it whenever a product,
 integration, configuration, or operational requirement is added, changed, or
 removed.
 
 ## Baseline
 
-- `iyf` must run on macOS from a zsh shell hook for terminal command alerts.
-- `iyf` must be distributed as open source under the MIT License.
+- `ada` must run on macOS from a zsh shell hook for terminal command alerts.
+- `ada` must be distributed as open source under the MIT License.
 - The user-facing documentation of record is `README.md`.
 - Maintainer/debugging documentation is duplicated in `CLAUDE.md` and
   `AGENTS.md`; keep those files aligned when changing maintainer guidance.
@@ -32,21 +32,21 @@ removed.
 
 ## Onboarding Installer
 
-- `iyf-install.sh` must provide the coworker-ready onboarding entry point for
-  choosing which integrations trigger IYF.
+- `ada-install.sh` must provide the coworker-ready onboarding entry point for
+  choosing which integrations trigger ADA.
 - The installer must offer an interactive terminal selector when run from a TTY
   and a scriptable `--agents` path for non-interactive install flows.
 - The selector must include Terminal commands, Claude Code, Codex, and Paseo as
   independently selectable integrations.
-- The shared alert runtime files, including the native `iyf-alert` helper, must
+- The shared alert runtime files, including the native `ada-alert` helper, must
   be treated as always included; the selector controls integration wiring, not
   whether the launcher exists.
-- The installer must build or validate the native `iyf-alert` helper before it
+- The installer must build or validate the native `ada-alert` helper before it
   installs integrations or fires a sample alert.
 - The installer must detect whether each integration target is available before
   selecting or installing it.
 - The installer must be idempotent: re-running it must update existing managed
-  IYF wiring without duplicating shell source blocks or hook entries.
+  ADA wiring without duplicating shell source blocks or hook entries.
 - Shell setup must use a clearly marked managed block in `~/.zshrc`.
 - Claude Code setup must merge `UserPromptSubmit` and `Stop` hooks into
   `~/.claude/settings.json` without removing unrelated hooks.
@@ -54,29 +54,29 @@ removed.
   `~/.codex/hooks.json` without removing unrelated hooks.
 - JSON hook setup must write a timestamped backup before changing an existing
   settings file.
-- Paseo setup through the installer must delegate to `iyf-paseo-watch.sh install`
+- Paseo setup through the installer must delegate to `ada-paseo-watch.sh install`
   so the LaunchAgent staging behavior stays centralized.
 - The installer must support `--list`, `--dry-run`, and `--no-test` for
   validation, documentation, and automation.
 
 ## Terminal Command Alerts
 
-- `iyf.sh` must register zsh `preexec` and `precmd` hooks.
+- `ada.sh` must register zsh `preexec` and `precmd` hooks.
 - `preexec` must record the command label and start time before execution.
 - `precmd` must measure elapsed time, capture the exit code, and trigger an
-  alert only when the elapsed time exceeds `IYF_THRESHOLD`.
-- Commands whose basename appears in `IYF_IGNORE_CMDS` must not trigger alerts.
-- When `IYF_SKIP_OWN_TERMINAL=1`, an alert must be suppressed if the terminal
+  alert only when the elapsed time exceeds `ADA_THRESHOLD`.
+- Commands whose basename appears in `ADA_IGNORE_CMDS` must not trigger alerts.
+- When `ADA_SKIP_OWN_TERMINAL=1`, an alert must be suppressed if the terminal
   that ran the command is the frontmost macOS app at completion.
-- Entries in `IYF_SKIP_WHEN_ACTIVE` must suppress alerts when the frontmost app
+- Entries in `ADA_SKIP_WHEN_ACTIVE` must suppress alerts when the frontmost app
   bundle id exactly matches an entry or the app name contains an entry.
-- If the frontmost app cannot be determined, `iyf` must err toward showing the
+- If the frontmost app cannot be determined, `ada` must err toward showing the
   alert.
-- The manual `iyf ...` helper must trigger the shared alert path for testing.
+- The manual `ada ...` helper must trigger the shared alert path for testing.
 
 ## Shared Alert Launcher
 
-- `iyf-show-alert.sh` is the canonical launcher used by terminal, Claude/Codex,
+- `ada-show-alert.sh` is the canonical launcher used by terminal, Claude/Codex,
   and Paseo entry points.
 - The alert must show the command or prompt label, formatted duration, exit
   status, auto-close countdown, and git repository badge when a repository can
@@ -85,15 +85,15 @@ removed.
   human-readable text, not transport encoding artifacts.
 - Repository display must be resolved once by the launcher and preserved across
   snoozed relaunches.
-- `IYF_REPO` must override repository display, including an explicit empty
+- `ADA_REPO` must override repository display, including an explicit empty
   value to hide the badge.
-- `IYF_REPO_DIR` must allow callers whose current directory is not the project
+- `ADA_REPO_DIR` must allow callers whose current directory is not the project
   directory to tell the launcher where to resolve the repository name.
-- `IYF_ALERT_FILE` must allow callers to replace `alert.html` with another HTML
+- `ADA_ALERT_FILE` must allow callers to replace `alert.html` with another HTML
   file, including diagnostic pages.
-- `IYF_AUTO_CLOSE` must control the alert auto-dismiss timeout, defaulting to a
+- `ADA_AUTO_CLOSE` must control the alert auto-dismiss timeout, defaulting to a
   positive value when unset or invalid.
-- `IYF_FOCUS_APP` and `IYF_FOCUS_APP_NAME` must allow click-anywhere dismissal
+- `ADA_FOCUS_APP` and `ADA_FOCUS_APP_NAME` must allow click-anywhere dismissal
   to bring a source app forward and show a human-readable hint.
 - Pressing `Esc`, clicking for a plain dismiss, or auto-close must dismiss the
   alert without requiring a snooze.
@@ -106,22 +106,22 @@ removed.
 
 ## Native Window Behavior
 
-- The SwiftPM package must expose an `iyf-alert` executable product.
-- The SwiftPM package must expose an optional `iyf-menubar` executable product
+- The SwiftPM package must expose an `ada-alert` executable product.
+- The SwiftPM package must expose an optional `ada-menubar` executable product
   that runs as a native macOS menu bar status item.
 - The menu bar helper must not be an alert renderer or a replacement for the
   terminal, Claude/Codex, or Paseo integrations; it may provide convenience
-  actions such as firing a sample alert and opening the IYF folder.
-- The menu bar helper must trigger alerts through `iyf-show-alert.sh` so it
+  actions such as firing a sample alert and opening the ADA folder.
+- The menu bar helper must trigger alerts through `ada-show-alert.sh` so it
   shares the same native-only rendering path and configuration as every other
   entry point.
-- The launcher must use the native `iyf-alert` helper when it is executable at
-  `IYF_NATIVE_ALERT`, beside `iyf-show-alert.sh`, or in the SwiftPM
+- The launcher must use the native `ada-alert` helper when it is executable at
+  `ADA_NATIVE_ALERT`, beside `ada-show-alert.sh`, or in the SwiftPM
   `.build/release` or `.build/debug` output beside the launcher.
-- The launcher must fail closed when `iyf-alert` is missing or not executable;
+- The launcher must fail closed when `ada-alert` is missing or not executable;
   it must not open Chrome, Brave, Edge, Safari, or any other browser as a
   fallback.
-- The native helper must render the configured `IYF_ALERT_FILE` URL in a WebKit
+- The native helper must render the configured `ADA_ALERT_FILE` URL in a WebKit
   view without opening Chrome, Brave, Edge, or Safari.
 - The alert must be an ordinary maximized window in the current Space, not a
   macOS native full-screen window in a new Space.
@@ -134,7 +134,7 @@ removed.
 
 ## Snooze And Focus
 
-- `IYF_SNOOZE_MINUTES` must define the snooze button options, preserving an
+- `ADA_SNOOZE_MINUTES` must define the snooze button options, preserving an
   explicit empty value as "hide snooze buttons".
 - The snooze bar must offer a "Custom" option that reveals a minutes input only
   once clicked; submitting it must request a snooze for the entered duration,
@@ -148,7 +148,7 @@ removed.
   the chosen delay.
 - Snooze delays must be positive and no longer than 24 hours.
 - A focus request must use the configured bundle id to bring the originating app
-  forward, or, when `IYF_CLICK_URL` is set, `open` that URL instead (which both
+  forward, or, when `ADA_CLICK_URL` is set, `open` that URL instead (which both
   activates the target app and deep-links into it). The URL must take precedence
   over the bundle id, and a snooze relaunch must preserve it.
 - The daemon must self-exit after the alert decision window if the user dismisses
@@ -158,30 +158,30 @@ removed.
 
 ## Claude Code And Codex Hooks
 
-- `iyf-claude-hook.sh` must support the shared Claude Code and Codex hook payload
+- `ada-claude-hook.sh` must support the shared Claude Code and Codex hook payload
   shape from stdin.
 - A `UserPromptSubmit` event must record the start timestamp and prompt text,
   keyed by `session_id`.
 - A `Stop` event must compute elapsed turn time and trigger the shared launcher
-  only when the elapsed time meets `IYF_CLAUDE_THRESHOLD`.
+  only when the elapsed time meets `ADA_CLAUDE_THRESHOLD`.
 - The hook must honor the same active-app suppression rules as terminal command
   alerts.
-- The hook must set `IYF_REPO_DIR` from the payload `cwd` so the launcher can
+- The hook must set `ADA_REPO_DIR` from the payload `cwd` so the launcher can
   display the project repository even when the hook's own current directory is
   different.
 - On a `Stop` event, the hook must make the alert click open that turn's
   conversation in the Claude macOS app via the `claude://resume?session=<id>`
-  deep link (passed through `IYF_CLICK_URL`). It must wire this only for genuine
+  deep link (passed through `ADA_CLICK_URL`). It must wire this only for genuine
   Claude Code sessions — the resolved session id must be a UUID and have a
   transcript at `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/*/<id>.jsonl` — so
   Codex turns, which share the hook but cannot be imported into Claude.app, get
   no link rather than a "couldn't open session" error.
 - If a Codex `Stop` payload has a different or missing `session_id`, the hook
   must fall back to the most recent start stamp only while it is younger than
-  `IYF_CLAUDE_STALE_MAX`.
+  `ADA_CLAUDE_STALE_MAX`.
 - The hook must remove consumed start and prompt state after handling a stop.
-- Debug logging must remain opt-in through `IYF_DEBUG_LOG`, `IYF_DEBUG_LOG_FILE`,
-  or the `${TMPDIR}/iyf-claude-debug.on` sentinel.
+- Debug logging must remain opt-in through `ADA_DEBUG_LOG`, `ADA_DEBUG_LOG_FILE`,
+  or the `${TMPDIR}/ada-claude-debug.on` sentinel.
 - Invalid, missing, or unparseable hook payloads must exit quietly without
   breaking the caller.
 
@@ -189,17 +189,17 @@ removed.
 
 - The Paseo integration must be a poller, not a provider hook, because Paseo
   runs agents through its own daemon runtime.
-- `iyf-paseo-watch.py` must poll the supported CLI JSON surfaces:
+- `ada-paseo-watch.py` must poll the supported CLI JSON surfaces:
   `paseo ls --json` and `paseo permit ls --json`.
 - The watcher must synthesize a finished-turn alert on `running -> idle` when
-  elapsed time meets `IYF_PASEO_THRESHOLD`.
+  elapsed time meets `ADA_PASEO_THRESHOLD`.
 - The watcher must synthesize a failed-turn alert on `running -> error`.
 - The watcher must synthesize a permission alert for newly observed pending
   permission requests.
-- `IYF_PASEO_EVENTS` must allow any subset of `finish`, `error`, and
+- `ADA_PASEO_EVENTS` must allow any subset of `finish`, `error`, and
   `permission`.
 - The watcher must default to suppressing alerts while the Paseo desktop app is
-  frontmost, and `IYF_PASEO_SKIP_WHEN_ACTIVE` must allow that default to be
+  frontmost, and `ADA_PASEO_SKIP_WHEN_ACTIVE` must allow that default to be
   changed or disabled.
 - The watcher must tolerate transient CLI or JSON failures by treating them as
   empty snapshots rather than crashing.
@@ -210,17 +210,17 @@ removed.
 
 ## Paseo LaunchAgent
 
-- `iyf-paseo-watch.sh install` must stage its runtime into a non-TCC-protected
-  directory (`IYF_PASEO_INSTALL_DIR`, default `~/.local/share/iyf`) before
+- `ada-paseo-watch.sh install` must stage its runtime into a non-TCC-protected
+  directory (`ADA_PASEO_INSTALL_DIR`, default `~/.local/share/ada`) before
   loading launchd.
-- The staged runtime must include `iyf-paseo-watch.sh`,
-  `iyf-paseo-watch.py`, `iyf-show-alert.sh`, `iyf-snooze-daemon.py`, and
+- The staged runtime must include `ada-paseo-watch.sh`,
+  `ada-paseo-watch.py`, `ada-show-alert.sh`, `ada-snooze-daemon.py`, and
   `alert.html`. Staging must mirror the dev-checkout layout — the front door
-  (`iyf-paseo-watch.sh`) and `alert.html` at the top, the internal scripts under
+  (`ada-paseo-watch.sh`) and `alert.html` at the top, the internal scripts under
   `lib/` — so every `lib/`-relative reference resolves identically whether run
   from a checkout or from the staged LaunchAgent.
-- `iyf-paseo-watch.sh install` must stage a native helper executable. If
-  `iyf-alert` is not already built, it may build it with SwiftPM when the source
+- `ada-paseo-watch.sh install` must stage a native helper executable. If
+  `ada-alert` is not already built, it may build it with SwiftPM when the source
   checkout contains `Package.swift`; if it cannot stage the helper, install must
   fail instead of relying on a browser fallback.
 - The LaunchAgent must run from the staged path so it does not fail when the
@@ -228,14 +228,14 @@ removed.
   into those TCC-protected locations.
 - The LaunchAgent must include a PATH that can find common `paseo`, `python3`,
   and system tool locations without relying on the user's interactive shell.
-- `IYF_PASEO_ENV` must allow watcher configuration through an env file, defaulting
+- `ADA_PASEO_ENV` must allow watcher configuration through an env file, defaulting
   to `paseo-watch.env` next to the running script.
-- `iyf-paseo-watch.sh status` must report whether the job is loaded, whether a
+- `ada-paseo-watch.sh status` must report whether the job is loaded, whether a
   live poll loop is running, where the plist is, where the staged runtime is, and
   whether the watcher log is clean.
-- `iyf-paseo-watch.sh uninstall` must unload the LaunchAgent and remove its
+- `ada-paseo-watch.sh uninstall` must unload the LaunchAgent and remove its
   plist.
-- `iyf-paseo-watch.sh test` must fire one sample alert through the shared
+- `ada-paseo-watch.sh test` must fire one sample alert through the shared
   launcher.
 
 ## Dependencies And Degradation
@@ -245,9 +245,9 @@ removed.
   and snooze/focus support.
 - The base terminal alert must still work without `python3`, but URL encoding,
   snooze, and click-to-focus may degrade.
-- SwiftPM is required to build the native `iyf-alert` helper.
+- SwiftPM is required to build the native `ada-alert` helper.
 - A browser is not a runtime dependency. Missing Chrome, Brave, Edge, or Safari
-  must not affect `iyf` when the native helper is built.
+  must not affect `ada` when the native helper is built.
 - `paseo` is required only for the Paseo watcher and may be found on `PATH`,
   under `~/.local/bin`, or in the Paseo application bundle.
 
@@ -268,17 +268,17 @@ removed.
 
 - 2026-06-19: Clicking a Claude Code alert now opens that turn's conversation in
   the Claude macOS app via the `claude://resume?session=<id>` deep link. Added a
-  generic `IYF_CLICK_URL` click target (precedence over `IYF_FOCUS_APP`) wired
+  generic `ADA_CLICK_URL` click target (precedence over `ADA_FOCUS_APP`) wired
   through the launcher and snooze/focus daemon; the hook sets it only for real
   Claude Code sessions (UUID id with an on-disk transcript).
 - 2026-06-17: Added open-source distribution requirements: MIT license,
   contribution guide, security policy, and local-first public documentation.
-- 2026-06-17: Added an optional native SwiftPM `iyf-menubar` status item for
+- 2026-06-17: Added an optional native SwiftPM `ada-menubar` status item for
   convenience actions without changing the canonical alert launcher.
 - 2026-06-15: Added the onboarding installer requirement: users can select
   Terminal, Claude Code, Codex, and Paseo integrations through
-  `iyf-install.sh`, with scriptable and dry-run modes.
-- 2026-06-15: Made native SwiftPM `iyf-alert` the only alert renderer; removed
+  `ada-install.sh`, with scriptable and dry-run modes.
+- 2026-06-15: Made native SwiftPM `ada-alert` the only alert renderer; removed
   all browser fallback requirements.
 - 2026-06-15: Added the initial requirements baseline. No implementation commits
   were present after the previous docs-automation boundary; this captures the

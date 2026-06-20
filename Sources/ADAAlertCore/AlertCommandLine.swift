@@ -17,10 +17,10 @@ public struct AlertCommandLineError: Error, Equatable {
 public enum AlertCommandLine {
     public static let usage = """
     Usage:
-      iyf-alert <alert-url>
-      iyf-alert --check
+      ada-alert <alert-url>
+      ada-alert --check
 
-    <alert-url> is the file:// URL built by iyf-show-alert.sh.
+    <alert-url> is the file:// URL built by ada-show-alert.sh.
     """
 
     public static func parse(_ arguments: [String]) -> Result<AlertCommand, AlertCommandLineError> {
@@ -44,10 +44,10 @@ public enum AlertCommandLine {
 
 public let nativeCloseBridgeScript = """
 (function() {
-  window.iyfNative = true;
+  window.adaNative = true;
   window.close = function() {
     try {
-      window.webkit.messageHandlers.iyfClose.postMessage('close');
+      window.webkit.messageHandlers.adaClose.postMessage('close');
     } catch (e) {}
   };
 })();

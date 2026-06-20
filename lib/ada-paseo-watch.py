@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 # =============================================================
-# iyf-paseo-watch.py — the poll/diff loop behind iyf-paseo-watch.sh
+# ada-paseo-watch.py — the poll/diff loop behind ada-paseo-watch.sh
 # -------------------------------------------------------------
 # Kept in Python (not bash) because the loop needs per-agent state
 # keyed by arbitrary id strings — i.e. associative arrays — and macOS
 # still ships bash 3.2, which doesn't have them. python3 is already a
 # hard dependency of this repo (JSON parsing + the snooze daemon), so
-# this mirrors the existing iyf-show-alert.sh + iyf-snooze-daemon.py
+# this mirrors the existing ada-show-alert.sh + ada-snooze-daemon.py
 # split: a bash front door, a python worker.
 #
 # It polls the Paseo daemon via the CLI, diffs each agent's status
 # between snapshots, and shells out to the shared launcher when a turn
 # finishes / fails, or a new permission request appears. See
-# iyf-paseo-watch.sh for the full rationale and the env knobs.
+# ada-paseo-watch.sh for the full rationale and the env knobs.
 #
 # Inherited environment:
 #   PASEO_BIN  resolved paseo CLI path (from the .sh)
-#   plus all the IYF_* knobs documented in iyf-paseo-watch.sh
-# (iyf-show-alert.sh is found as a sibling of this file, not via the env.)
+#   plus all the ADA_* knobs documented in ada-paseo-watch.sh
+# (ada-show-alert.sh is found as a sibling of this file, not via the env.)
 # =============================================================
 import hashlib
 import json
@@ -27,12 +27,12 @@ import sys
 import time
 
 PASEO = os.environ.get("PASEO_BIN") or "paseo"
-# iyf-show-alert.sh is always a sibling of this file — both live in lib/ in a dev
-# checkout AND in the staged LaunchAgent layout (~/.local/share/iyf/lib). Resolve
-# it relative to __file__ rather than an inherited IYF_DIR so it can't drift if
-# the caller sets IYF_DIR to the wrong base.
+# ada-show-alert.sh is always a sibling of this file — both live in lib/ in a dev
+# checkout AND in the staged LaunchAgent layout (~/.local/share/ada/lib). Resolve
+# it relative to __file__ rather than an inherited ADA_DIR so it can't drift if
+# the caller sets ADA_DIR to the wrong base.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-LAUNCHER = os.path.join(_HERE, "iyf-show-alert.sh")
+LAUNCHER = os.path.join(_HERE, "ada-show-alert.sh")
 
 
 def _int(name, default):
@@ -42,16 +42,16 @@ def _int(name, default):
         return default
 
 
-THRESHOLD = _int("IYF_PASEO_THRESHOLD", 45)
-POLL = max(1, _int("IYF_PASEO_POLL", 3))
-EVENTS = set((os.environ.get("IYF_PASEO_EVENTS") or "finish error permission").split())
+THRESHOLD = _int("ADA_PASEO_THRESHOLD", 45)
+POLL = max(1, _int("ADA_PASEO_POLL", 3))
+EVENTS = set((os.environ.get("ADA_PASEO_EVENTS") or "finish error permission").split())
 
 # Default to staying silent while Paseo itself is frontmost (you're watching).
 # An explicit empty value disables that, matching the bash ${var-default} feel.
-_paseo_skip = os.environ.get("IYF_PASEO_SKIP_WHEN_ACTIVE")
+_paseo_skip = os.environ.get("ADA_PASEO_SKIP_WHEN_ACTIVE")
 if _paseo_skip is None:
     _paseo_skip = "sh.paseo.desktop"
-SKIP = (_paseo_skip + " " + (os.environ.get("IYF_SKIP_WHEN_ACTIVE") or "")).split()
+SKIP = (_paseo_skip + " " + (os.environ.get("ADA_SKIP_WHEN_ACTIVE") or "")).split()
 
 
 def run_json(args):
@@ -121,7 +121,7 @@ def fire(label, duration, code):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except Exception as exc:
-        print("iyf-paseo-watch: launcher failed: %s" % exc, file=sys.stderr)
+        print("ada-paseo-watch: launcher failed: %s" % exc, file=sys.stderr)
 
 
 def agents_snapshot():

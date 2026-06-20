@@ -1,10 +1,10 @@
 #!/bin/bash
-# Test double for `launchctl`, used by `iyf-paseo-watch.sh status`.
+# Test double for `launchctl`, used by `ada-paseo-watch.sh status`.
 #   launchctl list                  -> prints the label when STUB_LAUNCHCTL_LOADED set
 #   launchctl print gui/<uid>/<lbl> -> prints "    pid = N" when STUB_LAUNCHCTL_PID set
 case "$1" in
   list)
-    [ -n "${STUB_LAUNCHCTL_LOADED:-}" ] && echo "com.iyf.paseo-watch"
+    [ -n "${STUB_LAUNCHCTL_LOADED:-}" ] && echo "com.ada.paseo-watch"
     ;;
   print)
     [ -n "${STUB_LAUNCHCTL_PID:-}" ] && printf '    pid = %s\n' "$STUB_LAUNCHCTL_PID"

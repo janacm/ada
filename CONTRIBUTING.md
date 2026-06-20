@@ -1,23 +1,23 @@
 # Contributing
 
-Thanks for helping improve `iyf`. This project is a local-first macOS developer
+Thanks for helping improve `ada`. This project is a local-first macOS developer
 utility, so changes should keep installation, rollback, and user trust boring.
 
 ## Development Setup
 
 ```sh
-git clone https://github.com/janacm/iyf.git
-cd iyf
-swift build --product iyf-alert
+git clone https://github.com/janacm/ada.git
+cd ada
+swift build --product ada-alert
 swift test
 brew install bats-core   # for the shell test suite
-./iyf-install.sh --list
+./ada-install.sh --list
 ```
 
 To preview the alert without installing hooks:
 
 ```sh
-IYF_AUTO_CLOSE=5 IYF_SNOOZE_MINUTES="" ./lib/iyf-show-alert.sh "contribution test" "1s" 0
+ADA_AUTO_CLOSE=5 ADA_SNOOZE_MINUTES="" ./lib/ada-show-alert.sh "contribution test" "1s" 0
 ```
 
 ## Shell Tests
@@ -29,13 +29,13 @@ tests under `test/`:
 ```sh
 brew install bats-core   # one-time
 ./run-tests.sh                       # whole suite
-./run-tests.sh test/iyf-install.bats # one file
+./run-tests.sh test/ada-install.bats # one file
 ```
 
 The suite is hermetic. `test/test_helper.bash` gives every test a private
-`TMPDIR`, PID file, and `HOME`, clears any `IYF_*` knobs that could bleed in from
+`TMPDIR`, PID file, and `HOME`, clears any `ADA_*` knobs that could bleed in from
 your shell, disables the snooze daemon and click-to-focus, and wires in
-`test/stubs/fake-iyf-alert` so an "alert" just records the `file://` URL it would
+`test/stubs/fake-ada-alert` so an "alert" just records the `file://` URL it would
 open instead of spawning a window. Install-path tests point `HOME` at a temp dir
 so they never touch your real `~/.zshrc`, `~/.claude/settings.json`, or
 `~/.codex/hooks.json`. `test/stubs/` also doubles `lsappinfo`, `launchctl`,
@@ -45,7 +45,7 @@ process checks never touch the real machine.
 
 Two Python-heavy components are covered by component tests driven from bats:
 the snooze daemon's loopback token trust boundary
-(`test/iyf-snooze-daemon.bats`, spawns the real daemon on a loopback port with a
+(`test/ada-snooze-daemon.bats`, spawns the real daemon on a loopback port with a
 short deadline) and the Paseo poll/diff loop
 (`test/paseo_diff_check.py`, monkeypatches `run_json`/`fire`/the clock to assert
 finish/fail/seeding/dedupe/event-subset behavior).
@@ -60,7 +60,7 @@ use `refute_file_appears` (the launcher backgrounds the helper, so an immediate
 
 - Run `swift test` when touching Swift code.
 - Run `./run-tests.sh` when touching any shell script or the zsh hook.
-- Run `./iyf-install.sh --list` after installer or integration changes.
+- Run `./ada-install.sh --list` after installer or integration changes.
 - Use `rg`, not `grep`, for repo search unless `rg` is unavailable.
 - Keep `README.md` current for user-facing behavior.
 - Update `REQUIREMENTS.md` whenever product behavior, integration contracts, or
@@ -80,7 +80,7 @@ Good contributions usually improve one of these surfaces:
   contracts
 
 Please avoid adding telemetry, remote services, or network dependencies to the
-core alert path. `iyf` should remain local-first by default.
+core alert path. `ada` should remain local-first by default.
 
 ## Security-Sensitive Changes
 

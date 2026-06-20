@@ -1,8 +1,8 @@
 #!/bin/bash
 # =============================================================
-# iyf-claude-hook — In Your Face for Claude Code
+# ada-claude-hook — Agent Done Alert for Claude Code
 # -------------------------------------------------------------
-# Pops the same maximized-window alert as iyf.sh, but when a long
+# Pops the same maximized-window alert as ada.sh, but when a long
 # Claude Code *turn* finishes instead of a shell command.
 #
 # One script, wired to the UserPromptSubmit + Stop hooks of Claude
@@ -12,7 +12,7 @@
 #   UserPromptSubmit -> stamp a start time + the prompt text,
 #                       keyed by session id.
 #   Stop             -> if the turn ran longer than
-#                       IYF_CLAUDE_THRESHOLD seconds AND you're
+#                       ADA_CLAUDE_THRESHOLD seconds AND you're
 #                       not already looking at the terminal that
 #                       hosts the agent, fire the alert showing the
 #                       prompt and how long it took. If the Stop
@@ -30,25 +30,25 @@
 #                       before a turn runs, fire no Stop hook, and so
 #                       cannot be caught here.
 #
-# Environment knobs (shared with iyf.sh where noted):
-#   IYF_CLAUDE_THRESHOLD  min turn seconds to alert   (default 45)
-#   IYF_CLAUDE_ALERT_ON_ERROR  alert on a turn-ending API error even
+# Environment knobs (shared with ada.sh where noted):
+#   ADA_CLAUDE_THRESHOLD  min turn seconds to alert   (default 45)
+#   ADA_CLAUDE_ALERT_ON_ERROR  alert on a turn-ending API error even
 #                         below the duration threshold (default 1)
-#   IYF_ALERT_FILE        alert.html path             (default ~/.iyf/alert.html)
-#   IYF_NATIVE_ALERT      path to iyf-alert helper    (default auto, via launcher)
-#   IYF_AUTO_CLOSE        auto-dismiss seconds        (default 90)
-#   IYF_SKIP_OWN_TERMINAL silence when terminal is frontmost (default 1)
-#   IYF_SKIP_WHEN_ACTIVE  extra frontmost apps to stay silent for
-#   IYF_CLAUDE_STALE_MAX  max age (s) of a fallback start stamp (default 21600)
-#   IYF_DEBUG_LOG         when set, log each payload for debugging (default off)
+#   ADA_ALERT_FILE        alert.html path             (default ~/.ada/alert.html)
+#   ADA_NATIVE_ALERT      path to ada-alert helper    (default auto, via launcher)
+#   ADA_AUTO_CLOSE        auto-dismiss seconds        (default 90)
+#   ADA_SKIP_OWN_TERMINAL silence when terminal is frontmost (default 1)
+#   ADA_SKIP_WHEN_ACTIVE  extra frontmost apps to stay silent for
+#   ADA_CLAUDE_STALE_MAX  max age (s) of a fallback start stamp (default 21600)
+#   ADA_DEBUG_LOG         when set, log each payload for debugging (default off)
 # =============================================================
 set -u
 
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-state_dir="${TMPDIR:-/tmp}/iyf-claude"
-threshold=${IYF_CLAUDE_THRESHOLD:-45}
+state_dir="${TMPDIR:-/tmp}/ada-claude"
+threshold=${ADA_CLAUDE_THRESHOLD:-45}
 
-# Pull the fields we need in one python pass (tab-delimited, newline-stripped).
+# Pull the fields we need in one python pass (US/\x1f-delimited, newline-stripped).
 payload=$(cat)
 fields=$(printf '%s' "$payload" | python3 -c '
 import json, sys
@@ -56,37 +56,40 @@ try:
     d = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
+def clean(s):
+    return (s or "").replace("\n", " ").replace("\t", " ").replace("\x1f", " ").strip()
 ev  = d.get("hook_event_name", "") or ""
 sid = d.get("session_id", "") or ""
-cwd = (d.get("cwd", "") or "").replace("\n", " ").replace("\t", " ").strip()
-tp  = (d.get("transcript_path", "") or "").replace("\n", " ").replace("\t", " ").strip()
-pr  = (d.get("prompt", "") or "").replace("\n", " ").replace("\t", " ").strip()
-# prompt stays LAST: read -r gives the final field every remaining tab, so only
-# a trailing free-text field is safe there. transcript_path is a clean fs path,
-# so it sits safely before the prompt.
-print(ev + "\t" + sid + "\t" + cwd + "\t" + tp + "\t" + pr)
+cwd = clean(d.get("cwd", ""))
+tp  = clean(d.get("transcript_path", ""))
+pr  = clean(d.get("prompt", ""))
+# Fields are joined with US (\x1f), a NON-whitespace delimiter, so an empty field
+# (e.g. a payload with no transcript_path) is preserved instead of collapsing the
+# way adjacent IFS-whitespace tabs would — which used to shift the prompt into
+# transcript_path and drop it. prompt stays LAST so read -r keeps it whole.
+print(ev + "\x1f" + sid + "\x1f" + cwd + "\x1f" + tp + "\x1f" + pr)
 ' 2>/dev/null)
 [[ -z "$fields" ]] && exit 0
 
-IFS=$'\t' read -r event session_id cwd transcript_path prompt <<<"$fields"
+IFS=$'\x1f' read -r event session_id cwd transcript_path prompt <<<"$fields"
 [[ -z "$event" ]] && exit 0
 
 # Opt-in breadcrumb for debugging Codex-vs-Claude payload shapes. Triggered by
-# IYF_DEBUG_LOG=1 OR a sentinel file (so it works even when the agent strips the
+# ADA_DEBUG_LOG=1 OR a sentinel file (so it works even when the agent strips the
 # hook's env, e.g. Codex's shell_environment_policy=core). tail the log to see
 # every event the agent actually delivers to this hook.
-__iyf_dbg_log="${IYF_DEBUG_LOG_FILE:-${TMPDIR:-/tmp}/iyf-claude-debug.log}"
-if [[ -n "${IYF_DEBUG_LOG:-}" || -e "${TMPDIR:-/tmp}/iyf-claude-debug.on" ]]; then
+__ada_dbg_log="${ADA_DEBUG_LOG_FILE:-${TMPDIR:-/tmp}/ada-claude-debug.log}"
+if [[ -n "${ADA_DEBUG_LOG:-}" || -e "${TMPDIR:-/tmp}/ada-claude-debug.on" ]]; then
   printf '%s\tevent=%s\tsid=%s\tcwd=%s\tprompt=%.60s\n' \
     "$(date '+%F %T')" "$event" "$session_id" "$cwd" "$prompt" \
-    >> "$__iyf_dbg_log" 2>/dev/null
+    >> "$__ada_dbg_log" 2>/dev/null
 fi
 
 # Inspect the transcript tail: if the turn's last assistant entry is an API
 # error, echo the error text (stdout) and return 0; otherwise echo nothing and
 # return 1. Claude Code writes failed turns as a type:"assistant" JSONL entry
 # with "isApiErrorMessage":true and the message text in message.content.
-__iyf_turn_error_text() {
+__ada_turn_error_text() {
   local tpath=$1
   [[ -n "$tpath" && -f "$tpath" ]] || return 1
   tail -n 80 "$tpath" 2>/dev/null | python3 -c '
@@ -117,18 +120,18 @@ sys.exit(1)
 ' 2>/dev/null
 }
 
-__iyf_format_duration() {
+__ada_format_duration() {
   local s=$1
   if   (( s < 60 ));   then printf '%ds' "$s"
   elif (( s < 3600 )); then printf '%dm %ds' $(( s / 60 )) $(( s % 60 ))
   else                      printf '%dh %dm' $(( s / 3600 )) $(( (s % 3600) / 60 )); fi
 }
 
-# Mirror of iyf.sh __iyf_should_skip_active, in bash: true (0) when the
+# Mirror of ada.sh __ada_should_skip_active, in bash: true (0) when the
 # frontmost app means you're already watching, so the alert would be noise.
-__iyf_should_skip_active() {
-  local skip_own=${IYF_SKIP_OWN_TERMINAL:-1}
-  local active_list=${IYF_SKIP_WHEN_ACTIVE:-}
+__ada_should_skip_active() {
+  local skip_own=${ADA_SKIP_OWN_TERMINAL:-1}
+  local active_list=${ADA_SKIP_WHEN_ACTIVE:-}
   [[ "$skip_own" != 1 && -z "${active_list// /}" ]] && return 1
 
   local front bid name raw
@@ -160,13 +163,13 @@ case "$event" in
     # Claude sends the same session_id on UserPromptSubmit and Stop, so the exact
     # stamp is found. Codex parity: if its Stop payload carries a different
     # session_id (or none), fall back to the most recent stamp still younger than
-    # IYF_CLAUDE_STALE_MAX seconds, so the alert isn't silently dropped.
+    # ADA_CLAUDE_STALE_MAX seconds, so the alert isn't silently dropped.
     if [[ -z "$session_id" || ! -f "$start_file" ]]; then
       start_file=$(ls -t "$state_dir"/*.start 2>/dev/null | head -1)
       [[ -n "$start_file" && -f "$start_file" ]] || exit 0
       now=$(date +%s)
       mtime=$(stat -f %m "$start_file" 2>/dev/null || echo 0)
-      (( now - mtime > ${IYF_CLAUDE_STALE_MAX:-21600} )) && exit 0
+      (( now - mtime > ${ADA_CLAUDE_STALE_MAX:-21600} )) && exit 0
     fi
     prompt_file="${start_file%.start}.prompt"
     [[ -f "$start_file" ]] || exit 0
@@ -180,14 +183,14 @@ case "$event" in
     # Did the turn end in an API error? If so, alert regardless of duration —
     # a fast-failing turn is exactly the case the plain threshold would drop.
     err_text=""
-    if [[ "${IYF_CLAUDE_ALERT_ON_ERROR:-1}" == 1 ]]; then
-      err_text=$(__iyf_turn_error_text "$transcript_path") || err_text=""
+    if [[ "${ADA_CLAUDE_ALERT_ON_ERROR:-1}" == 1 ]]; then
+      err_text=$(__ada_turn_error_text "$transcript_path") || err_text=""
     fi
 
     if [[ -z "$err_text" ]]; then
       (( elapsed < threshold )) && exit 0
     fi
-    __iyf_should_skip_active && exit 0
+    __ada_should_skip_active && exit 0
 
     if [[ -n "$err_text" ]]; then
       label="⚠️ Error: ${err_text}"
@@ -213,13 +216,13 @@ case "$event" in
       fi
     fi
 
-    # IYF_REPO_DIR points the launcher at the turn's project so it shows the
+    # ADA_REPO_DIR points the launcher at the turn's project so it shows the
     # right repo (the hook's own cwd isn't guaranteed to be it). Empty falls
     # back to the launcher's cwd, which is the project in the usual setup.
-    # IYF_CLICK_URL makes clicking the alert open the deep link above (empty =
-    # plain dismiss). IYF_FOCUS_APP_NAME labels the click hint ("…return to Claude").
-    IYF_REPO_DIR="$cwd" IYF_CLICK_URL="$click_url" IYF_FOCUS_APP_NAME="$focus_name" \
-      "$dir/iyf-show-alert.sh" "$label" "$(__iyf_format_duration "$elapsed")" 0 >/dev/null 2>&1 &
+    # ADA_CLICK_URL makes clicking the alert open the deep link above (empty =
+    # plain dismiss). ADA_FOCUS_APP_NAME labels the click hint ("…return to Claude").
+    ADA_REPO_DIR="$cwd" ADA_CLICK_URL="$click_url" ADA_FOCUS_APP_NAME="$focus_name" \
+      "$dir/ada-show-alert.sh" "$label" "$(__ada_format_duration "$elapsed")" 0 >/dev/null 2>&1 &
     ;;
 esac
 

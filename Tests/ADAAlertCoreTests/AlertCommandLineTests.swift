@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import IYFAlertCore
+@testable import ADAAlertCore
 
 final class AlertCommandLineTests: XCTestCase {
     func testParsesCheckCommand() throws {
