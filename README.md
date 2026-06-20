@@ -81,6 +81,9 @@ scripts in place.
 
 > The explicit repo URL is required on `brew tap` because this repo isn't named
 > `homebrew-ada`; the formula lives in [`Formula/ada.rb`](Formula/ada.rb).
+>
+> On Homebrew 6.0+ the first `brew tap` of a third-party tap may show a
+> trust prompt. Confirm it (or set `HOMEBREW_NO_REQUIRE_TAP_TRUST=1`) to proceed.
 
 ### From source
 

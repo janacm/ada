@@ -23,7 +23,32 @@ removing unrelated hooks; Paseo setup must delegate to `ada-paseo-watch.sh
 install` so LaunchAgent staging stays centralized. The installer must build or
 validate `ada-alert` because there is no browser fallback. Preserve the
 scriptable `--agents`, `--list`, `--dry-run`, and `--no-test` paths because
-those are the future curl/Homebrew automation surface.
+those are the scriptable surface that Homebrew's `ada-setup` wrapper and future
+curl automation build on.
+
+## Homebrew distribution: the repo is its own tap
+
+`ada` ships through Homebrew and **the repo doubles as its own tap** — the
+formula lives at `Formula/ada.rb` at the repo root, so `brew tap janacm/ada
+https://github.com/janacm/ada && brew install ada` works with no separate
+`homebrew-ada` repo. The explicit tap URL is **required** because the repo isn't
+named `homebrew-ada`. A self-tap reads the formula from the **tip of the default
+branch**, so the released `url`/`sha256` must be committed to `main` — nothing
+reads the formula from inside the tagged tarball.
+
+The formula builds `ada-alert`/`ada-menubar` with SwiftPM, installs the repo
+tree intact into `libexec` (so every script's relative-path resolution keeps
+working — `ada.sh` -> `lib/ada-show-alert.sh` -> `../ada-alert`), and drops the
+built helper where `__ada_find_native_alert` looks first so it never rebuilds
+into the read-only Cellar. It exposes `ada-setup` (a thin wrapper around
+`ada-install.sh`) and points users at it via caveats; `brew install` itself
+never touches dotfiles.
+
+**Releasing:** `./release.sh vX.Y.Z` tags, pushes, and prints `url` + `sha256`;
+paste those into `Formula/ada.rb`, commit, and push `main`. Validate with `brew
+style Formula/ada.rb`, then `brew install` / `brew test janacm/ada/ada`. There's
+an inherent chicken-and-egg — a tag's own tarball can't contain its own sha256 —
+so the authoritative formula is always the follow-up commit on `main`.
 
 ## Native helper is the only renderer
 

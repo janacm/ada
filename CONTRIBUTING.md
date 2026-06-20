@@ -68,6 +68,33 @@ use `refute_file_appears` (the launcher backgrounds the helper, so an immediate
 - Keep `CLAUDE.md` and `AGENTS.md` aligned when maintainer-agent guidance
   changes.
 
+## Releasing (Homebrew)
+
+`ada` ships through Homebrew, and the repo doubles as its own tap — the formula
+lives at [`Formula/ada.rb`](Formula/ada.rb) and users install with
+`brew tap janacm/ada https://github.com/janacm/ada && brew install ada`. Because
+the tap tip (the default branch) is what users install, the released formula
+must be committed to `main`.
+
+To cut a release:
+
+```sh
+./release.sh vX.Y.Z          # tags, pushes the tag, and prints url + sha256
+```
+
+Then paste the printed `url` and `sha256` into `Formula/ada.rb`, commit, and push
+`main`. Verify before announcing:
+
+```sh
+brew style Formula/ada.rb                                   # lint the formula
+brew tap janacm/ada https://github.com/janacm/ada
+brew install janacm/ada/ada && brew test janacm/ada/ada     # build + smoke test
+```
+
+The formula builds the native helpers from source and installs the repo tree into
+`libexec`, so it never touches dotfiles; `ada-setup` (the installed wrapper around
+`ada-install.sh`) does the integration wiring on demand.
+
 ## Contribution Boundaries
 
 Good contributions usually improve one of these surfaces:

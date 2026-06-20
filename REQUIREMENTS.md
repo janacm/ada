@@ -30,6 +30,30 @@ removed.
 - Open-source distribution must not require publishing generated SwiftPM build
   output or local machine configuration.
 
+## Homebrew Distribution
+
+- The repository must double as its own Homebrew tap: `Formula/ada.rb` lives at
+  the repo root so `brew tap janacm/ada https://github.com/janacm/ada` followed
+  by `brew install ada` works without a separate `homebrew-ada` repository. The
+  explicit tap URL is required because the repository is not named
+  `homebrew-ada`.
+- The formula must build the native renderer from source (`ada-alert`, plus the
+  optional `ada-menubar`) and must not introduce a browser fallback.
+- The formula must install the repository tree intact (into `libexec`) so each
+  script keeps resolving its siblings by relative path, and must place the built
+  helper where the launcher looks first so it never rebuilds into the read-only
+  Cellar.
+- The formula must not run the onboarding installer automatically. It must
+  expose the installer as an `ada-setup` wrapper and direct users to run it via
+  caveats.
+- `brew install` and `brew upgrade` must write only under the Homebrew prefix;
+  they must not modify user dotfiles, agent hook config, or an existing
+  from-source install.
+- Releases must be produced with `release.sh`, which tags and pushes `vX.Y.Z`
+  and computes the tarball `sha256`. The committed formula `url` and `sha256`
+  must match the released GitHub tarball, and the formula on the default branch
+  (the tap tip) is the version users install.
+
 ## Onboarding Installer
 
 - `ada-install.sh` must provide the coworker-ready onboarding entry point for
@@ -255,6 +279,8 @@ removed.
 
 - `README.md` must explain user-facing installation, configuration, integrations,
   and behavior.
+- `README.md` must document Homebrew as the primary install method and keep the
+  from-source installer path available as an alternative.
 - `README.md` must document the installer selector as the primary onboarding
   path and keep manual hook examples available for troubleshooting.
 - `CLAUDE.md` and `AGENTS.md` must explain architectural gotchas, validation
@@ -266,6 +292,12 @@ removed.
 
 ## Change Log
 
+- 2026-06-19: Added Homebrew as the primary distribution method and cut the
+  first formula release (`v0.2`). The repository doubles as its own tap
+  (`Formula/ada.rb` at root, installed via `brew tap janacm/ada <url>`); the
+  formula builds the native helpers into `libexec`, exposes the onboarding
+  installer as `ada-setup`, and writes only under the Homebrew prefix. Releases
+  are cut with `release.sh` (tag, push, sha256).
 - 2026-06-19: Clicking a Claude Code alert now opens that turn's conversation in
   the Claude macOS app via the `claude://resume?session=<id>` deep link. Added a
   generic `ADA_CLICK_URL` click target (precedence over `ADA_FOCUS_APP`) wired
