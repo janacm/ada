@@ -97,6 +97,60 @@ PY
   assert_equal "$output" "1"
 }
 
+@test "terminal install migrates a legacy iyf block (replaces, not duplicates)" {
+  require_native_helper
+  export HOME="$BATS_TEST_TMPDIR/home"; mkdir -p "$HOME"
+  # Simulate a pre-rename install: an old managed block sourcing a stale path.
+  cat > "$HOME/.zshrc" <<'RC'
+# my existing rc
+export FOO=bar
+# >>> iyf >>>
+# In Your Face terminal command alerts
+source "$HOME/.iyf/iyf.sh"
+# <<< iyf <<<
+RC
+
+  run "$INSTALL" --agents terminal --no-test
+  assert_success
+  # The legacy block is gone; the new ada block is present exactly once.
+  run grep -c '# >>> iyf >>>' "$HOME/.zshrc"
+  assert_equal "$output" "0"
+  refute_file_contains "$HOME/.zshrc" "iyf.sh"
+  run grep -c '# >>> ada >>>' "$HOME/.zshrc"
+  assert_equal "$output" "1"
+  assert_file_contains "$HOME/.zshrc" "ada.sh"
+  assert_file_contains "$HOME/.zshrc" "export FOO=bar"   # unrelated lines preserved
+}
+
+@test "claude install migrates a legacy iyf hook (replaces, not duplicates)" {
+  require_native_helper
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME/.claude"
+  # Pre-rename install: hooks point at the old iyf-claude-hook.sh path.
+  cat > "$HOME/.claude/settings.json" <<'JSON'
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "/Users/x/.iyf/iyf-claude-hook.sh", "timeout": 10 } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "/Users/x/.iyf/iyf-claude-hook.sh", "timeout": 10, "async": true } ] }
+    ]
+  }
+}
+JSON
+
+  run "$INSTALL" --agents claude --no-test
+  assert_success
+  settings="$HOME/.claude/settings.json"
+  # Exactly one ada hook per event, and zero legacy iyf hooks remain.
+  run assert_hook_wired "$settings" UserPromptSubmit false
+  assert_success
+  run assert_hook_wired "$settings" Stop true
+  assert_success
+  refute_file_contains "$settings" "iyf-claude-hook.sh"
+}
+
 @test "claude install merges hooks, preserves unrelated ones, and is idempotent" {
   require_native_helper
   export HOME="$BATS_TEST_TMPDIR/home"

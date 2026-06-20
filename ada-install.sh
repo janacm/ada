@@ -309,12 +309,23 @@ start = "# >>> ada >>>"
 end = "# <<< ada <<<"
 block = f"{start}\n# Agent Done Alert terminal command alerts\n{source_line}\n{end}\n"
 text = path.read_text() if path.exists() else ""
+
+def strip_block(text, start, end):
+    while start in text and end in text:
+        before, rest = text.split(start, 1)
+        _, after = rest.split(end, 1)
+        text = before.rstrip("\n") + "\n" + after.lstrip("\n")
+    return text
+
+# Migration: drop the legacy "iyf" managed block from pre-rename installs so we
+# replace it instead of appending a second block that sources a stale
+# ~/.iyf/iyf.sh path (which would either error or fire duplicate alerts).
+text = strip_block(text, "# >>> iyf >>>", "# <<< iyf <<<")
+
 if start in text and end in text:
-    before, rest = text.split(start, 1)
-    _, after = rest.split(end, 1)
-    text = before.rstrip() + "\n\n" + block + after.lstrip("\n")
+    text = strip_block(text, start, end).rstrip() + "\n\n" + block
 elif source_line in text:
-    pass
+    pass  # a bare manual `source .../ada.sh` line is already present
 else:
     text = text.rstrip() + "\n\n" + block
 path.write_text(text)
@@ -350,12 +361,17 @@ if settings.exists():
 
 hooks_root = data.setdefault("hooks", {})
 
-def has_ada_command(group):
-    for hook_obj in group.get("hooks", []):
-        command = hook_obj.get("command", "")
-        if command == hook or command.endswith("/ada-claude-hook.sh"):
-            return True
-    return False
+# Recognize our own hook in any form so re-running replaces it instead of
+# stacking duplicates. The legacy "iyf-claude-hook.sh" suffix is included so
+# pre-rename installs are migrated, not left to fire a stale path alongside the
+# new one (duplicate alerts, or a dead ~/.iyf path if that clone was removed).
+def is_managed_command(command):
+    return (command == hook
+            or command.endswith("/ada-claude-hook.sh")
+            or command.endswith("/iyf-claude-hook.sh"))
+
+def has_managed_command(group):
+    return any(is_managed_command(h.get("command", "")) for h in group.get("hooks", []))
 
 def make_group(event):
     command = {"type": "command", "command": hook, "timeout": 10}
@@ -367,7 +383,7 @@ for event in ("UserPromptSubmit", "Stop"):
     groups = hooks_root.setdefault(event, [])
     if not isinstance(groups, list):
         raise SystemExit(f"hooks.{event} must be a list")
-    groups[:] = [group for group in groups if not has_ada_command(group)]
+    groups[:] = [group for group in groups if not has_managed_command(group)]
     groups.append(make_group(event))
 
 settings.write_text(json.dumps(data, indent=2) + "\n")

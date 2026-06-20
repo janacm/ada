@@ -123,3 +123,8 @@ assert_file_contains() {
   grep -qF -- "$2" "$1" && return 0
   echo "expected file $1 to contain: $2"; echo "--- file ---"; cat "$1" 2>/dev/null; return 1
 }
+
+refute_file_contains() {
+  grep -qF -- "$2" "$1" || return 0
+  echo "expected file $1 to NOT contain: $2"; echo "--- file ---"; cat "$1" 2>/dev/null; return 1
+}
