@@ -3,7 +3,7 @@
 // and launcher contracts it relies on are tested in the .bats suite + Swift).
 //
 // The page talks to the snooze daemon through the native WebKit bridge
-// (window.webkit.messageHandlers.iyfSignal). There's no WKWebView here, so we
+// (window.webkit.messageHandlers.adaSignal). There's no WKWebView here, so we
 // inject a stub for that bridge before the page loads and capture what it would
 // have sent. We also neutralise window.close so the helper "close" can't kill
 // the test page out from under us.
@@ -33,7 +33,7 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     window.__sig = [];
     window.webkit = {
-      messageHandlers: { iyfSignal: { postMessage: (p) => window.__sig.push(p) } },
+      messageHandlers: { adaSignal: { postMessage: (p) => window.__sig.push(p) } },
     };
     window.close = () => { window.__closed = true; };
   });

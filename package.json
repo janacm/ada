@@ -1,7 +1,7 @@
 {
-  "name": "iyf",
+  "name": "ada",
   "private": true,
-  "description": "Playwright tests for the iyf alert page (alert.html)",
+  "description": "Playwright tests for the ada alert page (alert.html)",
   "scripts": {
     "test": "playwright test"
   },
