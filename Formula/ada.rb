@@ -6,6 +6,16 @@ class Ada < Formula
   license "MIT"
   head "https://github.com/janacm/ada.git", branch: "main"
 
+  # release.sh cuts plain annotated git tags; this repo publishes no GitHub
+  # "releases", so :github_latest would read /releases/latest and 404. Read the
+  # tags instead, with an explicit regex so a future pre-release tag (v1.0-rc1)
+  # can't outrank a stable one.
+  livecheck do
+    url :stable
+    strategy :git
+    regex(/^v?(\d+(?:\.\d+)+)$/i)
+  end
+
   # macOS only: the alert is an AppKit/WebKit window, wired through launchd and
   # the macOS frontmost-app APIs. The Command Line Tools provide the Swift
   # toolchain and macOS SDK needed to build ada-alert; full Xcode is not required.
@@ -32,9 +42,16 @@ class Ada < Formula
 
     # Front door for the existing onboarding installer. Kept as a thin wrapper
     # so all the relative-path logic in ada-install.sh resolves against libexec.
+    #
+    # opt_libexec, NOT libexec: the installer bakes its own directory into
+    # durable user config (the ~/.zshrc source line, the Claude/Codex hook
+    # commands, the Paseo LaunchAgent plist). #{libexec} is the VERSIONED Cellar
+    # path, which `brew upgrade` deletes — every wired integration would then
+    # point at a directory that no longer exists. opt_libexec is the
+    # version-stable symlink, so upgrades are transparent.
     (bin/"ada-setup").write <<~SH
       #!/bin/bash
-      exec "#{libexec}/ada-install.sh" "$@"
+      exec "#{opt_libexec}/ada-install.sh" "$@"
     SH
   end
 
@@ -53,6 +70,13 @@ class Ada < Formula
 
         ada-setup --agents terminal,claude,codex
         ada-setup --list
+
+      Upgrades: `brew upgrade ada` is enough — the wiring points at the
+      version-stable #{opt_libexec}, so it survives upgrades and you do not
+      need to re-run ada-setup.
+
+      Upgrading FROM v0.2: that release wired itself to a versioned Cellar
+      path, so run `ada-setup` once after upgrading to repoint it.
     EOS
   end
 

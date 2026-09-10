@@ -9,7 +9,7 @@
 #
 # Usage: ada-show-alert.sh <label> <formatted-duration> <exit-code>
 # Reads from the environment:
-#   ADA_ALERT_FILE      path to alert.html        (default ~/.ada/alert.html)
+#   ADA_ALERT_FILE      path to alert.html        (default: alongside this script)
 #   ADA_AUTO_CLOSE      seconds before auto-close (default 90)
 #   ADA_SNOOZE_MINUTES  snooze button options     (default "5 10 30 60")
 #   ADA_FOCUS_APP       bundle id to focus on click (default $__CFBundleIdentifier)
@@ -25,7 +25,23 @@ cmd=${1:-}
 duration=${2:-}
 code=${3:-0}
 
-alert_file=${ADA_ALERT_FILE:-$HOME/.ada/alert.html}
+# Where this script lives, so the snooze daemon and the sibling alert page can
+# be found and re-invoked.
+selfdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+# alert.html ships one level up from lib/. Resolve it relative to THIS script so
+# the launcher works from a dev checkout, ~/.ada, Homebrew's libexec, or the
+# staged Paseo runtime. A hardcoded ~/.ada default renders a blank window on a
+# Homebrew install, where no such directory exists; keep it only as a fallback
+# for older layouts.
+alert_file=${ADA_ALERT_FILE:-}
+if [[ -z "$alert_file" ]]; then
+  if [[ -f "$selfdir/../alert.html" ]]; then
+    alert_file="$(cd "$selfdir/.." && pwd)/alert.html"
+  else
+    alert_file="$HOME/.ada/alert.html"
+  fi
+fi
 auto_close=${ADA_AUTO_CLOSE:-90}
 # Colon-less default: unset -> the defaults, but an explicit "" disables snooze.
 snooze_minutes=${ADA_SNOOZE_MINUTES-"5 10 30 60"}
@@ -36,9 +52,6 @@ else
 fi
 focus_app_name=${ADA_FOCUS_APP_NAME:-}
 click_url=${ADA_CLICK_URL:-}
-
-# Where this script lives, so the snooze daemon can be found and re-invoked.
-selfdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 __ada_url_encode() {
   local value=${1:-}

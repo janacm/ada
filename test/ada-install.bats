@@ -79,6 +79,33 @@ PY
   [ ! -f "$HOME/.zshrc" ]
 }
 
+# Homebrew's #{libexec} is <prefix>/Cellar/ada/<version>/libexec, which the next
+# `brew upgrade` deletes. The installer bakes its own directory into ~/.zshrc and
+# the agent hook config, so a Cellar path there means every integration breaks on
+# upgrade. Anything durable must name the version-stable <prefix>/opt path.
+@test "invoked from a Cellar path, durable config points at the stable opt path" {
+  require_native_helper
+  export HOME="$BATS_TEST_TMPDIR/home"; mkdir -p "$HOME/.claude"
+  echo '{}' > "$HOME/.claude/settings.json"
+
+  local prefix="$BATS_TEST_TMPDIR/brew"
+  local keg="$prefix/Cellar/ada/9.9.9/libexec"
+  mkdir -p "$keg/lib" "$prefix/opt"
+  cp "$REPO_ROOT/ada-install.sh" "$REPO_ROOT/ada.sh" "$REPO_ROOT/alert.html" "$keg/"
+  cp "$REPO_ROOT/lib/ada-show-alert.sh" "$REPO_ROOT/lib/ada-claude-hook.sh" "$keg/lib/"
+  cp "$REPO_ROOT/ada-alert" "$keg/ada-alert" 2>/dev/null \
+    || cp "$REPO_ROOT/.build/release/ada-alert" "$keg/ada-alert"
+  ln -s "../Cellar/ada/9.9.9" "$prefix/opt/ada"
+
+  run "$keg/ada-install.sh" --agents terminal,claude --no-test
+  assert_success
+
+  assert_file_contains "$HOME/.zshrc" "$prefix/opt/ada/libexec/ada.sh"
+  refute_file_contains "$HOME/.zshrc" "Cellar"
+  assert_file_contains "$HOME/.claude/settings.json" "$prefix/opt/ada/libexec/lib/ada-claude-hook.sh"
+  refute_file_contains "$HOME/.claude/settings.json" "Cellar"
+}
+
 @test "terminal install adds a managed block and is idempotent" {
   require_native_helper
   export HOME="$BATS_TEST_TMPDIR/home"; mkdir -p "$HOME"

@@ -49,10 +49,25 @@ removed.
 - `brew install` and `brew upgrade` must write only under the Homebrew prefix;
   they must not modify user dotfiles, agent hook config, or an existing
   from-source install.
-- Releases must be produced with `release.sh`, which tags and pushes `vX.Y.Z`
-  and computes the tarball `sha256`. The committed formula `url` and `sha256`
-  must match the released GitHub tarball, and the formula on the default branch
-  (the tap tip) is the version users install.
+- Durable configuration written on behalf of a Homebrew install (the `~/.zshrc`
+  source line, Claude/Codex hook commands, the Paseo LaunchAgent plist) must
+  reference the version-stable `<prefix>/opt/ada/libexec` path, never the
+  versioned Cellar directory that `brew upgrade` removes. The `ada-setup`
+  wrapper must therefore exec `opt_libexec`, and scripts that write durable
+  paths must map a Cellar path back to its `opt` equivalent when invoked
+  directly.
+- `brew upgrade ada` must be sufficient to move an existing install to the new
+  version: no re-run of `ada-setup` and no re-staging may be required.
+- The formula's `livecheck` must resolve versions from the repository's git tags,
+  because releases are cut as tags only. A strategy that reads the GitHub
+  releases API (`:github_latest`, `:github_releases`) reports no version at all.
+- Releases must be produced with `release.sh`, which must refuse to run on a
+  dirty tree, off the default branch, or with the default branch unpushed; then
+  tag and push `vX.Y.Z`, compute the tarball `sha256`, rewrite `url`/`sha256` in
+  `Formula/ada.rb`, and commit and push that bump to the default branch. The
+  committed formula `url` and `sha256` must match the released GitHub tarball,
+  and the formula on the default branch (the tap tip) is the version users
+  install.
 
 ## Onboarding Installer
 
@@ -115,6 +130,10 @@ removed.
   directory to tell the launcher where to resolve the repository name.
 - `ADA_ALERT_FILE` must allow callers to replace `alert.html` with another HTML
   file, including diagnostic pages.
+- When `ADA_ALERT_FILE` is unset, `alert.html` must be resolved relative to the
+  running script, so the alert renders from any install location (a checkout,
+  `~/.ada`, the Homebrew prefix, or the staged Paseo runtime). No entry point may
+  depend on `~/.ada` existing; that path may only be a last-resort fallback.
 - `ADA_AUTO_CLOSE` must control the alert auto-dismiss timeout, defaulting to a
   positive value when unset or invalid.
 - `ADA_FOCUS_APP` and `ADA_FOCUS_APP_NAME` must allow click-anywhere dismissal
@@ -236,7 +255,14 @@ removed.
 
 - `ada-paseo-watch.sh install` must stage its runtime into a non-TCC-protected
   directory (`ADA_PASEO_INSTALL_DIR`, default `~/.local/share/ada`) before
-  loading launchd.
+  loading launchd, except when it is already running from a Homebrew install
+  (under `$(brew --prefix)/opt`), which is both outside every TCC-protected
+  location and version-stable. In that case it must run in place so that
+  `brew upgrade` refreshes the watcher, and must fail rather than load a
+  LaunchAgent if any runtime file or the native helper is missing.
+- The LaunchAgent must set `ADA_PASEO_ENV` to the env file under the per-user
+  install directory in both modes, so watcher configuration survives a
+  `brew upgrade` replacing the Homebrew-managed tree.
 - The staged runtime must include `ada-paseo-watch.sh`,
   `ada-paseo-watch.py`, `ada-show-alert.sh`, `ada-snooze-daemon.py`, and
   `alert.html`. Staging must mirror the dev-checkout layout — the front door
@@ -253,10 +279,13 @@ removed.
 - The LaunchAgent must include a PATH that can find common `paseo`, `python3`,
   and system tool locations without relying on the user's interactive shell.
 - `ADA_PASEO_ENV` must allow watcher configuration through an env file, defaulting
-  to `paseo-watch.env` next to the running script.
+  to `paseo-watch.env` in the per-user install directory regardless of where the
+  invoked script lives, so a manual `test`, `status`, or foreground `run` reads
+  the same configuration the LaunchAgent does.
 - `ada-paseo-watch.sh status` must report whether the job is loaded, whether a
-  live poll loop is running, where the plist is, where the staged runtime is, and
-  whether the watcher log is clean.
+  live poll loop is running, where the plist is, which runtime the plist actually
+  points at (flagging when it differs from the invoked source tree), and whether
+  the watcher log is clean.
 - `ada-paseo-watch.sh uninstall` must unload the LaunchAgent and remove its
   plist.
 - `ada-paseo-watch.sh test` must fire one sample alert through the shared
@@ -292,6 +321,17 @@ removed.
 
 ## Change Log
 
+- 2026-08-20: Fixed Homebrew installs. `alert.html` is now resolved relative to
+  the running script instead of a hardcoded `~/.ada`, which does not exist under
+  Homebrew and rendered a blank alert window. Durable wiring (zshrc line, agent
+  hooks, Paseo plist) now points at the version-stable `opt/ada/libexec` rather
+  than the versioned Cellar path that `brew upgrade` deletes. The Paseo watcher
+  runs in place for Homebrew installs (no stale stage) and pins its env file to
+  `~/.local/share/ada` for manual invocations as well as the LaunchAgent, so
+  `test` can no longer disagree with the running watcher. `release.sh` now
+  rewrites and pushes the formula bump itself instead of printing fields to
+  paste. The formula reads versions from git tags, since no GitHub releases are
+  published.
 - 2026-06-19: Added Homebrew as the primary distribution method and cut the
   first formula release (`v0.2`). The repository doubles as its own tap
   (`Formula/ada.rb` at root, installed via `brew tap janacm/ada <url>`); the

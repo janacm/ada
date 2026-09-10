@@ -96,6 +96,61 @@ PY
   wait_for_file "$ADA_PROBE_OUT" || { echo "staged front door could not launch the alert"; false; }
 }
 
+# Staging exists only to dodge TCC. A Homebrew install is already outside every
+# TCC-protected folder AND behind a version-stable opt symlink, so staging it
+# would freeze a snapshot that `brew upgrade` can never refresh. Run in place.
+@test "install from a Homebrew prefix runs in place instead of staging" {
+  require_native_helper
+  local prefix="$BATS_TEST_TMPDIR/brew"
+  local libexec="$prefix/opt/ada/libexec"
+  mkdir -p "$libexec/lib" "$HOME/Library/LaunchAgents"
+  cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/alert.html" "$libexec/"
+  cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$REPO_ROOT/lib/ada-show-alert.sh" \
+     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$libexec/lib/"
+  cp "$REPO_ROOT/ada-alert" "$libexec/ada-alert" 2>/dev/null \
+    || cp "$REPO_ROOT/.build/release/ada-alert" "$libexec/ada-alert"
+
+  export HOMEBREW_PREFIX="$prefix"
+  export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
+
+  run "$libexec/ada-paseo-watch.sh" install
+  assert_success
+  assert_output_contains "in place"
+
+  local plist="$HOME/Library/LaunchAgents/com.ada.paseo-watch.plist"
+  assert_file_contains "$plist" "$libexec/ada-paseo-watch.sh"
+  refute_file_contains "$plist" "$ADA_PASEO_INSTALL_DIR/ada-paseo-watch.sh"
+  # Config must live outside the Homebrew tree, which brew replaces wholesale.
+  assert_file_contains "$plist" "$ADA_PASEO_INSTALL_DIR/paseo-watch.env"
+  [ ! -f "$ADA_PASEO_INSTALL_DIR/ada-paseo-watch.sh" ]
+}
+
+# Regression: the env file used to default to one next to the running script.
+# Under Homebrew that is the formula's libexec — nothing writes an env file there
+# and `brew upgrade` replaces it — so only the LaunchAgent honored the user's
+# config (the plist passes ADA_PASEO_ENV explicitly) while a manual test/status/
+# run silently ignored it. Key it off the install dir in every mode instead.
+@test "a manual run reads the env file from the install dir, not its own dir" {
+  local libexec="$BATS_TEST_TMPDIR/brew/opt/ada/libexec"
+  mkdir -p "$libexec/lib"
+  cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/alert.html" "$libexec/"
+  cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$REPO_ROOT/lib/ada-show-alert.sh" \
+     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$libexec/lib/"
+
+  export HOMEBREW_PREFIX="$BATS_TEST_TMPDIR/brew"
+  export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
+  mkdir -p "$ADA_PASEO_INSTALL_DIR"
+  printf '<html></html>' > "$ADA_PASEO_INSTALL_DIR/configured.html"
+  echo "ADA_ALERT_FILE=$ADA_PASEO_INSTALL_DIR/configured.html" \
+       > "$ADA_PASEO_INSTALL_DIR/paseo-watch.env"
+
+  # Anchor on a setting that reaches the alert, not just on the file being read.
+  run "$libexec/ada-paseo-watch.sh" test
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "sample alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "$ADA_PASEO_INSTALL_DIR/configured.html"
+}
+
 # The poll/diff loop (running->idle, running->error, seeding, permission dedupe,
 # ADA_PASEO_EVENTS subsetting) lives in the .py and can't be reached via the
 # front door. Driven directly by test/paseo_diff_check.py.

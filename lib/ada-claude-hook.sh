@@ -34,7 +34,7 @@
 #   ADA_CLAUDE_THRESHOLD  min turn seconds to alert   (default 45)
 #   ADA_CLAUDE_ALERT_ON_ERROR  alert on a turn-ending API error even
 #                         below the duration threshold (default 1)
-#   ADA_ALERT_FILE        alert.html path             (default ~/.ada/alert.html)
+#   ADA_ALERT_FILE        alert.html path             (default: alongside the launcher)
 #   ADA_NATIVE_ALERT      path to ada-alert helper    (default auto, via launcher)
 #   ADA_AUTO_CLOSE        auto-dismiss seconds        (default 90)
 #   ADA_SKIP_OWN_TERMINAL silence when terminal is frontmost (default 1)

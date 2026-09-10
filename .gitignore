@@ -8,3 +8,5 @@ node_modules/
 /playwright-report/
 /blob-report/
 /.playwright/
+/ada-alert
+/ada-menubar

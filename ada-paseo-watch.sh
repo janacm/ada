@@ -51,7 +51,7 @@
 #                              (default "sh.paseo.desktop"; set "" to disable)
 #   ADA_SKIP_WHEN_ACTIVE       extra frontmost apps to stay silent for (shared)
 #   ADA_PASEO_ENV              optional env file sourced at startup
-#                              (default: paseo-watch.env next to this script) —
+#                              (default: paseo-watch.env in the install dir) —
 #                              handy for configuring the launchd daemon
 #   ADA_PASEO_INSTALL_DIR      where `install` stages the runtime so the
 #                              LaunchAgent can run it without Full Disk Access
@@ -65,10 +65,46 @@
 # =============================================================
 set -u
 
+# Homebrew installs live in a VERSIONED Cellar directory that the next
+# `brew upgrade` deletes. Anything durable we write out (the ~/.zshrc source
+# line, agent hook commands, the LaunchAgent plist) must therefore point at the
+# version-stable .../opt/<formula>/libexec symlink instead, or the install
+# silently dies on the next upgrade. Map Cellar -> opt when the equivalent opt
+# path exists; leave every other layout untouched.
+# Deliberately duplicated in ada-install.sh and ada-paseo-watch.sh: both are
+# standalone entry points (the watcher is even copied elsewhere when staged), so
+# neither can rely on sourcing the other.
+__ada_stable_dir() {
+  local d=$1 prefix rest name tail
+  case "$d" in
+    */Cellar/*)
+      prefix=${d%%/Cellar/*}   # /opt/homebrew
+      rest=${d#*/Cellar/}      # ada/0.2/libexec
+      name=${rest%%/*}         # ada
+      tail=${rest#*/}          # 0.2/libexec
+      tail=${tail#*/}          # libexec  (drop the version component)
+      if [[ -n "$tail" && -d "$prefix/opt/$name/$tail" ]]; then
+        printf '%s\n' "$prefix/opt/$name/$tail"
+        return 0
+      fi
+      ;;
+  esac
+  printf '%s\n' "$d"
+}
+
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+dir=$(__ada_stable_dir "$dir")
+
+# Per-user runtime dir: where `install` stages a from-source checkout (a non-TCC
+# location launchd can read) and, in every mode, where the env file lives.
+install_dir="${ADA_PASEO_INSTALL_DIR:-$HOME/.local/share/ada}"
 
 # --- optional env file (lets the launchd daemon be configured out-of-band) ---
-env_file=${ADA_PASEO_ENV:-$dir/paseo-watch.env}
+# Keyed off install_dir, NOT $dir, so a manual `test`/`status`/`run` reads the
+# same config the LaunchAgent does. Under Homebrew $dir is the formula's libexec:
+# nothing writes an env file there and `brew upgrade` would wipe it, so a $dir
+# default silently ignored the user's settings for everything but the daemon.
+env_file=${ADA_PASEO_ENV:-$install_dir/paseo-watch.env}
 if [[ -f "$env_file" ]]; then
   set -a; # shellcheck disable=SC1090
   . "$env_file"; set +a
@@ -87,8 +123,6 @@ export ADA_FOCUS_APP ADA_FOCUS_APP_NAME
 label_prefix="com.ada.paseo-watch"
 plist="$HOME/Library/LaunchAgents/${label_prefix}.plist"
 logfile="${TMPDIR:-/tmp}/ada-paseo-watch.log"
-# `install` stages the runtime here — a non-TCC location launchd can read.
-install_dir="${ADA_PASEO_INSTALL_DIR:-$HOME/.local/share/ada}"
 
 # --- locate the paseo CLI (PATH, then the usual symlink, then the app bundle) ---
 __ada_find_paseo() {
@@ -136,7 +170,33 @@ ada_run() {
 # -------------------------------------------------------------
 # install / uninstall / status — launchd LaunchAgent management
 # -------------------------------------------------------------
-ada_install() {
+# True when we are running from a Homebrew install: outside every TCC-protected
+# root AND behind the version-stable .../opt/ada/libexec symlink, so launchd can
+# exec us directly. Staging a Homebrew install would freeze a snapshot that
+# `brew upgrade` could never refresh, which is the opposite of what we want.
+__ada_from_brew_prefix() {
+  local prefix=${HOMEBREW_PREFIX:-}
+  [[ -n "$prefix" ]] || prefix=$(brew --prefix 2>/dev/null) || return 1
+  [[ -n "$prefix" ]] || return 1
+  [[ "$dir" == "$prefix/opt/"* ]]
+}
+
+# Homebrew keeps the whole repo tree intact in libexec, so there is nothing to
+# copy — just confirm the pieces the LaunchAgent will reach for are all there.
+__ada_check_in_place_runtime() {
+  local f missing=0
+  for f in ada-paseo-watch.sh alert.html lib/ada-paseo-watch.py \
+           lib/ada-show-alert.sh lib/ada-snooze-daemon.py; do
+    [[ -f "$dir/$f" ]] || { echo "ada-paseo-watch: missing $dir/$f" >&2; missing=1; }
+  done
+  if [[ ! -x "${ADA_NATIVE_ALERT:-$dir/ada-alert}" ]]; then
+    echo "ada-paseo-watch: native helper ada-alert is required (looked for $dir/ada-alert)." >&2
+    missing=1
+  fi
+  (( missing == 0 ))
+}
+
+__ada_stage_runtime() {
   # Stage the runtime into a non-TCC location. A LaunchAgent runs WITHOUT your
   # Full Disk Access grants, so it cannot exec scripts from TCC-protected folders
   # — ~/Documents, ~/Desktop, ~/Downloads, or a symlink into them (note ~/.ada is
@@ -186,11 +246,31 @@ ada_install() {
 
   chmod +x "$install_dir/ada-paseo-watch.sh" "$install_dir/lib/ada-paseo-watch.py" \
            "$install_dir/lib/ada-show-alert.sh" "$install_dir/ada-alert" 2>/dev/null
-  local script="$install_dir/ada-paseo-watch.sh"
   if [[ ! -f "$install_dir/lib/ada-paseo-watch.py" || ! -f "$install_dir/lib/ada-show-alert.sh" ]]; then
     echo "ada-paseo-watch: couldn't stage the runtime into $install_dir" >&2
     echo "  (run install from a full ada checkout)" >&2
     return 1
+  fi
+}
+
+ada_install() {
+  # Where the watcher runs from. A LaunchAgent runs WITHOUT your Full Disk Access
+  # grants, so it cannot exec scripts out of TCC-protected folders — ~/Documents,
+  # ~/Desktop, ~/Downloads, or a symlink into them (note ~/.ada is often a symlink
+  # to ~/Documents/GitHub/ada); launchd fails with "Operation not permitted"
+  # (exit 126). A dev checkout therefore gets staged into ~/.local/share/ada. A
+  # Homebrew install already sits in a non-TCC, version-stable location, so it
+  # runs in place and picks up `brew upgrade` automatically.
+  local script
+  mkdir -p "$install_dir" "$HOME/Library/LaunchAgents"
+  if __ada_from_brew_prefix; then
+    __ada_check_in_place_runtime || return 1
+    script="$dir/ada-paseo-watch.sh"
+    echo "Homebrew install detected: running the watcher in place from $dir"
+    echo "  (no staging, so 'brew upgrade ada' updates the watcher too)"
+  else
+    __ada_stage_runtime || return 1
+    script="$install_dir/ada-paseo-watch.sh"
   fi
   # Bake in a PATH that finds paseo (~/.local/bin) plus python3/lsappinfo,
   # because launchd jobs don't inherit your interactive shell PATH.
@@ -211,6 +291,8 @@ ada_install() {
   <dict>
     <key>PATH</key>
     <string>${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>ADA_PASEO_ENV</key>
+    <string>${install_dir}/paseo-watch.env</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -230,7 +312,7 @@ PLIST
   launchctl unload "$plist" >/dev/null 2>&1
   if launchctl load -w "$plist" 2>/dev/null; then
     echo "Installed and loaded: $plist"
-    echo "  runtime staged in: $install_dir"
+    echo "  runtime: $(dirname "$script")"
     echo "  watching the Paseo daemon; logs -> $logfile"
     echo "  configure via env file: $install_dir/paseo-watch.env"
     echo "  uninstall with: $script uninstall"
@@ -252,18 +334,32 @@ ada_status() {
   # The real health signal is a live poll loop, not just a registered job.
   pid=$(launchctl print "gui/$(id -u)/${label_prefix}" 2>/dev/null \
         | sed -n 's/^[[:space:]]*pid = \([0-9][0-9]*\).*/\1/p' | head -1)
-  [[ -z "$pid" ]] && pid=$(pgrep -f "$install_dir/lib/ada-paseo-watch.py" 2>/dev/null | head -1)
+  # Match the loop wherever it runs from: the staged copy for a dev checkout, or
+  # Homebrew's libexec when the watcher runs in place.
+  [[ -z "$pid" ]] && pid=$(pgrep -f "ada-paseo-watch.py" 2>/dev/null | head -1)
 
   if [[ -n "$pid" ]]; then
     echo "✅ Paseo watcher: running (pid $pid)"
   elif (( loaded )); then
     echo "⚠️  Paseo watcher: loaded but not running yet"
   else
-    echo "❌ Paseo watcher: not loaded — run: $install_dir/ada-paseo-watch.sh install"
+    echo "❌ Paseo watcher: not loaded — run: $dir/ada-paseo-watch.sh install"
   fi
 
   [[ -f "$plist" ]] && echo "✅ plist: $plist" || echo "❌ plist: (none)"
-  echo "   install dir: $install_dir"
+  # Read the runtime back out of the plist rather than assuming: it is the staged
+  # dir for a checkout and Homebrew's libexec for a brew install, and a mismatch
+  # against $dir is exactly how you spot a stale stage after editing scripts.
+  local runtime=""
+  [[ -f "$plist" ]] && runtime=$(sed -n 's|.*<string>\(.*/ada-paseo-watch\.sh\)</string>.*|\1|p' "$plist" | head -1)
+  if [[ -n "$runtime" ]]; then
+    echo "   runtime: $(dirname "$runtime")"
+    if [[ "$(dirname "$runtime")" != "$dir" ]]; then
+      echo "   source:  $dir (re-run install after editing these scripts)"
+    fi
+  else
+    echo "   runtime: (not installed)"
+  fi
 
   # The loop is silent unless something breaks, so any log output is a problem.
   if [[ -s "$logfile" ]]; then

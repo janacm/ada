@@ -44,11 +44,32 @@ into the read-only Cellar. It exposes `ada-setup` (a thin wrapper around
 `ada-install.sh`) and points users at it via caveats; `brew install` itself
 never touches dotfiles.
 
-**Releasing:** `./release.sh vX.Y.Z` tags, pushes, and prints `url` + `sha256`;
-paste those into `Formula/ada.rb`, commit, and push `main`. Validate with `brew
-style Formula/ada.rb`, then `brew install` / `brew test janacm/ada/ada`. There's
-an inherent chicken-and-egg — a tag's own tarball can't contain its own sha256 —
-so the authoritative formula is always the follow-up commit on `main`.
+**Never bake a Cellar path into anything durable.** `#{libexec}` is
+`<prefix>/Cellar/ada/<version>/libexec`, which the next `brew upgrade` deletes —
+and `ada-install.sh` writes its own directory into the user's `~/.zshrc`, the
+Claude/Codex hook commands, and the Paseo plist. So the `ada-setup` wrapper execs
+`#{opt_libexec}` (`<prefix>/opt/ada/libexec`, a version-stable symlink), and both
+`ada-install.sh` and `ada-paseo-watch.sh` additionally map a Cellar path back to
+its `opt` equivalent (`__ada_stable_dir`) in case they're invoked directly. `ada.sh`
+uses zsh `:a` (absolutize) rather than `:A` (realpath) for the same reason —
+`:A` would resolve the opt symlink straight back into the versioned Cellar dir.
+
+**Nothing may default to `~/.ada`.** That path only exists for a from-source
+install; a Homebrew install has no such directory. `alert.html` is therefore
+resolved relative to the running script (`ada.sh` -> `$_ADA_DIR/alert.html`,
+`lib/ada-show-alert.sh` -> `$selfdir/../alert.html`), with `~/.ada` kept only as
+a last-resort fallback. Getting this wrong is invisible on a dev machine — the
+symlink masks it — and renders a **blank alert window** for every Homebrew user,
+because the `file://` target simply doesn't exist.
+
+**Releasing:** `./release.sh vX.Y.Z` does the whole thing — refuses to run on a
+dirty tree, off `main`, or with `main` unpushed; tags and pushes; computes the
+tarball `sha256`; rewrites `url`/`sha256` in `Formula/ada.rb`; commits and pushes
+that bump to `main`. There's an inherent chicken-and-egg — a tag's own tarball
+can't contain its own sha256 — so the authoritative formula is always that
+follow-up commit on `main`. `--no-formula` prints the fields instead of
+committing; `--no-push` tags locally only. Validate with `brew style
+Formula/ada.rb`, then `brew install` / `brew test janacm/ada/ada`.
 
 ## Native helper is the only renderer
 
@@ -89,8 +110,16 @@ and `last exit code = 126`, **even though the exact same script runs fine from
 your terminal** (Terminal/ghostty/etc. have been granted TCC access; launchd has
 not). This asymmetry is the tell.
 
-**The fix (current design):** `ada-paseo-watch.sh install` **stages** the runtime
-it needs (`ada-paseo-watch.sh`, `ada-paseo-watch.py`, `ada-show-alert.sh`,
+**The fix (current design):** it depends on where you're running from.
+`ada-paseo-watch.sh install` checks whether it lives under `$(brew --prefix)/opt`
+(`__ada_from_brew_prefix`). A **Homebrew install runs in place** — that path is
+outside every TCC root *and* version-stable, so the plist points straight at
+`<prefix>/opt/ada/libexec/ada-paseo-watch.sh` and `brew upgrade` refreshes the
+watcher with no re-install. Staging a Homebrew install would do the opposite:
+freeze a snapshot brew could never update.
+
+Everything else (a dev checkout, `~/.ada`) **stages** the runtime it needs
+(`ada-paseo-watch.sh`, `ada-paseo-watch.py`, `ada-show-alert.sh`,
 `ada-snooze-daemon.py`, `alert.html`, and `ada-alert`) into a non-TCC dir —
 `~/.local/share/ada` (override `ADA_PASEO_INSTALL_DIR`) — and points the plist
 there. **Staging mirrors the dev-checkout layout**: the front door
@@ -102,8 +131,11 @@ layouts identical is load-bearing: the watcher resolves `ada-show-alert.sh` via
 alert from the LaunchAgent while still working in a dev checkout (the classic
 masking failure). The installer builds `ada-alert` with SwiftPM when needed and
 fails if it cannot stage the helper. Re-run `install` after editing any of those
-scripts or rebuilding the helper to re-stage. The env file lives at the top:
-`~/.local/share/ada/paseo-watch.env`.
+scripts or rebuilding the helper to re-stage (`status` prints both `runtime:` and,
+when they differ, `source:` — that mismatch is how you spot a stale stage). The
+env file lives at `~/.local/share/ada/paseo-watch.env` in **both** modes: the
+plist sets `ADA_PASEO_ENV` explicitly so config survives a `brew upgrade`, which
+replaces `libexec` wholesale.
 
 **Debugging:**
 ```bash

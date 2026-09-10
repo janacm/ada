@@ -11,7 +11,35 @@
 # =============================================================
 set -u
 
+# Homebrew installs live in a VERSIONED Cellar directory that the next
+# `brew upgrade` deletes. Anything durable we write out (the ~/.zshrc source
+# line, agent hook commands, the LaunchAgent plist) must therefore point at the
+# version-stable .../opt/<formula>/libexec symlink instead, or the install
+# silently dies on the next upgrade. Map Cellar -> opt when the equivalent opt
+# path exists; leave every other layout untouched.
+# Deliberately duplicated in ada-install.sh and ada-paseo-watch.sh: both are
+# standalone entry points (the watcher is even copied elsewhere when staged), so
+# neither can rely on sourcing the other.
+__ada_stable_dir() {
+  local d=$1 prefix rest name tail
+  case "$d" in
+    */Cellar/*)
+      prefix=${d%%/Cellar/*}   # /opt/homebrew
+      rest=${d#*/Cellar/}      # ada/0.2/libexec
+      name=${rest%%/*}         # ada
+      tail=${rest#*/}          # 0.2/libexec
+      tail=${tail#*/}          # libexec  (drop the version component)
+      if [[ -n "$tail" && -d "$prefix/opt/$name/$tail" ]]; then
+        printf '%s\n' "$prefix/opt/$name/$tail"
+        return 0
+      fi
+      ;;
+  esac
+  printf '%s\n' "$d"
+}
+
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+dir=$(__ada_stable_dir "$dir")
 
 AGENT_IDS=(terminal claude codex paseo)
 AGENT_NAMES=("Terminal commands" "Claude Code" "Codex" "Paseo")

@@ -26,6 +26,25 @@ setup() {
   esac
 }
 
+# Regression: the launcher used to default ADA_ALERT_FILE to ~/.ada/alert.html.
+# That path only exists for a from-source install, so every Homebrew user got a
+# file:// URL for a file that isn't there — a blank alert window. Invisible on a
+# dev machine, where ~/.ada masks it. Resolve the page next to the script.
+@test "with ADA_ALERT_FILE unset, alert.html resolves next to the install" {
+  local root="$BATS_TEST_TMPDIR/prefix/opt/ada/libexec"
+  mkdir -p "$root/lib"
+  cp "$REPO_ROOT/lib/ada-show-alert.sh" "$root/lib/"
+  printf '<html></html>' > "$root/alert.html"
+  unset ADA_ALERT_FILE
+  export ADA_REPO=""
+
+  run "$root/lib/ada-show-alert.sh" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT"
+  assert_file_contains "$ADA_PROBE_OUT" "file://$root/alert.html"
+  refute_file_contains "$ADA_PROBE_OUT" "/.ada/alert.html"
+}
+
 @test "passes duration, exit code and repo through to the URL" {
   export ADA_REPO="myrepo"
   run "$LAUNCHER" "deploy" "5s" 7

@@ -3,8 +3,19 @@
 # Maximized-window alert when long terminal commands finish
 # =============================================================
 
+# Directory this file lives in, captured at source time, so the sibling
+# ada-show-alert.sh launcher and alert.html both resolve regardless of cwd — and
+# regardless of where ada is installed (a dev checkout, ~/.ada, or Homebrew's
+# libexec). ":a" absolutizes WITHOUT resolving symlinks, so a Homebrew install
+# keeps the version-stable .../opt/ada/libexec path instead of pinning itself to
+# the Cellar directory the next `brew upgrade` deletes.
+typeset -g _ADA_DIR="${${(%):-%x}:a:h}"
+
 export ADA_THRESHOLD=${ADA_THRESHOLD:-10}
-export ADA_ALERT_FILE="${ADA_ALERT_FILE:-$HOME/.ada/alert.html}"
+# Default to the page shipped next to this file, NOT a hardcoded ~/.ada: under a
+# Homebrew install there is no ~/.ada and a missing file:// target renders a
+# blank alert window.
+export ADA_ALERT_FILE="${ADA_ALERT_FILE:-$_ADA_DIR/alert.html}"
 export ADA_IGNORE_CMDS=${ADA_IGNORE_CMDS:-"vim nvim nano emacs less more man htop top tig lazygit btm bottom glances"}
 export ADA_AUTO_CLOSE=${ADA_AUTO_CLOSE:-90}
 # Snooze options (minutes) shown as buttons on the alert. Needs python3; an
@@ -21,10 +32,6 @@ export ADA_SKIP_OWN_TERMINAL=${ADA_SKIP_OWN_TERMINAL:-1}
 export ADA_SKIP_WHEN_ACTIVE=${ADA_SKIP_WHEN_ACTIVE:-""}
 
 zmodload zsh/datetime 2>/dev/null
-
-# Directory this file lives in, captured at source time, so we can find the
-# sibling ada-show-alert.sh launcher regardless of cwd.
-typeset -g _ADA_DIR="${${(%):-%x}:A:h}"
 
 __ada_is_ignored() {
   local cmd="${1%% *}"

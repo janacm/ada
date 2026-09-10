@@ -76,14 +76,28 @@ ada-setup
 Homebrew prefix; it never touches your dotfiles. `ada-setup` then runs the same
 interactive integration selector described below (and accepts the same
 `--agents` / `--list` / `--dry-run` flags). Re-run `ada-setup` any time to change
-which integrations are active; `brew upgrade ada` updates the renderer and
-scripts in place.
+which integrations are active.
 
 > The explicit repo URL is required on `brew tap` because this repo isn't named
 > `homebrew-ada`; the formula lives in [`Formula/ada.rb`](Formula/ada.rb).
 >
 > On Homebrew 6.0+ the first `brew tap` of a third-party tap may show a
 > trust prompt. Confirm it (or set `HOMEBREW_NO_REQUIRE_TAP_TRUST=1`) to proceed.
+
+#### Updating
+
+```sh
+brew update && brew upgrade ada
+```
+
+That's the whole update. Nothing needs re-wiring: the shell hook, the
+Claude/Codex hooks, and the Paseo watcher all point at Homebrew's
+version-stable `opt/ada/libexec` path rather than a versioned Cellar directory,
+so an upgrade takes effect on your next shell and next agent turn.
+
+> Upgrading **from v0.2** is the one exception. That release wired itself to a
+> versioned Cellar path that `brew upgrade` removes, so run `ada-setup` once
+> after upgrading to repoint it.
 
 ### From source
 
@@ -310,14 +324,20 @@ install-once, like sourcing `ada.sh`:
 ~/.ada/ada-paseo-watch.sh uninstall   # unload + remove it
 ```
 
-`install` copies the few files it needs into `~/.local/share/ada`, builds and
-stages the required `ada-alert` helper when needed, and points the LaunchAgent
-there. If it cannot stage `ada-alert`, installation fails. This matters: a
-launchd job runs **without your Full Disk Access**, so it can't execute scripts
-from TCC-protected folders like `~/Documents` — and `~/.ada` is often a symlink
-into exactly that. Running from a staged, non-TCC copy sidesteps the `Operation
-not permitted` failure entirely. Override the location with
-`ADA_PASEO_INSTALL_DIR`.
+For a **from-source install**, `install` copies the few files it needs into
+`~/.local/share/ada`, builds and stages the required `ada-alert` helper when
+needed, and points the LaunchAgent there. If it cannot stage `ada-alert`,
+installation fails. This matters: a launchd job runs **without your Full Disk
+Access**, so it can't execute scripts from TCC-protected folders like
+`~/Documents` — and `~/.ada` is often a symlink into exactly that. Running from
+a staged, non-TCC copy sidesteps the `Operation not permitted` failure entirely.
+Override the location with `ADA_PASEO_INSTALL_DIR`.
+
+For a **Homebrew install** there is nothing to stage: the Homebrew prefix is
+already outside every TCC-protected folder, so the LaunchAgent runs the watcher
+in place from `$(brew --prefix)/opt/ada/libexec` — which also means
+`brew upgrade ada` updates the watcher without re-running `install`. Either way
+`status` prints the runtime it's actually using.
 
 Or run it in the foreground to try it out (Ctrl-C to stop), and fire a one-off
 sample alert to confirm the visuals:
@@ -334,9 +354,8 @@ app is frontmost — you're already watching — which you can change or disable
 `ADA_PASEO_SKIP_WHEN_ACTIVE`.
 
 Because the LaunchAgent doesn't inherit your interactive shell environment, set
-its knobs in an env file next to the staged runtime
-(`~/.local/share/ada/paseo-watch.env`, overridable with `ADA_PASEO_ENV`), which
-the watcher sources on startup:
+its knobs in an env file at `~/.local/share/ada/paseo-watch.env` (overridable
+with `ADA_PASEO_ENV`), which the watcher sources on startup:
 
 ```sh
 # ~/.local/share/ada/paseo-watch.env
