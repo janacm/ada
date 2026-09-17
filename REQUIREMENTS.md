@@ -91,6 +91,9 @@ removed.
   `~/.claude/settings.json` without removing unrelated hooks.
 - Codex setup must merge `UserPromptSubmit` and `Stop` hooks into
   `~/.codex/hooks.json` without removing unrelated hooks.
+- The installer must verify that the opencode plugin module exists before
+  writing a shim that imports it, since a dangling shim fails inside opencode
+  rather than in ada.
 - opencode setup must write a plugin shim named `ada.js` into opencode's global
   plugin directory. It must resolve that directory by asking the opencode CLI
   (`opencode debug paths`) before falling back to the XDG default, so a
@@ -254,7 +257,17 @@ removed.
   produce exactly one alert even though the error event precedes the idle event.
 - A user-initiated abort (`MessageAbortedError`) must not alert, and must also
   suppress the finish alert for that turn: the user was at the keyboard to cause
-  it.
+  it. This suppression is turn lifecycle, not part of the error category, so it
+  must apply even when `error` is absent from `ADA_OPENCODE_EVENTS`.
+- An error the plugin cannot describe (including an absent `error` object, which
+  the SDK types permit) must leave the turn untouched rather than silence it, so
+  a long turn still produces its finish alert.
+- Per-session state must be released when a session is deleted, so a long-lived
+  `opencode serve` does not accumulate state for the life of the process.
+- Alert labels must be clipped after their prefix is composed, matching the
+  guarantee `ada-claude-hook.sh` makes for its own labels.
+- A permission pattern must render its first entry whether opencode sends
+  `patterns` or `pattern`, and whether the value is a string or a list.
 - A retryable API error must still alert. opencode retries internally and
   reports those as `session.status retry`, so an error that reaches
   `session.error` has already ended the turn.

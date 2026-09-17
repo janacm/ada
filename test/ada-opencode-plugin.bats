@@ -389,3 +389,100 @@ idle() { printf '{"type":"event","event":{"type":"session.idle","properties":{"s
   assert_success
   refute_file_appears "$ADA_PROBE_OUT"
 }
+
+# ...but "ignored" must mean "left alone", not "silenced". The sdk declares
+# EventSessionError.properties.error OPTIONAL, so an empty error event is a
+# valid payload, and treating it like an abort swallowed the finish alert for a
+# turn that really did run for ten minutes. ageSeconds is over the threshold
+# here precisely so a silenced turn is visible.
+@test "an unrecognisable error does not swallow the finish alert" {
+  drive '{"steps":[
+    {"type":"chat.message","sessionID":"s1","text":"long real turn","ageSeconds":600},
+    {"type":"event","event":{"type":"session.error","properties":{"sessionID":"s1"}}},
+    '"$(idle s1)"'
+  ]}'
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "the finish alert should still fire"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "cmd=long%20real%20turn"
+}
+
+@test "an error with an unknown name does not swallow the finish alert either" {
+  drive '{"steps":[
+    {"type":"chat.message","sessionID":"s1","text":"long real turn","ageSeconds":600},
+    {"type":"event","event":{"type":"session.error","properties":{"sessionID":"s1",
+      "error":{"name":"SomeFutureError","data":{}}}}},
+    '"$(idle s1)"'
+  ]}'
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "an undescribable error must not silence the turn"; false; }
+}
+
+# The abort suppression is turn lifecycle, not a feature of the error category,
+# so dropping "error" from ADA_OPENCODE_EVENTS must not resurrect the spurious
+# finish alert for a turn the user cancelled.
+@test "an aborted turn stays silent even with error alerts switched off" {
+  export ADA_OPENCODE_EVENTS="finish permission"
+  drive '{"steps":[
+    {"type":"chat.message","sessionID":"s1","text":"long task I pressed Esc on","ageSeconds":600},
+    {"type":"event","event":{"type":"session.error","properties":{"sessionID":"s1",
+      "error":{"name":"MessageAbortedError","data":{"message":"aborted"}}}}},
+    '"$(idle s1)"'
+  ]}'
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "a composed error label is clipped, prefix included" {
+  long=$(printf 'e%.0s' {1..400})
+  drive '{"steps":[
+    {"type":"chat.message","sessionID":"s1","text":"work","ageSeconds":2},
+    {"type":"event","event":{"type":"session.error","properties":{"sessionID":"s1",
+      "error":{"name":"UnknownError","data":{"message":"'"$long"'"}}}}},
+    '"$(idle s1)"'
+  ]}'
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT"
+  # The label carries the prefix AND is bounded: decode cmdb64 and measure it.
+  # A heredoc keeps the python readable instead of fighting three quoting layers.
+  run python3 - "$ADA_PROBE_OUT" <<'PY'
+import base64, re, sys
+url = open(sys.argv[1]).read()
+blob = re.search(r"cmdb64=([^&\s]+)", url).group(1)
+blob += "=" * (-len(blob) % 4)
+text = base64.urlsafe_b64decode(blob).decode()
+assert text.startswith("\u26a0\ufe0f Error: "), text[:40]
+print(len(text))
+PY
+  assert_success
+  # 121 = MAX_LABEL + the ellipsis that replaces what was cut, which is exactly
+  # what ada-claude-hook.sh produces for its own composed label.
+  [ "$output" -le 121 ] || { echo "composed label was $output chars, expected <= 121"; false; }
+}
+
+# 1.18.30 sends `patterns: []`; the 1.18.20 sdk types say `pattern` may itself
+# be an array. Neither may reach the label as "a,b" via String().
+@test "an array permission pattern shows its first entry, not a joined list" {
+  drive '{"steps":[
+    {"type":"event","event":{"type":"permission.updated","properties":{"id":"per_9",
+      "sessionID":"s1","type":"bash","pattern":["git push *","git commit *"]}}},
+    {"type":"settle","ms":400}
+  ]}'
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT"
+  assert_file_contains "$ADA_PROBE_OUT" "git%20push%20%2A"
+  refute_file_contains "$ADA_PROBE_OUT" "git%20commit"
+}
+
+# Per-session state has to be released, or a long-lived `opencode serve`
+# accumulates an entry per session for the life of the process.
+@test "a deleted session releases its tracked state" {
+  drive '{"steps":[
+    {"type":"event","event":{"type":"session.created","properties":{"info":
+      {"id":"s1","directory":"/tmp"}}}},
+    {"type":"chat.message","sessionID":"s1","text":"long task","ageSeconds":600},
+    {"type":"event","event":{"type":"session.deleted","properties":{"info":{"id":"s1"}}}},
+    '"$(idle s1)"'
+  ]}'
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}

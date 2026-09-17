@@ -74,7 +74,11 @@ __ada_notify() {
   local selfdir; selfdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
   __ada_should_skip_active && return 0
-  exec "$selfdir/ada-show-alert.sh" "$label" "$(__ada_format_duration "$elapsed")" "$code"
+  # Deliberately NOT exec: this function is meant to be callable in the
+  # foreground by a sourced caller, and exec would replace that caller's process
+  # mid-script. The launcher backgrounds the alert window itself and returns
+  # immediately, so the extra process costs nothing.
+  "$selfdir/ada-show-alert.sh" "$label" "$(__ada_format_duration "$elapsed")" "$code"
 }
 
 # Executed directly -> notify. Sourced -> just define the functions above.

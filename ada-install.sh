@@ -111,17 +111,26 @@ find_opencode() {
 # only authority on its own config root, which moves with XDG_CONFIG_HOME — and
 # fall back to the XDG default when the binary isn't there to ask.
 # ADA_OPENCODE_PLUGIN_DIR overrides both (used by the test suite).
+# Memoized because the interactive selector calls agent_status for every row on
+# every keypress, and asking opencode costs a process spawn. The config root
+# cannot change while the installer runs.
+__ada_opencode_plugin_dir=""
 opencode_plugin_dir() {
   local oc config=""
   if [[ -n "${ADA_OPENCODE_PLUGIN_DIR:-}" ]]; then
     printf '%s' "$ADA_OPENCODE_PLUGIN_DIR"
     return 0
   fi
+  if [[ -n "$__ada_opencode_plugin_dir" ]]; then
+    printf '%s' "$__ada_opencode_plugin_dir"
+    return 0
+  fi
   if oc=$(find_opencode); then
     config=$("$oc" debug paths 2>/dev/null | sed -n 's/^config[[:space:]][[:space:]]*//p' | head -1)
   fi
   [[ -n "$config" ]] || config="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
-  printf '%s/plugin' "$config"
+  __ada_opencode_plugin_dir="$config/plugin"
+  printf '%s' "$__ada_opencode_plugin_dir"
 }
 
 find_swift() {
@@ -205,8 +214,12 @@ agent_status() {
       [[ -f "$HOME/.codex/hooks.json" ]] && printf 'detected' || printf 'will create hooks.json'
       ;;
     opencode)
+      # Never 'not found' for a row the selector is willing to install: the
+      # config directory existing is enough to wire the plugin, even when the
+      # binary is not on PATH (a version manager, or an install still to come).
       if [[ -f "$(opencode_plugin_dir)/ada.js" ]]; then printf 'detected'
       elif find_opencode >/dev/null 2>&1; then printf 'will create plugin'
+      elif [[ -d "$(dirname "$(opencode_plugin_dir)")" ]]; then printf 'config found, no CLI'
       else printf 'not found'; fi
       ;;
     paseo)
@@ -477,6 +490,11 @@ install_opencode() {
     say "dry-run: would write a plugin shim re-exporting $dir/lib/ada-opencode-plugin.mjs"
     return 0
   fi
+  # Not fatal: the plugin only has to exist by the time opencode next starts,
+  # and the binary may live somewhere this script cannot see. Say so, though,
+  # rather than reporting a clean install of something nothing will load.
+  find_opencode >/dev/null 2>&1 ||
+    say "  note: no opencode CLI on PATH; the plugin will load once opencode is installed"
   mkdir -p "$plugin_dir" || die "could not create $plugin_dir"
 
   # Don't clobber an unrelated plugin that happens to be called ada.js.
@@ -557,6 +575,10 @@ done
 [[ -x "$dir/lib/ada-show-alert.sh" ]] || die "missing executable $dir/lib/ada-show-alert.sh"
 [[ -x "$dir/lib/ada-claude-hook.sh" ]] || die "missing executable $dir/lib/ada-claude-hook.sh"
 [[ -x "$dir/lib/ada-notify.sh" ]] || die "missing executable $dir/lib/ada-notify.sh"
+# The opencode shim is one line pointing at this file. Writing a shim whose
+# target does not exist reports a clean install and then throws an unresolved
+# import inside opencode on every start, where ada never sees it.
+[[ -f "$dir/lib/ada-opencode-plugin.mjs" ]] || die "missing $dir/lib/ada-opencode-plugin.mjs"
 
 if [[ -n "$explicit_agents" ]]; then
   parse_agent_list "$explicit_agents"

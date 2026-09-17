@@ -95,3 +95,23 @@ setup() {
   assert_failure
   refute_file_appears "$ADA_PROBE_OUT"
 }
+
+# The header invites sourcing, so __ada_notify must RETURN rather than replace
+# the caller's process — an exec here silently truncates any sourced caller that
+# does not background the call.
+@test "a sourced caller keeps running after __ada_notify returns" {
+  run bash -c ". '$NOTIFY'; __ada_notify 'turn done' 120 0; echo STILL-ALIVE"
+  assert_success
+  assert_output_contains "STILL-ALIVE"
+  wait_for_file "$ADA_PROBE_OUT" || { echo "the alert should still have fired"; false; }
+}
+
+@test "a sourced caller keeps running when the alert is suppressed" {
+  export ADA_SKIP_OWN_TERMINAL=1
+  export __CFBundleIdentifier="com.test.term"
+  export STUB_FRONT_BUNDLEID="com.test.term"
+  run bash -c ". '$NOTIFY'; __ada_notify 'turn done' 120 0; echo STILL-ALIVE"
+  assert_success
+  assert_output_contains "STILL-ALIVE"
+  refute_file_appears "$ADA_PROBE_OUT"
+}

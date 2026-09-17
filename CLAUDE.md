@@ -162,6 +162,21 @@ are deliberate rather than obvious:
 `MessageOutputLengthError` is the only variant with no `data.message` at all, so
 a plain `data.message || name` fallback surfaces the bare class name to the user.
 
+Three review findings worth not re-introducing:
+
+- **`session.error` may carry no `error` object at all** (the SDK marks it
+  optional). Treating an undescribable error like an abort silences the turn, so
+  an empty error event swallowed the finish alert for a turn that had genuinely
+  run for ten minutes. Only `MessageAbortedError` silences; anything else either
+  alerts or leaves the turn alone.
+- **The abort check runs before the `ADA_OPENCODE_EVENTS` gate.** With
+  `ADA_OPENCODE_EVENTS="finish permission"`, an early `return` on the events gate
+  skipped the silencing and the following `session.idle` fired a cheerful finish
+  alert for a turn the user had just cancelled with Esc.
+- **`ada-notify.sh` must not `exec`.** Its own header invites sourcing, and the
+  Claude hook only survived an `exec` because it happens to background the call;
+  any foreground caller would have had its process replaced mid-script.
+
 ### Probing opencode's events
 
 To re-derive the event surface after an opencode upgrade, drop a probe plugin in

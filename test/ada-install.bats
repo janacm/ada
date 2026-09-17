@@ -309,3 +309,49 @@ JSON
   assert_output_contains "dry-run"
   [ ! -f "$HOME/.config/opencode/plugin/ada.js" ]
 }
+
+@test "the installer refuses to run without the opencode plugin module" {
+  local fake="$BATS_TEST_TMPDIR/fake-install"
+  mkdir -p "$fake/lib"
+  cp "$REPO_ROOT/ada-install.sh" "$fake/"
+  cp "$REPO_ROOT/lib/ada-show-alert.sh" "$REPO_ROOT/lib/ada-claude-hook.sh" \
+     "$REPO_ROOT/lib/ada-notify.sh" "$fake/lib/"
+  # Everything present EXCEPT lib/ada-opencode-plugin.mjs, which the shim the
+  # installer writes will import on every opencode start.
+  run "$fake/ada-install.sh" --list
+  assert_success
+  run "$fake/ada-install.sh" --agents terminal --no-test
+  assert_failure
+  assert_output_contains "ada-opencode-plugin.mjs"
+}
+
+# A row the selector is willing to install must not describe itself as missing.
+@test "the opencode row never reads 'not found' once its config dir exists" {
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME/.config/opencode"
+  export ADA_OPENCODE_PLUGIN_DIR="$HOME/.config/opencode/plugin"
+  run "$INSTALL" --list
+  assert_success
+  # Scope the assertion to the opencode row: the paseo row legitimately reads
+  # "not found" on a machine without Paseo.
+  run bash -c "\"$INSTALL\" --list | grep '^opencode'"
+  assert_success
+  refute_output_contains "not found"
+}
+
+# The "config found, no CLI" branch itself can only be observed where no
+# opencode binary exists: find_opencode deliberately checks absolute fallback
+# paths (/opt/homebrew/bin, /usr/local/bin, ~/.opencode/bin), so PATH alone
+# cannot hide a real install.
+@test "with a config dir but no CLI anywhere, opencode reports the config, not absence" {
+  if command -v opencode >/dev/null 2>&1 \
+     || [ -x /opt/homebrew/bin/opencode ] || [ -x /usr/local/bin/opencode ]; then
+    skip "a real opencode CLI is installed; this branch is unobservable here"
+  fi
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME/.config/opencode"
+  export ADA_OPENCODE_PLUGIN_DIR="$HOME/.config/opencode/plugin"
+  run bash -c "\"$INSTALL\" --list | grep '^opencode'"
+  assert_success
+  assert_output_contains "config found, no CLI"
+}
