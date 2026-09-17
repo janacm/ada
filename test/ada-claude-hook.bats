@@ -292,16 +292,73 @@ UUID="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
   assert_equal "$output" "first line second line"
 }
 
-# An injected block with no human-readable part at all must not produce an alert
-# labelled with leftover markup; the generic fallback takes over.
-@test "an injected block with nothing readable falls back to a generic label" {
-  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n9","cwd":"/tmp","prompt":"<ping><id>7</id></ping>"}'
+# An injected block whose only content is metadata must reach the generic
+# fallback, not an alert labelled with a leftover id. The earlier version of
+# this test used <ping><id>7</id></ping> and passed while the label was the
+# bare string "7", because its only assertion was that "ping" was absent.
+@test "an injected block of pure metadata falls back to a generic label" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n9","cwd":"/tmp","prompt":"<ada-ping><id>7</id><status>ok</status></ada-ping>"}'
   assert_success
+  run cat "$STATE_DIR/sess-n9.prompt"
+  assert_equal "$output" ""
   printf '%s' "$(( $(/bin/date +%s) - 120 ))" > "$STATE_DIR/sess-n9.start"
   run_hook '{"hook_event_name":"Stop","session_id":"sess-n9","cwd":"/tmp"}'
   assert_success
   wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
-  refute_file_contains "$ADA_PROBE_OUT" "ping"
+  assert_file_contains "$ADA_PROBE_OUT" "cmd=Claude%20Code"
+  refute_file_contains "$ADA_PROBE_OUT" "ada-ping"
+}
+
+# A task notification carries ids and a status but not always a summary; none of
+# that metadata may become the label.
+@test "a task notification with no summary falls back to a generic label" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n11","cwd":"/tmp","prompt":"<task-notification>\n<task-id>brdunbr1u</task-id>\n<tool-use-id>toolu_01129</tool-use-id>\n<status>completed</status>\n</task-notification>"}'
+  assert_success
+  run cat "$STATE_DIR/sess-n11.prompt"
+  assert_equal "$output" ""
+  printf '%s' "$(( $(/bin/date +%s) - 120 ))" > "$STATE_DIR/sess-n11.start"
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-n11","cwd":"/tmp"}'
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "cmd=Claude%20Code"
+  refute_file_contains "$ADA_PROBE_OUT" "brdunbr1u"
+}
+
+# The hyphen in the outer tag is the signal. A prompt that is WHOLLY markup but
+# uses a plain HTML element name is a prompt, not an injected block: the HTML
+# spec reserves the hyphen for custom elements precisely to make this
+# distinction, and injected blocks all use hyphenated names.
+@test "a typed prompt that is entirely HTML markup is left verbatim" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n12","cwd":"/tmp","prompt":"<div>foo</div>"}'
+  assert_success
+  run cat "$STATE_DIR/sess-n12.prompt"
+  assert_equal "$output" "<div>foo</div>"
+}
+
+# Pasting a collapsed log and then asking a question is an ordinary prompt, and
+# <details><summary> would otherwise hit the summary extractor and throw the
+# question away.
+@test "a pasted details/summary block keeps the question that follows it" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n13","cwd":"/tmp","prompt":"<details>\n<summary>build log</summary>\nlots of noise\n</details>\n\nwhy does this test fail?"}'
+  assert_success
+  assert_file_contains "$STATE_DIR/sess-n13.prompt" "why does this test fail?"
+  refute_file_contains "$STATE_DIR/sess-n13.prompt" "⚙️"
+}
+
+# clean() is shared with cwd and transcript_path, so collapsing whitespace there
+# would corrupt any path containing a double space: the repo badge would vanish
+# (git -C on a squeezed path) and the turn-error detection would silently stop
+# working (its -f test would fail).
+@test "a path containing a double space survives intact" {
+  mkdir -p "$BATS_TEST_TMPDIR/My  Project"
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n14","cwd":"'"$BATS_TEST_TMPDIR/My  Project"'","prompt":"work"}'
+  assert_success
+  printf '%s' "$(( $(/bin/date +%s) - 120 ))" > "$STATE_DIR/sess-n14.start"
+  export ADA_DEBUG_LOG=1
+  export ADA_DEBUG_LOG_FILE="$BATS_TEST_TMPDIR/paths.log"
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-n14","cwd":"'"$BATS_TEST_TMPDIR/My  Project"'"}'
+  assert_success
+  assert_file_contains "$ADA_DEBUG_LOG_FILE" "My  Project"
 }
 
 # The debug breadcrumb is the tool for diagnosing a NEW injected shape, so it

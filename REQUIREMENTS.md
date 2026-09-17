@@ -227,10 +227,20 @@ removed.
   raw markup blocks, and none of that markup or its ids may reach the alert:
   - a block carrying a one-line `<summary>` must be labelled from that summary;
   - a slash command must be labelled with its command name and arguments;
-  - any other wholly tag-wrapped block must be reduced to its prose, falling
-    back to the generic agent label when no prose remains.
+  - any other such block must be reduced to the prose sitting directly inside
+    it, with nested metadata elements removed whole rather than unwrapped, and
+    must fall back to the generic agent label when no prose remains.
+- A prompt only counts as agent-injected when it is wholly markup AND its outer
+  tag name contains a hyphen, which distinguishes a harness block from an HTML
+  or JSX element name.
 - Prompt sanitizing must not alter a prompt the user actually typed, including
-  one that merely begins with markup, and must collapse whitespace to one line.
+  one that begins with markup, one that is entirely HTML markup, and one that
+  embeds a `<details><summary>` block before the user's question. Display labels
+  must collapse whitespace to one line.
+- Whitespace collapsing must apply to display labels only. `cwd` and
+  `transcript_path` must survive byte-for-byte, because a path containing a
+  double space would otherwise break the repo badge and the turn-error
+  detection.
 - The opt-in debug breadcrumb must keep logging the raw prompt rather than the
   label, because diagnosing a newly introduced injected shape depends on it.
 - A `Stop` event must compute elapsed turn time and trigger the shared launcher
