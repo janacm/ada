@@ -279,6 +279,13 @@ accepts the same JSON payload shape; if Codex sends a `Stop` event with a
 different or missing `session_id`, it falls back to the most recent start stamp
 that is still younger than `ADA_CLAUDE_STALE_MAX`.
 
+Not every turn starts with something you typed. The agent fires the same
+`UserPromptSubmit` hook for messages it injects — a background task finishing, a
+slash command, a system reminder — and those arrive as raw markup. The alert
+label is derived rather than printed verbatim, so such a turn shows
+`⚙️ Background command "make build" completed (exit code 0)` instead of a window
+full of `<task-notification><task-id>…`. A prompt you typed is never altered.
+
 Tune the trigger independently of the terminal threshold with
 `ADA_CLAUDE_THRESHOLD`. The own-terminal / `ADA_SKIP_WHEN_ACTIVE` silencing
 rules apply here too, so an alert only pops when you've actually walked away.

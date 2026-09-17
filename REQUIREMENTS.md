@@ -219,8 +219,20 @@ removed.
 
 - `ada-claude-hook.sh` must support the shared Claude Code and Codex hook payload
   shape from stdin.
-- A `UserPromptSubmit` event must record the start timestamp and prompt text,
-  keyed by `session_id`.
+- A `UserPromptSubmit` event must record the start timestamp and a displayable
+  label for the prompt, keyed by `session_id`.
+- The alert label must be human-readable even when the agent injected the prompt
+  itself. `UserPromptSubmit` also fires for agent-generated messages (a
+  background task finishing, a slash command, a system reminder), which arrive as
+  raw markup blocks, and none of that markup or its ids may reach the alert:
+  - a block carrying a one-line `<summary>` must be labelled from that summary;
+  - a slash command must be labelled with its command name and arguments;
+  - any other wholly tag-wrapped block must be reduced to its prose, falling
+    back to the generic agent label when no prose remains.
+- Prompt sanitizing must not alter a prompt the user actually typed, including
+  one that merely begins with markup, and must collapse whitespace to one line.
+- The opt-in debug breadcrumb must keep logging the raw prompt rather than the
+  label, because diagnosing a newly introduced injected shape depends on it.
 - A `Stop` event must compute elapsed turn time and trigger the shared launcher
   only when the elapsed time meets `ADA_CLAUDE_THRESHOLD`.
 - The hook must honor the same active-app suppression rules as terminal command
@@ -396,6 +408,13 @@ removed.
   changes and the docs still match implementation.
 
 ## Change Log
+
+- 2026-09-17: Claude Code / Codex alert labels are now derived from the prompt
+  rather than printing it verbatim. `UserPromptSubmit` also fires for messages
+  the agent injects, so a turn that began with a background-task notification
+  rendered an alert reading `<task-notification><task-id>…<tool-use-id>…` with no
+  human-readable content. Those blocks are now labelled from their `<summary>`,
+  slash commands from their name and arguments, and typed prompts are untouched.
 
 - 2026-09-17: Added the opencode integration. opencode has no hook config, so it
   ships as an opencode plugin (`lib/ada-opencode-plugin.mjs`) installed as a

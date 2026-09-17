@@ -321,6 +321,49 @@ hidden = fullscreen. Menu bar visible = windowed.
 - `~/.ada` is the installed clone the live hooks run from; it's separate from any
   dev checkout. After changing the launcher, `git -C ~/.ada pull` to go live.
 
+## UserPromptSubmit is not only what the user typed
+
+The agent fires `UserPromptSubmit` for messages **it** injects into the
+conversation, not just ones you type. Captured live from Claude Code, the
+`prompt` field arrives as a raw block:
+
+```
+<task-notification> <task-id>brdunbr1u</task-id> <tool-use-id>toolu_01129…</tool-use-id>
+<output-file>/private/tmp/…/brdunbr1u.output</output-file> <status>completed</status>
+<summary>Background command "Run the full suite" completed (exit code 0)</summary>
+</task-notification>
+```
+
+Stamping that as "the prompt" produced an alert whose entire label was
+`<task-notification><task-id>…`, which tells you nothing. `label_for()` in the
+python payload pass recovers the human part: `<summary>` when present (task
+notifications, CI events), command name plus arguments for a slash command, and
+tag-stripped prose for any other wholly tag-wrapped block.
+
+**The `<div>foo</div> is not centering` case is why the generic strip is gated
+on the whole prompt being tag-wrapped** (`^<tag>…</tag>$`). A frontend prompt can
+legitimately open with markup, and stripping tags there would mangle a real
+prompt into `foo is not centering`. Anchoring on "starts with `<`" alone is the
+tempting shortcut and it is wrong.
+
+Known injected shapes so far: `task-notification`, `command-name` /
+`command-message` / `command-args`, `local-command-stdout`, `system-reminder`,
+`ci-monitor-event`. Treat that list as incomplete — it grows with the harness.
+
+**To capture a new shape**, the opt-in breadcrumb deliberately logs the RAW
+prompt, not the label:
+
+```bash
+touch "$TMPDIR/ada-claude-debug.on"     # survives an env-stripped hook
+# ...trigger the thing, then:
+tail "$TMPDIR/ada-claude-debug.log"
+cat "$TMPDIR"/ada-claude/*.prompt        # what the alert WOULD show
+```
+
+A background task finishing in Claude Code is the easiest reproduction: run
+anything with `run_in_background`, and the completion notification opens a new
+turn whose prompt is the synthetic block.
+
 ## Click-to-open the Claude conversation (deep link)
 
 Clicking a Claude Code alert opens that turn's conversation in the Claude macOS
