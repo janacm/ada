@@ -1,0 +1,13 @@
+#!/bin/bash
+# Test double for the `opencode` CLI. ada-install.sh asks the real binary where
+# its config root is (`opencode debug paths`), because that root moves with
+# XDG_CONFIG_HOME. This stub answers with the sandboxed HOME so the installer
+# tests exercise that parsing without touching a developer's real
+# ~/.config/opencode — and without depending on opencode being installed.
+if [ "$1" = "debug" ] && [ "$2" = "paths" ]; then
+  printf 'home       %s\n' "$HOME"
+  printf 'config     %s\n' "${STUB_OPENCODE_CONFIG:-$HOME/.config/opencode}"
+  printf 'state      %s\n' "$HOME/.local/state/opencode"
+  exit 0
+fi
+exit 0

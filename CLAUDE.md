@@ -1,12 +1,21 @@
 # CLAUDE.md — ada (Agent Done Alert)
 
 A maximized-window alert that pops when a long terminal command / Claude Code
-or Codex turn / Paseo agent turn finishes. The alert is an HTML page
-(`alert.html`) rendered only by the native SwiftPM helper `ada-alert`. Entry
-points all call the shared launcher `ada-show-alert.sh`: `ada.sh` (zsh hook),
-`ada-claude-hook.sh` (shared Claude Code / Codex hook), and
+or Codex turn / opencode turn / Paseo agent turn finishes. The alert is an HTML
+page (`alert.html`) rendered only by the native SwiftPM helper `ada-alert`.
+Entry points all reach the shared launcher `ada-show-alert.sh`: `ada.sh` (zsh
+hook), `ada-claude-hook.sh` (shared Claude Code / Codex hook),
+`ada-opencode-plugin.mjs` (an opencode plugin; see
+[opencode is a plugin](#opencode-is-a-plugin-not-a-hook)), and
 `ada-paseo-watch.sh` -> `ada-paseo-watch.py` (a launchd watcher that polls the
 Paseo daemon; see [The Paseo watcher](#the-paseo-watcher-launchd-cant-run-from-tcc-protected-paths)).
+
+Everything except `ada.sh` goes through `lib/ada-notify.sh` first, which owns
+frontmost-app suppression and duration formatting. There are three
+implementations of that suppression check (this bash one, the zsh one inside
+`ada.sh` because it is sourced into your interactive shell, and the python one
+in `ada-paseo-watch.py` because a LaunchAgent can't source zsh). **Do not add a
+fourth** — a new integration sources or execs `ada-notify.sh`.
 
 Docs of record are `README.md` for user-facing behavior, `REQUIREMENTS.md` for
 durable product/integration requirements, and this file plus `AGENTS.md` for
@@ -82,6 +91,116 @@ There is intentionally **no browser fallback**. If the native helper is missing
 or not executable, `ada-show-alert.sh` exits with an error rather than opening
 Chrome, Brave, Edge, Safari, or any other browser. Do not reintroduce browser
 fallbacks when working on alert rendering.
+
+## opencode is a plugin, not a hook
+
+opencode exposes **no** "run a command on agent event" hook config, so there is
+no `~/.config/opencode/hooks.json` analogue to Claude Code's settings. What it
+has is a server-side **plugin** API: a module whose named exports are async
+factories returning a hooks object. `lib/ada-opencode-plugin.mjs` is that
+plugin, and `ada-install.sh` installs it as a one-line shim
+(`export * from "<install dir>/lib/ada-opencode-plugin.mjs"`) at
+`<config>/plugin/ada.js`.
+
+**Facts verified against opencode 1.18.30 on this machine** (not from docs):
+
+- **The plugin-directory scanner only picks up `.js`.** A plain `.mjs` dropped
+  in `~/.config/opencode/plugin/` is silently ignored — no error, no load. A
+  `.js` file loads, and so does a `.js` **symlink**. That is why the drop-in is
+  `.js` while the plugin it re-exports is `.mjs` (an explicit import bypasses
+  the extension filter, and the extension makes the ESM-ness unambiguous).
+- **Why a shim and not a symlink.** A symlink resolves to its realpath, and
+  under Homebrew `<prefix>/opt/ada/libexec` realpaths straight into
+  `<prefix>/Cellar/ada/<version>/libexec` — the same `:A`-vs-`:a` trap
+  documented below for `ada.sh`. The shim keeps the version-stable `opt` path.
+- **Plugins load lazily, at the first session — not at server boot.** Starting
+  `opencode serve` and grepping the log proves nothing; you have to create a
+  session (`curl -X POST localhost:<port>/session -d '{}'`) before the plugin
+  is even imported.
+- **Event order for a turn:** `chat.message` (hook, carries the prompt parts)
+  -> `session.status busy` (repeatedly) -> `session.error` (only on failure)
+  -> `session.status idle` -> `session.idle`. `session.idle` fires **once**, at
+  the end of the whole turn, *after* the last tool call — confirmed with a
+  bash-tool turn, not just a trivial one. `session.error` lands ~1ms before
+  `session.idle`, which is why the plugin stashes the error on the turn and lets
+  the idle handler render it: one alert per failed turn, not two.
+- **The bundled SDK types lie about permissions.** `@opencode-ai/sdk` 1.18.20
+  (what `~/.config/opencode/node_modules` had) declares
+  `permission.updated` with `{permissionID, response}`; the 1.18.30 binary emits
+  **`permission.asked`** with `{id, sessionID, permission, patterns, metadata,
+  always, tool}` and `permission.replied` with `{requestID, reply}`. The plugin
+  accepts both spellings and reads fields defensively. Re-derive with the probe
+  recipe below rather than trusting `types.gen.d.ts`.
+- **The `permission.ask` *hook* did not fire at all** in 1.18.30, even with a
+  permission genuinely pending. Use the event.
+- **`__CFBundleIdentifier` and `TERM_PROGRAM` are inherited** by the plugin
+  process from the terminal hosting opencode. So frontmost-app suppression and
+  click-to-focus work with no extra plumbing: the click target is already the
+  right terminal app.
+
+Two implementation constraints that are easy to get wrong:
+
+- **The spawn must be detached** (`detached: true`, `stdio: "ignore"`,
+  `unref()`): `opencode run` exits moments after `session.idle`, and a
+  non-detached alert would die with it.
+- **The child needs an `error` listener.** A missing `ada-notify.sh` surfaces as
+  an asynchronous `error` event on the child, and an unhandled `error` event
+  throws — inside opencode's own process. Every failure path here must degrade
+  to "no alert", never to a broken session.
+
+The **error policy** lives in `errorLabel()` in the plugin, and two of its calls
+are deliberate rather than obvious:
+
+- `MessageAbortedError` returns `null`, and an ignored error marks the turn
+  `silenced` so the *finish* alert is dropped too. Otherwise pressing `Esc` on a
+  ten-minute turn would pop a "turn finished" window a second later.
+- `data.isRetryable` does **not** silence an `APIError`. opencode's own retries
+  are announced as `session.status retry` and happen before this point; an error
+  that reaches `session.error` is immediately followed by `session.idle`, so the
+  turn is over regardless. Filtering on `isRetryable` would drop real failures.
+
+`MessageOutputLengthError` is the only variant with no `data.message` at all, so
+a plain `data.message || name` fallback surfaces the bare class name to the user.
+
+### Probing opencode's events
+
+To re-derive the event surface after an opencode upgrade, drop a probe plugin in
+the project you are testing (`<project>/.opencode/plugin/probe.js`) and log
+every event:
+
+```js
+import fs from "node:fs"
+export const Probe = async () => ({
+  event: async ({ event }) =>
+    fs.appendFileSync("/tmp/oc-probe.log", `${event.type} ${JSON.stringify(event.properties).slice(0, 300)}\n`),
+})
+```
+
+Then run a real turn: `opencode run --model anthropic/claude-haiku-4-5 "say ok"`.
+Do **not** filter the event types while probing — that is how the
+`permission.asked` rename hid for a whole round of testing.
+
+**Reproducing a pending permission is the awkward one.** In non-interactive
+`opencode run`, a permission is **auto-rejected** (`permission.replied` with
+`reply: "reject"`) and no ask event ever fires, because there is no UI to ask.
+To get the interactive path without driving the TUI: put
+`{"permission": {"bash": "ask"}}` in the project's `opencode.json`, start
+`opencode serve --port N`, create a session over HTTP, POST a message that needs
+bash, and leave the server with no attached client — it blocks exactly where a
+real client would prompt.
+
+### Testing the plugin
+
+`test/ada-opencode-plugin.bats` replays JSON programs against the real plugin
+through `test/opencode_plugin_drive.mjs`, and lets it call the real
+`ada-notify.sh` and `ada-show-alert.sh` with only the native helper stubbed. So
+a failure means the chain opencode actually uses is broken. The driver shifts
+`Date.now` for the `chat.message` call instead of sleeping, which is what makes
+the threshold-boundary tests exact.
+
+Note `test/stubs/opencode` shadows the real CLI for the whole suite, so the
+installer tests exercise the `opencode debug paths` parsing without touching a
+developer's real `~/.config/opencode`.
 
 ## The Paseo watcher: launchd can't run from TCC-protected paths
 

@@ -75,8 +75,8 @@ removed.
   choosing which integrations trigger ADA.
 - The installer must offer an interactive terminal selector when run from a TTY
   and a scriptable `--agents` path for non-interactive install flows.
-- The selector must include Terminal commands, Claude Code, Codex, and Paseo as
-  independently selectable integrations.
+- The selector must include Terminal commands, Claude Code, Codex, opencode, and
+  Paseo as independently selectable integrations.
 - The shared alert runtime files, including the native `ada-alert` helper, must
   be treated as always included; the selector controls integration wiring, not
   whether the launcher exists.
@@ -91,6 +91,15 @@ removed.
   `~/.claude/settings.json` without removing unrelated hooks.
 - Codex setup must merge `UserPromptSubmit` and `Stop` hooks into
   `~/.codex/hooks.json` without removing unrelated hooks.
+- opencode setup must write a plugin shim named `ada.js` into opencode's global
+  plugin directory. It must resolve that directory by asking the opencode CLI
+  (`opencode debug paths`) before falling back to the XDG default, so a
+  relocated config root is honored.
+- The opencode shim must re-export the plugin from the ada install directory
+  rather than containing the plugin logic, so editing the plugin needs no
+  re-install and only one line changes if ada moves.
+- opencode setup must back up a pre-existing `ada.js` that ada did not write,
+  and must be idempotent: re-running must leave exactly one shim.
 - JSON hook setup must write a timestamped backup before changing an existing
   settings file.
 - Paseo setup through the installer must delegate to `ada-paseo-watch.sh install`
@@ -116,7 +125,11 @@ removed.
 ## Shared Alert Launcher
 
 - `ada-show-alert.sh` is the canonical launcher used by terminal, Claude/Codex,
-  and Paseo entry points.
+  opencode, and Paseo entry points.
+- `ada-notify.sh` is the shared layer between an integration and the launcher: it
+  owns frontmost-app suppression and duration formatting for callers that are not
+  the zsh hook. A new integration must source or exec it rather than adding
+  another copy of that logic.
 - The alert must show the command or prompt label, formatted duration, exit
   status, auto-close countdown, and git repository badge when a repository can
   be resolved.
@@ -228,6 +241,52 @@ removed.
 - Invalid, missing, or unparseable hook payloads must exit quietly without
   breaking the caller.
 
+## opencode Plugin
+
+- The opencode integration must be an opencode plugin, not a hook config and not
+  a poller, because opencode exposes no "run a command on agent event" hook.
+- The plugin must derive turn boundaries from opencode's own surfaces: the
+  `chat.message` hook for the start of a turn (recording the prompt text) and the
+  `session.idle` event for the end of it.
+- A finished turn must alert only when elapsed time meets
+  `ADA_OPENCODE_THRESHOLD`.
+- A `session.error` must alert regardless of elapsed time, and a failed turn must
+  produce exactly one alert even though the error event precedes the idle event.
+- A user-initiated abort (`MessageAbortedError`) must not alert, and must also
+  suppress the finish alert for that turn: the user was at the keyboard to cause
+  it.
+- A retryable API error must still alert. opencode retries internally and
+  reports those as `session.status retry`, so an error that reaches
+  `session.error` has already ended the turn.
+- Error labels must stay readable when the error carries no message: an output
+  length error must not surface as a bare class name, an auth error must name
+  the provider, and an API error must surface its status code.
+- A `session.error` with no session id must still alert, because it describes a
+  failure that happened before a turn could be attributed.
+- A pending permission must alert without a duration and must not consume the
+  turn state, so the finished-turn alert still fires afterwards.
+- Permission alerts must be deduplicated by permission id.
+- Both the `permission.asked` and `permission.updated` event spellings must be
+  handled: the shipped opencode SDK types and the opencode binary disagree, and
+  either may change across versions.
+- Sub-sessions (a session with a `parentID`, i.e. a subagent) must never alert:
+  their idle event is not the user's turn ending.
+- `ADA_OPENCODE_EVENTS` must allow any subset of `finish`, `error`, and
+  `permission`, and an empty value must disable the integration without
+  uninstalling it.
+- The alert must be spawned detached, because `opencode run` exits immediately
+  after a turn ends and the alert has to outlive it.
+- A failure to launch the alert must never break the opencode session: a missing
+  or unexecutable notifier must degrade to no alert.
+- The plugin must resolve `ada-notify.sh` relative to its own file so it works
+  from a checkout, `~/.ada`, or the Homebrew prefix with no baked path.
+- The plugin must honor the same active-app suppression rules as the other
+  integrations, which it inherits by delegating to `ada-notify.sh`.
+- Alerts must show the session's own directory as the repository badge, so one
+  opencode server serving several projects still labels each alert correctly.
+- Debug logging must remain opt-in through `ADA_DEBUG_LOG`, `ADA_DEBUG_LOG_FILE`,
+  or a `${TMPDIR}/ada-opencode-debug.on` sentinel.
+
 ## Paseo Watcher
 
 - The Paseo integration must be a poller, not a provider hook, because Paseo
@@ -303,6 +362,10 @@ removed.
   must not affect `ada` when the native helper is built.
 - `paseo` is required only for the Paseo watcher and may be found on `PATH`,
   under `~/.local/bin`, or in the Paseo application bundle.
+- `opencode` is required only for the opencode integration. The plugin runs
+  inside opencode's own JavaScript runtime, so it adds no separate Node
+  dependency; the installer uses the `opencode` CLI only to locate the config
+  root.
 
 ## Documentation Requirements
 
@@ -320,6 +383,14 @@ removed.
   changes and the docs still match implementation.
 
 ## Change Log
+
+- 2026-09-17: Added the opencode integration. opencode has no hook config, so it
+  ships as an opencode plugin (`lib/ada-opencode-plugin.mjs`) installed as a
+  one-line `.js` shim in opencode's plugin directory; it alerts on
+  `session.idle`, `session.error` and `permission.asked`, and ignores subagent
+  sessions. Frontmost-app suppression and duration formatting moved out of
+  `ada-claude-hook.sh` into a new shared `lib/ada-notify.sh` so the hook and the
+  plugin cannot drift.
 
 - 2026-08-20: Fixed Homebrew installs. `alert.html` is now resolved relative to
   the running script instead of a hardcoded `~/.ada`, which does not exist under

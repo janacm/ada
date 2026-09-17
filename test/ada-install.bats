@@ -34,6 +34,7 @@ PY
   assert_output_contains "terminal"
   assert_output_contains "claude"
   assert_output_contains "codex"
+  assert_output_contains "opencode"
   assert_output_contains "paseo"
 }
 
@@ -92,18 +93,25 @@ PY
   local keg="$prefix/Cellar/ada/9.9.9/libexec"
   mkdir -p "$keg/lib" "$prefix/opt"
   cp "$REPO_ROOT/ada-install.sh" "$REPO_ROOT/ada.sh" "$REPO_ROOT/alert.html" "$keg/"
-  cp "$REPO_ROOT/lib/ada-show-alert.sh" "$REPO_ROOT/lib/ada-claude-hook.sh" "$keg/lib/"
+  cp "$REPO_ROOT/lib/ada-show-alert.sh" "$REPO_ROOT/lib/ada-claude-hook.sh" \
+     "$REPO_ROOT/lib/ada-notify.sh" "$REPO_ROOT/lib/ada-opencode-plugin.mjs" "$keg/lib/"
   cp "$REPO_ROOT/ada-alert" "$keg/ada-alert" 2>/dev/null \
     || cp "$REPO_ROOT/.build/release/ada-alert" "$keg/ada-alert"
   ln -s "../Cellar/ada/9.9.9" "$prefix/opt/ada"
 
-  run "$keg/ada-install.sh" --agents terminal,claude --no-test
+  run "$keg/ada-install.sh" --agents terminal,claude,opencode --no-test
   assert_success
 
   assert_file_contains "$HOME/.zshrc" "$prefix/opt/ada/libexec/ada.sh"
   refute_file_contains "$HOME/.zshrc" "Cellar"
   assert_file_contains "$HOME/.claude/settings.json" "$prefix/opt/ada/libexec/lib/ada-claude-hook.sh"
   refute_file_contains "$HOME/.claude/settings.json" "Cellar"
+
+  # The opencode plugin shim is just as durable: it names a path that opencode
+  # imports on every start, so a Cellar path there dies on the next upgrade.
+  shim="$HOME/.config/opencode/plugin/ada.js"
+  assert_file_contains "$shim" "$prefix/opt/ada/libexec/lib/ada-opencode-plugin.mjs"
+  refute_file_contains "$shim" "Cellar"
 }
 
 @test "terminal install adds a managed block and is idempotent" {
@@ -247,4 +255,57 @@ JSON
   assert_success
   run assert_hook_wired "$hooks" Stop false
   assert_success
+}
+
+@test "opencode install drops a plugin shim in the config dir it reports" {
+  require_native_helper
+  export HOME="$BATS_TEST_TMPDIR/home"; mkdir -p "$HOME"
+
+  run "$INSTALL" --agents opencode --no-test
+  assert_success
+
+  # The path comes from the stub `opencode debug paths`, proving the installer
+  # asks opencode rather than assuming ~/.config.
+  shim="$HOME/.config/opencode/plugin/ada.js"
+  [ -f "$shim" ]
+  assert_file_contains "$shim" "$REPO_ROOT/lib/ada-opencode-plugin.mjs"
+  assert_file_contains "$shim" "export *"
+
+  # Idempotent: re-running leaves exactly one shim and no backup clutter.
+  run "$INSTALL" --agents opencode --no-test
+  assert_success
+  run bash -c "ls '$HOME/.config/opencode/plugin' | wc -l"
+  assert_equal "$(echo $output)" "1"
+}
+
+@test "opencode install honors a relocated config root" {
+  require_native_helper
+  export HOME="$BATS_TEST_TMPDIR/home"; mkdir -p "$HOME"
+  export STUB_OPENCODE_CONFIG="$BATS_TEST_TMPDIR/xdg/opencode"
+
+  run "$INSTALL" --agents opencode --no-test
+  assert_success
+  [ -f "$BATS_TEST_TMPDIR/xdg/opencode/plugin/ada.js" ]
+  [ ! -f "$HOME/.config/opencode/plugin/ada.js" ]
+}
+
+@test "opencode install backs up an unrelated plugin named ada.js" {
+  require_native_helper
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME/.config/opencode/plugin"
+  echo 'export const NotOurs = async () => ({})' > "$HOME/.config/opencode/plugin/ada.js"
+
+  run "$INSTALL" --agents opencode --no-test
+  assert_success
+  assert_output_contains "backup:"
+  run bash -c "cat '$HOME/.config/opencode/plugin/'ada.js.bak.ada-*"
+  assert_output_contains "NotOurs"
+}
+
+@test "--dry-run --agents opencode writes no plugin file" {
+  export HOME="$BATS_TEST_TMPDIR/home"; mkdir -p "$HOME"
+  run "$INSTALL" --dry-run --agents opencode
+  assert_success
+  assert_output_contains "dry-run"
+  [ ! -f "$HOME/.config/opencode/plugin/ada.js" ]
 }

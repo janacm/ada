@@ -1,0 +1,6 @@
+#!/bin/bash
+# Test double for the native ada-alert helper that APPENDS instead of
+# overwriting, so a test can count how many alerts actually fired (the default
+# fake-ada-alert truncates, which hides a duplicate).
+[ -n "${ADA_PROBE_OUT:-}" ] && printf '%s\n' "${1:-}" >> "$ADA_PROBE_OUT"
+exit 0
