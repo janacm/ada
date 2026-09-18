@@ -61,19 +61,22 @@ class Ada < Formula
 
         ada-setup
 
-      That presents an interactive selector and edits ~/.zshrc and (if present)
-      ~/.claude / ~/.codex hook configs, and can install the Paseo LaunchAgent
-      watcher. It writes timestamped backups before any JSON edit and is
-      idempotent, so re-run it any time to change which integrations are active.
+      That presents an interactive selector for the surfaces that should trigger
+      an alert — terminal commands, Claude Code, Codex, opencode, and Paseo —
+      and wires only the ones you pick: a managed block in ~/.zshrc, merged
+      hooks in ~/.claude / ~/.codex, a plugin shim in opencode's plugin
+      directory, the Paseo LaunchAgent watcher. It writes timestamped backups
+      before any JSON edit and is idempotent, so re-run it any time to change
+      which integrations are active.
 
       Scriptable form:
 
-        ada-setup --agents terminal,claude,codex
+        ada-setup --agents terminal,claude,codex,opencode
         ada-setup --list
 
-      Upgrades: `brew upgrade ada` is enough — the wiring points at the
-      version-stable #{opt_libexec}, so it survives upgrades and you do not
-      need to re-run ada-setup.
+      Upgrades: `brew upgrade ada` keeps existing wiring working, because it
+      points at the version-stable #{opt_libexec}. Re-run ada-setup only to pick
+      up an integration a newer version added — v0.3 added opencode.
 
       Upgrading FROM v0.2: that release wired itself to a versioned Cellar
       path, so run `ada-setup` once after upgrading to repoint it.
