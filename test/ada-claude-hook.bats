@@ -216,3 +216,157 @@ UUID="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
   run cat "$ADA_PROBE_ENV_OUT"
   assert_equal "$output" "ADA_CLICK_URL="
 }
+
+# --- displayable labels for agent-injected prompts -------------------------
+#
+# UserPromptSubmit does NOT only carry what the user typed: the agent fires the
+# same hook for messages it injects (a background task finishing, a slash
+# command, a system reminder). Those arrive as raw XML-ish blocks, and rendering
+# one verbatim filled the whole alert with <task-notification><task-id>… .
+
+# The exact payload shape captured from a live Claude Code session.
+@test "a background-task notification is labelled from its summary" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n1","cwd":"/tmp","prompt":"<task-notification>\n<task-id>brdunbr1u</task-id>\n<tool-use-id>toolu_01129shSAwBXkMWiPR8jhHb6</tool-use-id>\n<output-file>/private/tmp/x/tasks/brdunbr1u.output</output-file>\n<status>completed</status>\n<summary>Background command \"Run the full suite\" completed (exit code 0)</summary>\n</task-notification>"}'
+  assert_success
+  assert_file_contains "$STATE_DIR/sess-n1.prompt" 'Background command "Run the full suite" completed'
+  # None of the machine detail may reach the alert.
+  refute_file_contains "$STATE_DIR/sess-n1.prompt" "task-notification"
+  refute_file_contains "$STATE_DIR/sess-n1.prompt" "toolu_"
+  refute_file_contains "$STATE_DIR/sess-n1.prompt" "brdunbr1u"
+}
+
+@test "the summary label survives all the way to the alert" {
+  stamp=$(( $(/bin/date +%s) - 120 ))
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n2","cwd":"/tmp","prompt":"<task-notification>\n<task-id>abc</task-id>\n<summary>Background command \"make build\" completed (exit code 0)</summary>\n</task-notification>"}'
+  assert_success
+  # Backdate the stamp so the turn clears the threshold.
+  printf '%s' "$stamp" > "$STATE_DIR/sess-n2.start"
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-n2","cwd":"/tmp"}'
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "make%20build"
+  refute_file_contains "$ADA_PROBE_OUT" "task-notification"
+}
+
+@test "a slash command is labelled with the command and its arguments" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n3","cwd":"/tmp","prompt":"<command-name>/goal</command-name>\n<command-message>goal</command-message>\n<command-args>ship the opencode integration</command-args>"}'
+  assert_success
+  assert_file_contains "$STATE_DIR/sess-n3.prompt" "/goal ship the opencode integration"
+  refute_file_contains "$STATE_DIR/sess-n3.prompt" "command-name"
+}
+
+@test "a slash command with no arguments keeps just the command name" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n4","cwd":"/tmp","prompt":"<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"}'
+  assert_success
+  run cat "$STATE_DIR/sess-n4.prompt"
+  assert_equal "$output" "/clear"
+}
+
+@test "a fully tag-wrapped injected block is reduced to its prose" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n5","cwd":"/tmp","prompt":"<local-command-stdout>Goal set: ship the thing</local-command-stdout>"}'
+  assert_success
+  run cat "$STATE_DIR/sess-n5.prompt"
+  assert_equal "$output" "Goal set: ship the thing"
+}
+
+# The control that keeps the sanitizer from eating real prompts: markup at the
+# START of a typed prompt is not enough to call it machine-generated.
+@test "a typed prompt that merely opens with markup is left verbatim" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n6","cwd":"/tmp","prompt":"<div>foo</div> is not centering"}'
+  assert_success
+  run cat "$STATE_DIR/sess-n6.prompt"
+  assert_equal "$output" "<div>foo</div> is not centering"
+}
+
+@test "an ordinary typed prompt is untouched" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n7","cwd":"/tmp","prompt":"fix the login bug in <Header /> please"}'
+  assert_success
+  run cat "$STATE_DIR/sess-n7.prompt"
+  assert_equal "$output" "fix the login bug in <Header /> please"
+}
+
+@test "a multi-line prompt is collapsed to one line" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n8","cwd":"/tmp","prompt":"first line\n\n   second    line"}'
+  assert_success
+  run cat "$STATE_DIR/sess-n8.prompt"
+  assert_equal "$output" "first line second line"
+}
+
+# An injected block whose only content is metadata must reach the generic
+# fallback, not an alert labelled with a leftover id. The earlier version of
+# this test used <ping><id>7</id></ping> and passed while the label was the
+# bare string "7", because its only assertion was that "ping" was absent.
+@test "an injected block of pure metadata falls back to a generic label" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n9","cwd":"/tmp","prompt":"<ada-ping><id>7</id><status>ok</status></ada-ping>"}'
+  assert_success
+  run cat "$STATE_DIR/sess-n9.prompt"
+  assert_equal "$output" ""
+  printf '%s' "$(( $(/bin/date +%s) - 120 ))" > "$STATE_DIR/sess-n9.start"
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-n9","cwd":"/tmp"}'
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "cmd=Claude%20Code"
+  refute_file_contains "$ADA_PROBE_OUT" "ada-ping"
+}
+
+# A task notification carries ids and a status but not always a summary; none of
+# that metadata may become the label.
+@test "a task notification with no summary falls back to a generic label" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n11","cwd":"/tmp","prompt":"<task-notification>\n<task-id>brdunbr1u</task-id>\n<tool-use-id>toolu_01129</tool-use-id>\n<status>completed</status>\n</task-notification>"}'
+  assert_success
+  run cat "$STATE_DIR/sess-n11.prompt"
+  assert_equal "$output" ""
+  printf '%s' "$(( $(/bin/date +%s) - 120 ))" > "$STATE_DIR/sess-n11.start"
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-n11","cwd":"/tmp"}'
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "cmd=Claude%20Code"
+  refute_file_contains "$ADA_PROBE_OUT" "brdunbr1u"
+}
+
+# The hyphen in the outer tag is the signal. A prompt that is WHOLLY markup but
+# uses a plain HTML element name is a prompt, not an injected block: the HTML
+# spec reserves the hyphen for custom elements precisely to make this
+# distinction, and injected blocks all use hyphenated names.
+@test "a typed prompt that is entirely HTML markup is left verbatim" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n12","cwd":"/tmp","prompt":"<div>foo</div>"}'
+  assert_success
+  run cat "$STATE_DIR/sess-n12.prompt"
+  assert_equal "$output" "<div>foo</div>"
+}
+
+# Pasting a collapsed log and then asking a question is an ordinary prompt, and
+# <details><summary> would otherwise hit the summary extractor and throw the
+# question away.
+@test "a pasted details/summary block keeps the question that follows it" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n13","cwd":"/tmp","prompt":"<details>\n<summary>build log</summary>\nlots of noise\n</details>\n\nwhy does this test fail?"}'
+  assert_success
+  assert_file_contains "$STATE_DIR/sess-n13.prompt" "why does this test fail?"
+  refute_file_contains "$STATE_DIR/sess-n13.prompt" "⚙️"
+}
+
+# clean() is shared with cwd and transcript_path, so collapsing whitespace there
+# would corrupt any path containing a double space: the repo badge would vanish
+# (git -C on a squeezed path) and the turn-error detection would silently stop
+# working (its -f test would fail).
+@test "a path containing a double space survives intact" {
+  mkdir -p "$BATS_TEST_TMPDIR/My  Project"
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n14","cwd":"'"$BATS_TEST_TMPDIR/My  Project"'","prompt":"work"}'
+  assert_success
+  printf '%s' "$(( $(/bin/date +%s) - 120 ))" > "$STATE_DIR/sess-n14.start"
+  export ADA_DEBUG_LOG=1
+  export ADA_DEBUG_LOG_FILE="$BATS_TEST_TMPDIR/paths.log"
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-n14","cwd":"'"$BATS_TEST_TMPDIR/My  Project"'"}'
+  assert_success
+  assert_file_contains "$ADA_DEBUG_LOG_FILE" "My  Project"
+}
+
+# The debug breadcrumb is the tool for diagnosing a NEW injected shape, so it
+# must keep logging the raw prompt even though the alert shows the label.
+@test "the debug log keeps the raw prompt, not the cleaned label" {
+  export ADA_DEBUG_LOG=1
+  export ADA_DEBUG_LOG_FILE="$BATS_TEST_TMPDIR/debug.log"
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-n10","cwd":"/tmp","prompt":"<task-notification>\n<task-id>zzz</task-id>\n<summary>all done</summary>\n</task-notification>"}'
+  assert_success
+  assert_file_contains "$ADA_DEBUG_LOG_FILE" "task-notification"
+}

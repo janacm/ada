@@ -9,8 +9,13 @@
 # Code *and* Codex — both pass a matching JSON payload on stdin, so
 # the same script serves both. It dispatches on hook_event_name:
 #
-#   UserPromptSubmit -> stamp a start time + the prompt text,
-#                       keyed by session id.
+#   UserPromptSubmit -> stamp a start time + a displayable label for
+#                       the prompt, keyed by session id. The agent fires
+#                       this hook for messages it INJECTS as well as ones
+#                       you type (a background task finishing, a slash
+#                       command, a system reminder), and those arrive as
+#                       raw XML-ish blocks — see label_for() for how the
+#                       human part is recovered.
 #   Stop             -> if the turn ran longer than
 #                       ADA_CLAUDE_THRESHOLD seconds AND you're
 #                       not already looking at the terminal that
@@ -56,27 +61,90 @@ threshold=${ADA_CLAUDE_THRESHOLD:-45}
 # Pull the fields we need in one python pass (US/\x1f-delimited, newline-stripped).
 payload=$(cat)
 fields=$(printf '%s' "$payload" | python3 -c '
-import json, sys
+import json, re, sys
 try:
     d = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
 def clean(s):
+    # Single-line and delimiter-safe. Used for PATHS as well as text, so it
+    # deliberately does NOT collapse runs of spaces: a directory really can be
+    # named "My  Project", and squeezing that breaks `git -C` for the repo badge
+    # on the alert and the -f test on the transcript path.
     return (s or "").replace("\n", " ").replace("\t", " ").replace("\x1f", " ").strip()
+
+def one_line(s):
+    # For display text, where runs of whitespace are noise.
+    return re.sub(r"\s+", " ", (s or "").replace("\x1f", " ")).strip()
+
+# The outer tag of an injected block always contains a hyphen:
+# task-notification, system-reminder, local-command-stdout, ci-monitor-event,
+# command-name. HTML and JSX element names never do, and that is not a
+# coincidence -- a hyphen is exactly what the HTML spec reserves to tell a
+# custom element from a standard one. It is the strongest cheap signal there is,
+# and it is what keeps a typed "<div>foo</div>" out of the sanitizer entirely.
+INJECTED_OUTER_TAG = re.compile(r"^<([A-Za-z0-9_]+-[A-Za-z0-9_-]*)>")
+
+def label_for(prompt):
+    # A turn label a human can read on a maximized window.
+    #
+    # Not every UserPromptSubmit carries something you typed. The agent fires
+    # the same hook for messages IT injects into the conversation -- a
+    # background task finishing, a slash command, a system reminder, a CI event
+    # -- and those arrive as raw markup. Rendering one verbatim fills the alert
+    # with task ids and file paths, so recover the human part instead.
+    p = (prompt or "").strip()
+
+    # Machine-generated only when the prompt is WHOLLY markup: it opens with a
+    # hyphenated custom tag and closes on a tag. So neither
+    # "<div>foo</div> is not centering" nor a pasted
+    # "<details><summary>log</summary>...</details> why does this fail?" is
+    # touched. Both are realistic prompts that the weaker starts-with-< rule
+    # mangled.
+    if not (INJECTED_OUTER_TAG.match(p) and p.endswith(">")):
+        return one_line(p)
+
+    # A slash command: show the command and its arguments, which IS what the
+    # user typed, just wrapped in markup by the agent.
+    m = re.search(r"<command-name>\s*(.*?)\s*</command-name>", p, re.S)
+    if m:
+        args = re.search(r"<command-args>\s*(.*?)\s*</command-args>", p, re.S)
+        return one_line(m.group(1) + " " + (args.group(1) if args else ""))
+
+    # Task notifications and CI events carry a one-line <summary> written for a
+    # human; prefer it over the ids and file paths around it.
+    m = re.search(r"<summary>\s*(.*?)\s*</summary>", p, re.S)
+    if m and m.group(1).strip():
+        return one_line("\u2699\ufe0f " + m.group(1))
+
+    # Any other injected block: keep the prose, drop the metadata. Metadata
+    # lives in NESTED elements (task-id, status, id), so remove those whole
+    # rather than merely unwrapping them -- stripping tags alone left an alert
+    # labelled "7", or a bare task id. Text sitting directly inside the outer
+    # block is the only part a human wrote. An empty result falls back to the
+    # generic agent label on the bash side.
+    body = re.sub(r"^<[A-Za-z0-9_-]+>", "", p)
+    body = re.sub(r"</[A-Za-z0-9_-]+>\s*$", "", body)
+    body = re.sub(r"<([A-Za-z0-9_-]+)[^>]*>.*?</\1>", " ", body, flags=re.S)
+    return one_line(re.sub(r"<[^>]*>", " ", body))
+
 ev  = d.get("hook_event_name", "") or ""
 sid = d.get("session_id", "") or ""
 cwd = clean(d.get("cwd", ""))
 tp  = clean(d.get("transcript_path", ""))
 pr  = clean(d.get("prompt", ""))
+lb  = label_for(d.get("prompt", ""))
 # Fields are joined with US (\x1f), a NON-whitespace delimiter, so an empty field
 # (e.g. a payload with no transcript_path) is preserved instead of collapsing the
 # way adjacent IFS-whitespace tabs would — which used to shift the prompt into
-# transcript_path and drop it. prompt stays LAST so read -r keeps it whole.
-print(ev + "\x1f" + sid + "\x1f" + cwd + "\x1f" + tp + "\x1f" + pr)
+# transcript_path and drop it. The RAW prompt stays LAST so read -r keeps it
+# whole; it is only used for the debug breadcrumb, while the label is what gets
+# stamped and displayed.
+print(ev + "\x1f" + sid + "\x1f" + cwd + "\x1f" + tp + "\x1f" + lb + "\x1f" + pr)
 ' 2>/dev/null)
 [[ -z "$fields" ]] && exit 0
 
-IFS=$'\x1f' read -r event session_id cwd transcript_path prompt <<<"$fields"
+IFS=$'\x1f' read -r event session_id cwd transcript_path label prompt <<<"$fields"
 [[ -z "$event" ]] && exit 0
 
 # Opt-in breadcrumb for debugging Codex-vs-Claude payload shapes. Triggered by
@@ -130,7 +198,7 @@ case "$event" in
     [[ -z "$session_id" ]] && exit 0
     mkdir -p "$state_dir"
     date +%s            > "$state_dir/$session_id.start"
-    printf '%s' "$prompt" > "$state_dir/$session_id.prompt"
+    printf '%s' "$label" > "$state_dir/$session_id.prompt"
     ;;
 
   Stop)

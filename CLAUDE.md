@@ -321,6 +321,69 @@ hidden = fullscreen. Menu bar visible = windowed.
 - `~/.ada` is the installed clone the live hooks run from; it's separate from any
   dev checkout. After changing the launcher, `git -C ~/.ada pull` to go live.
 
+## UserPromptSubmit is not only what the user typed
+
+The agent fires `UserPromptSubmit` for messages **it** injects into the
+conversation, not just ones you type. Captured live from Claude Code, the
+`prompt` field arrives as a raw block:
+
+```
+<task-notification> <task-id>brdunbr1u</task-id> <tool-use-id>toolu_01129…</tool-use-id>
+<output-file>/private/tmp/…/brdunbr1u.output</output-file> <status>completed</status>
+<summary>Background command "Run the full suite" completed (exit code 0)</summary>
+</task-notification>
+```
+
+Stamping that as "the prompt" produced an alert whose entire label was
+`<task-notification><task-id>…`, which tells you nothing. `label_for()` in the
+python payload pass recovers the human part: `<summary>` when present (task
+notifications, CI events), command name plus arguments for a slash command, and
+tag-stripped prose for any other wholly tag-wrapped block.
+
+**The signal is a hyphen in the outer tag name.** `task-notification`,
+`system-reminder`, `local-command-stdout`, `ci-monitor-event`, `command-name` —
+every injected block uses a hyphenated name, and HTML/JSX element names never
+do. That is not luck: the HTML spec reserves the hyphen to distinguish a custom
+element from a standard one. A prompt only enters the sanitizer if it opens with
+a hyphenated tag *and* ends on a tag, i.e. it is wholly markup.
+
+Three weaker rules were tried and are wrong:
+
+- "starts with `<`" mangles `<div>foo</div> is not centering` into
+  `foo is not centering`.
+- the same shortcut lets a pasted `<details><summary>build log</summary>…
+  </details>` reach the `<summary>` extractor, which replaces the user's actual
+  question with `⚙️ build log`. Pasting a collapsed log and then asking about it
+  is an ordinary prompt.
+- "wholly tag-wrapped" (`^<tag>…</tag>$`) still eats a typed `<div>foo</div>`,
+  and it does not even match the slash-command shape, which opens on
+  `<command-name>` and closes on `</command-args>`.
+
+**Metadata lives in nested elements, prose does not.** For a block with no
+`<summary>`, stripping tags alone leaves the values behind — `<ada-ping><id>7
+</id></ada-ping>` became an alert labelled `7`, and a summary-less task
+notification would have shown a bare task id. So nested elements are removed
+whole, and only text sitting directly inside the outer block survives. Nothing
+left means the generic `Claude Code` label.
+
+Known injected shapes so far: `task-notification`, `command-name` /
+`command-message` / `command-args`, `local-command-stdout`, `system-reminder`,
+`ci-monitor-event`. Treat that list as incomplete — it grows with the harness.
+
+**To capture a new shape**, the opt-in breadcrumb deliberately logs the RAW
+prompt, not the label:
+
+```bash
+touch "$TMPDIR/ada-claude-debug.on"     # survives an env-stripped hook
+# ...trigger the thing, then:
+tail "$TMPDIR/ada-claude-debug.log"
+cat "$TMPDIR"/ada-claude/*.prompt        # what the alert WOULD show
+```
+
+A background task finishing in Claude Code is the easiest reproduction: run
+anything with `run_in_background`, and the completion notification opens a new
+turn whose prompt is the synthetic block.
+
 ## Click-to-open the Claude conversation (deep link)
 
 Clicking a Claude Code alert opens that turn's conversation in the Claude macOS
