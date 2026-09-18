@@ -48,6 +48,11 @@ dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 state_dir="${TMPDIR:-/tmp}/ada-claude"
 threshold=${ADA_CLAUDE_THRESHOLD:-45}
 
+# Frontmost-app suppression, duration formatting and the launcher call live in
+# ada-notify.sh so this hook and the opencode plugin can't drift apart.
+# shellcheck source=lib/ada-notify.sh
+. "$dir/ada-notify.sh"
+
 # Pull the fields we need in one python pass (US/\x1f-delimited, newline-stripped).
 payload=$(cat)
 fields=$(printf '%s' "$payload" | python3 -c '
@@ -120,36 +125,6 @@ sys.exit(1)
 ' 2>/dev/null
 }
 
-__ada_format_duration() {
-  local s=$1
-  if   (( s < 60 ));   then printf '%ds' "$s"
-  elif (( s < 3600 )); then printf '%dm %ds' $(( s / 60 )) $(( s % 60 ))
-  else                      printf '%dh %dm' $(( s / 3600 )) $(( (s % 3600) / 60 )); fi
-}
-
-# Mirror of ada.sh __ada_should_skip_active, in bash: true (0) when the
-# frontmost app means you're already watching, so the alert would be noise.
-__ada_should_skip_active() {
-  local skip_own=${ADA_SKIP_OWN_TERMINAL:-1}
-  local active_list=${ADA_SKIP_WHEN_ACTIVE:-}
-  [[ "$skip_own" != 1 && -z "${active_list// /}" ]] && return 1
-
-  local front bid name raw
-  front=$(lsappinfo front 2>/dev/null) || return 1
-  [[ -z "$front" ]] && return 1
-  raw=$(lsappinfo info -only bundleid "$front" 2>/dev/null); bid=${raw##*=\"}; bid=${bid%\"}
-  raw=$(lsappinfo info -only name "$front" 2>/dev/null);     name=${raw##*=\"}; name=${name%\"}
-
-  if [[ "$skip_own" == 1 && -n "${__CFBundleIdentifier:-}" && "$bid" == "${__CFBundleIdentifier:-}" ]]; then
-    return 0
-  fi
-  local e
-  for e in $active_list; do
-    [[ -n "$e" && ( "$bid" == "$e" || ( -n "$name" && "$name" == *"$e"* ) ) ]] && return 0
-  done
-  return 1
-}
-
 case "$event" in
   UserPromptSubmit)
     [[ -z "$session_id" ]] && exit 0
@@ -190,7 +165,6 @@ case "$event" in
     if [[ -z "$err_text" ]]; then
       (( elapsed < threshold )) && exit 0
     fi
-    __ada_should_skip_active && exit 0
 
     if [[ -n "$err_text" ]]; then
       label="⚠️ Error: ${err_text}"
@@ -221,8 +195,10 @@ case "$event" in
     # back to the launcher's cwd, which is the project in the usual setup.
     # ADA_CLICK_URL makes clicking the alert open the deep link above (empty =
     # plain dismiss). ADA_FOCUS_APP_NAME labels the click hint ("…return to Claude").
+    # __ada_notify (lib/ada-notify.sh) owns the frontmost-app suppression, the
+    # duration formatting and the launcher call, shared with the opencode plugin.
     ADA_REPO_DIR="$cwd" ADA_CLICK_URL="$click_url" ADA_FOCUS_APP_NAME="$focus_name" \
-      "$dir/ada-show-alert.sh" "$label" "$(__ada_format_duration "$elapsed")" 0 >/dev/null 2>&1 &
+      __ada_notify "$label" "$elapsed" 0 >/dev/null 2>&1 &
     ;;
 esac
 

@@ -41,9 +41,17 @@ __ada_stable_dir() {
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 dir=$(__ada_stable_dir "$dir")
 
-AGENT_IDS=(terminal claude codex paseo)
-AGENT_NAMES=("Terminal commands" "Claude Code" "Codex" "Paseo")
-AGENT_TARGETS=("~/.zshrc" "~/.claude/settings.json" "~/.codex/hooks.json" "LaunchAgent watcher")
+AGENT_IDS=(terminal claude codex opencode paseo)
+AGENT_NAMES=("Terminal commands" "Claude Code" "Codex" "opencode" "Paseo")
+AGENT_TARGETS=("~/.zshrc" "~/.claude/settings.json" "~/.codex/hooks.json" "opencode plugin dir" "LaunchAgent watcher")
+
+# Every selection array is sized from AGENT_IDS rather than written out by hand,
+# so adding an integration above can't leave a short array behind.
+reset_selection() {
+  local i
+  selected=()
+  for (( i=0; i<${#AGENT_IDS[@]}; i++ )); do selected+=(0); done
+}
 
 dry_run=0
 run_test=1
@@ -63,6 +71,7 @@ Integration ids:
   terminal   zsh long-command alerts
   claude     Claude Code UserPromptSubmit/Stop hooks
   codex      Codex UserPromptSubmit/Stop hooks
+  opencode   opencode plugin (session idle / error / permission)
   paseo      Paseo LaunchAgent watcher
 USAGE
 }
@@ -87,6 +96,41 @@ find_paseo() {
     [[ -x "$p" ]] && { printf '%s' "$p"; return 0; }
   done
   return 1
+}
+
+find_opencode() {
+  local p
+  p=$(command -v opencode 2>/dev/null) && { printf '%s' "$p"; return 0; }
+  for p in "$HOME/.opencode/bin/opencode" "/opt/homebrew/bin/opencode" "/usr/local/bin/opencode"; do
+    [[ -x "$p" ]] && { printf '%s' "$p"; return 0; }
+  done
+  return 1
+}
+
+# Where opencode scans for global plugins. Ask opencode itself first — it is the
+# only authority on its own config root, which moves with XDG_CONFIG_HOME — and
+# fall back to the XDG default when the binary isn't there to ask.
+# ADA_OPENCODE_PLUGIN_DIR overrides both (used by the test suite).
+# Memoized because the interactive selector calls agent_status for every row on
+# every keypress, and asking opencode costs a process spawn. The config root
+# cannot change while the installer runs.
+__ada_opencode_plugin_dir=""
+opencode_plugin_dir() {
+  local oc config=""
+  if [[ -n "${ADA_OPENCODE_PLUGIN_DIR:-}" ]]; then
+    printf '%s' "$ADA_OPENCODE_PLUGIN_DIR"
+    return 0
+  fi
+  if [[ -n "$__ada_opencode_plugin_dir" ]]; then
+    printf '%s' "$__ada_opencode_plugin_dir"
+    return 0
+  fi
+  if oc=$(find_opencode); then
+    config=$("$oc" debug paths 2>/dev/null | sed -n 's/^config[[:space:]][[:space:]]*//p' | head -1)
+  fi
+  [[ -n "$config" ]] || config="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+  __ada_opencode_plugin_dir="$config/plugin"
+  printf '%s' "$__ada_opencode_plugin_dir"
 }
 
 find_swift() {
@@ -144,6 +188,7 @@ agent_available() {
     terminal) [[ -n "${ZSH_VERSION:-}" || -x /bin/zsh || -x /usr/bin/zsh ]] ;;
     claude) [[ -d "$HOME/.claude" || -f "$HOME/.claude/settings.json" ]] ;;
     codex) [[ -d "$HOME/.codex" || -f "$HOME/.codex/hooks.json" ]] ;;
+    opencode) find_opencode >/dev/null 2>&1 || [[ -d "$(dirname "$(opencode_plugin_dir)")" ]] ;;
     paseo) find_paseo >/dev/null 2>&1 ;;
     *) return 1 ;;
   esac
@@ -152,7 +197,7 @@ agent_available() {
 agent_default_selected() {
   case "$1" in
     terminal) return 0 ;;
-    claude|codex|paseo) agent_available "$1" ;;
+    claude|codex|opencode|paseo) agent_available "$1" ;;
     *) return 1 ;;
   esac
 }
@@ -167,6 +212,15 @@ agent_status() {
       ;;
     codex)
       [[ -f "$HOME/.codex/hooks.json" ]] && printf 'detected' || printf 'will create hooks.json'
+      ;;
+    opencode)
+      # Never 'not found' for a row the selector is willing to install: the
+      # config directory existing is enough to wire the plugin, even when the
+      # binary is not on PATH (a version manager, or an install still to come).
+      if [[ -f "$(opencode_plugin_dir)/ada.js" ]]; then printf 'detected'
+      elif find_opencode >/dev/null 2>&1; then printf 'will create plugin'
+      elif [[ -d "$(dirname "$(opencode_plugin_dir)")" ]]; then printf 'config found, no CLI'
+      else printf 'not found'; fi
       ;;
     paseo)
       if find_paseo >/dev/null 2>&1; then printf 'detected'; else printf 'not found'; fi
@@ -184,7 +238,7 @@ print_list() {
 
 parse_agent_list() {
   local raw=$1 part idx
-  selected=(0 0 0 0)
+  reset_selection
   raw=${raw//,/ }
   if [[ "$raw" == "all" ]]; then
     for (( idx=0; idx<${#AGENT_IDS[@]}; idx++ )); do
@@ -248,7 +302,7 @@ render_selector() {
 interactive_select() {
   [[ -t 0 && -t 1 ]] || die "not running in a terminal; use --agents LIST"
 
-  selected=(0 0 0 0)
+  reset_selection
   local i
   for (( i=0; i<${#AGENT_IDS[@]}; i++ )); do
     agent_default_selected "${AGENT_IDS[$i]}" && selected[$i]=1
@@ -427,6 +481,42 @@ install_codex() {
   install_hook_json "Codex" "$HOME/.codex/hooks.json" 0
 }
 
+install_opencode() {
+  local plugin_dir shim
+  plugin_dir=$(opencode_plugin_dir)
+  shim="$plugin_dir/ada.js"
+  say "Installing opencode integration -> $shim"
+  if [[ "$dry_run" == 1 ]]; then
+    say "dry-run: would write a plugin shim re-exporting $dir/lib/ada-opencode-plugin.mjs"
+    return 0
+  fi
+  # Not fatal: the plugin only has to exist by the time opencode next starts,
+  # and the binary may live somewhere this script cannot see. Say so, though,
+  # rather than reporting a clean install of something nothing will load.
+  find_opencode >/dev/null 2>&1 ||
+    say "  note: no opencode CLI on PATH; the plugin will load once opencode is installed"
+  mkdir -p "$plugin_dir" || die "could not create $plugin_dir"
+
+  # Don't clobber an unrelated plugin that happens to be called ada.js.
+  if [[ -f "$shim" ]] && ! grep -q 'ada-opencode-plugin' "$shim" 2>/dev/null; then
+    local backup="$shim.bak.ada-$(date '+%Y%m%d-%H%M%S')"
+    cp "$shim" "$backup" || die "could not back up $shim"
+    say "  backup: $backup"
+  fi
+
+  # opencode only scans `.js` here, so the drop-in is `.js` even though it is
+  # ESM. It is a shim on purpose: the logic stays in the ada install directory,
+  # so editing the plugin takes effect on the next opencode start, and only
+  # this one line has to be rewritten if ada moves.
+  cat > "$shim" <<SHIM
+// Managed by ada — Agent Done Alert for opencode. Safe to delete: that is how
+// you uninstall this integration. Recreate it with:
+//   $dir/ada-install.sh --agents opencode
+export * from "$dir/lib/ada-opencode-plugin.mjs"
+SHIM
+  say "  plugin logic: $dir/lib/ada-opencode-plugin.mjs"
+}
+
 install_paseo() {
   find_paseo >/dev/null 2>&1 || die "Paseo CLI/app not found"
   say "Installing Paseo integration -> LaunchAgent"
@@ -484,6 +574,11 @@ done
 [[ "$(uname -s)" == "Darwin" ]] || die "ada currently supports macOS only"
 [[ -x "$dir/lib/ada-show-alert.sh" ]] || die "missing executable $dir/lib/ada-show-alert.sh"
 [[ -x "$dir/lib/ada-claude-hook.sh" ]] || die "missing executable $dir/lib/ada-claude-hook.sh"
+[[ -x "$dir/lib/ada-notify.sh" ]] || die "missing executable $dir/lib/ada-notify.sh"
+# The opencode shim is one line pointing at this file. Writing a shim whose
+# target does not exist reports a clean install and then throws an unresolved
+# import inside opencode on every start, where ada never sees it.
+[[ -f "$dir/lib/ada-opencode-plugin.mjs" ]] || die "missing $dir/lib/ada-opencode-plugin.mjs"
 
 if [[ -n "$explicit_agents" ]]; then
   parse_agent_list "$explicit_agents"
@@ -505,6 +600,7 @@ for (( i=0; i<${#AGENT_IDS[@]}; i++ )); do
     terminal) install_terminal ;;
     claude) install_claude ;;
     codex) install_codex ;;
+    opencode) install_opencode ;;
     paseo) install_paseo ;;
   esac
 done

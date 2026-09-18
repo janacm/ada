@@ -6,8 +6,8 @@ A maximized-window alert that pops up when a long-running terminal command
 finishes, so you can switch away from the terminal and get yanked back the moment
 your build / test / deploy is done.
 
-When a terminal command, Claude Code turn, Codex turn, or Paseo agent turn runs
-longer than a threshold, `ada` opens a maximized alert window showing the
+When a terminal command, Claude Code turn, Codex turn, opencode turn, or Paseo
+agent turn runs longer than a threshold, `ada` opens a maximized alert window showing the
 command or prompt, the git repo it ran in, how long it took, and its exit status
 (green for success, red for failure). Click anywhere or press `Esc` to dismiss;
 it also auto-closes after a configurable timeout. Not ready to deal with it yet?
@@ -31,7 +31,8 @@ local-first: it does not send telemetry, prompts, command labels, repository
 names, or local paths to a remote service.
 
 The installer can modify shell startup files, Claude Code hooks, Codex hooks,
-and LaunchAgent state when you opt into those integrations. It preserves
+the opencode plugin directory, and LaunchAgent state when you opt into those
+integrations. It preserves
 unrelated hook config, writes timestamped backups before JSON edits, and exposes
 `--dry-run` / `--list` paths so changes are auditable before install.
 
@@ -116,6 +117,8 @@ selector for the integrations you want:
   `~/.claude/settings.json`.
 - **Codex** — merges `UserPromptSubmit` and `Stop` hooks into
   `~/.codex/hooks.json`.
+- **opencode** — drops a plugin shim into opencode's plugin directory
+  (`~/.config/opencode/plugin/ada.js`).
 - **Paseo** — stages and loads the LaunchAgent watcher.
 
 It detects which targets exist, preserves existing hook config, writes timestamped
@@ -125,7 +128,7 @@ Then open a new shell (or run `source ~/.zshrc`).
 For a scriptable install, pass a comma-separated list:
 
 ```sh
-~/.ada/ada-install.sh --agents terminal,claude,codex
+~/.ada/ada-install.sh --agents terminal,claude,codex,opencode
 ~/.ada/ada-install.sh --agents all --no-test
 ~/.ada/ada-install.sh --list
 ```
@@ -178,7 +181,9 @@ All settings are environment variables. Set them before `ada.sh` is sourced
 | `ADA_SKIP_WHEN_ACTIVE` | _(empty)_ | Space-separated apps to also stay silent for when they're frontmost. Each entry matches a frontmost app's bundle id exactly, or its name as a substring. |
 | `ADA_CLAUDE_THRESHOLD` | `45` | Minimum Claude Code / Codex *turn* duration, in seconds, to trigger an alert. Only used by the [Claude/Codex hook integration](#claude-code-and-codex). |
 | `ADA_CLAUDE_STALE_MAX` | `21600` | Max age, in seconds, of a fallback start stamp when a Codex `Stop` payload does not match the original `UserPromptSubmit` session id. |
-| `ADA_DEBUG_LOG` | _(empty)_ | When set, log Claude/Codex hook payload summaries to `${TMPDIR}/ada-claude-debug.log` (or `ADA_DEBUG_LOG_FILE`) for debugging. A `${TMPDIR}/ada-claude-debug.on` sentinel enables the same logging when an agent strips hook env vars. |
+| `ADA_DEBUG_LOG` | _(empty)_ | When set, log Claude/Codex hook payload summaries to `${TMPDIR}/ada-claude-debug.log` (or `ADA_DEBUG_LOG_FILE`) for debugging. A `${TMPDIR}/ada-claude-debug.on` sentinel enables the same logging when an agent strips hook env vars. The opencode plugin logs the same way to `${TMPDIR}/ada-opencode-debug.log`, with its own `${TMPDIR}/ada-opencode-debug.on` sentinel. |
+| `ADA_OPENCODE_THRESHOLD` | `45` | Minimum opencode *turn* duration, in seconds, to trigger a finished-turn alert. Only used by the [opencode integration](#opencode). |
+| `ADA_OPENCODE_EVENTS` | `finish error permission` | Which opencode events fire an alert — any subset of `finish` (turn done), `error` (turn failed), `permission` (the agent is blocked waiting on you). Empty disables the integration without uninstalling it. Only used by the [opencode integration](#opencode). |
 | `ADA_PASEO_THRESHOLD` | `45` | Minimum Paseo agent *turn* duration, in seconds, to trigger a finished-turn alert. Only used by the [Paseo integration](#paseo). |
 | `ADA_PASEO_POLL` | `3` | How often, in seconds, the Paseo watcher polls the daemon for agent status changes. Only used by the [Paseo integration](#paseo). |
 | `ADA_PASEO_EVENTS` | `finish error permission` | Which Paseo agent events fire an alert — any subset of `finish` (turn done), `error` (turn failed), `permission` (agent is blocked waiting on you). Only used by the [Paseo integration](#paseo). |
@@ -289,6 +294,77 @@ click as before. Requires the desktop app installed and signed in.
 > Requires `python3` (used to parse the hook payload, and to run the
 > click-to-open / snooze daemon). Subagent turns don't fire it — only the main
 > agent's `Stop`.
+
+## opencode
+
+The same alert works for [opencode](https://opencode.ai): when a long turn
+finishes it yanks you back showing your prompt and how long it took. It also
+fires when a turn **fails**, and when the agent is **blocked waiting on you**
+for a permission.
+
+opencode has no `UserPromptSubmit`/`Stop` hook config like Claude Code and
+Codex. What it has is a **plugin** API, so this integration is a small plugin
+(`lib/ada-opencode-plugin.mjs`) that watches opencode's own events and calls the
+same launcher as every other entry point:
+
+- `chat.message` records when your turn started, and your prompt text.
+- `session.idle` means that turn finished — it fires once, after the last tool
+  call — and alerts if the turn ran longer than `ADA_OPENCODE_THRESHOLD`
+  seconds (default `45`) and you're not already looking at the terminal
+  opencode is running in.
+- `session.error` alerts **regardless of duration**, because a turn that fails
+  in two seconds is exactly what a duration threshold would swallow. It arrives
+  just before `session.idle`, so a failed turn produces one alert, not two.
+  Interrupting a turn yourself (`Esc`) is the exception — that's an abort, not a
+  failure, and it stays silent along with the finish alert for that turn, since
+  you were at the keyboard to cause it. Auth failures name the provider, API
+  errors append the HTTP status, and a retryable error still alerts (opencode's
+  own retries happen earlier, so an error that reaches this point ended the
+  turn).
+- `permission.asked` alerts as soon as the agent is blocked waiting for your
+  approval, and leaves the turn running so you still get the finish alert.
+
+Sub-agent sessions never alert on their own: their `session.idle` is not your
+turn ending, the parent session is still working.
+
+The installer wires it for you:
+
+```sh
+~/.ada/ada-install.sh --agents opencode
+```
+
+That writes a one-line shim to `~/.config/opencode/plugin/ada.js` (asking
+`opencode debug paths` where its config root actually is, so a relocated
+`XDG_CONFIG_HOME` is honored):
+
+```js
+export * from "/path/to/ada/lib/ada-opencode-plugin.mjs"
+```
+
+opencode auto-loads every `.js` file in that directory, so there's nothing to
+merge and no config file to edit. **Deleting that file is how you uninstall
+this integration.** The shim only carries the path — the logic stays in the ada
+install directory, so editing the plugin takes effect on the next opencode
+start. To scope it to a single project instead, drop the same one-liner in
+`<project>/.opencode/plugin/ada.js`.
+
+Tune it with `ADA_OPENCODE_THRESHOLD` and `ADA_OPENCODE_EVENTS`; the
+own-terminal / `ADA_SKIP_WHEN_ACTIVE` silencing rules apply here too. An
+opencode started from a shell that sources `ada.sh` inherits all of them
+already.
+
+Two things worth knowing:
+
+- **The terminal integration also sees `opencode`.** `opencode` (TUI) and
+  `opencode run ...` are shell commands, so if one runs past
+  `ADA_THRESHOLD` and you're away from the terminal when it exits, the zsh hook
+  fires its own alert for the command. Add `opencode` to `ADA_IGNORE_CMDS` if
+  you'd rather only the per-turn alerts fire.
+- **Paseo-managed opencode agents don't load this plugin.** Paseo runs agents
+  through its own daemon runtime; use the [Paseo](#paseo) integration for those.
+
+> Requires opencode's plugin loader (any recent opencode) and `python3` for the
+> snooze daemon. Verified against opencode 1.18.30.
 
 ## Paseo
 
