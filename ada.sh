@@ -5,11 +5,19 @@
 
 # Directory this file lives in, captured at source time, so the sibling
 # ada-show-alert.sh launcher and alert.html both resolve regardless of cwd — and
-# regardless of where ada is installed (a dev checkout, ~/.ada, or Homebrew's
-# libexec). ":a" absolutizes WITHOUT resolving symlinks, so a Homebrew install
-# keeps the version-stable .../opt/ada/libexec path instead of pinning itself to
-# the Cellar directory the next `brew upgrade` deletes.
-typeset -g _ADA_DIR="${${(%):-%x}:a:h}"
+# regardless of where ada is installed (a dev checkout, ~/.ada, Homebrew's
+# libexec, or a symlink to this file). ":A" resolves symlinks, so a symlinked
+# ada.sh still finds its real siblings; a Homebrew result then lands in the
+# VERSIONED Cellar dir the next `brew upgrade` deletes, so map that back to the
+# version-stable .../opt/<formula>/... path when it exists.
+typeset -g _ADA_DIR="${${(%):-%x}:A:h}"
+if [[ "$_ADA_DIR" == */Cellar/*/*/* ]]; then
+  () {
+    local prefix=${_ADA_DIR%%/Cellar/*} rest=${_ADA_DIR#*/Cellar/}
+    local name=${rest%%/*} tail=${${rest#*/}#*/}
+    [[ -d "$prefix/opt/$name/$tail" ]] && _ADA_DIR="$prefix/opt/$name/$tail"
+  }
+fi
 
 export ADA_THRESHOLD=${ADA_THRESHOLD:-10}
 # Default to the page shipped next to this file, NOT a hardcoded ~/.ada: under a

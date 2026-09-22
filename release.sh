@@ -54,7 +54,17 @@ if [[ "$(git -C "$dir" rev-parse HEAD)" != "$(git -C "$dir" rev-parse origin/mai
   exit 1
 fi
 
-if git -C "$dir" rev-parse "$version" >/dev/null 2>&1; then
+if tagged=$(git -C "$dir" rev-parse -q --verify "refs/tags/$version^{commit}"); then
+  # Re-running is supported, but only for a tag that still describes main: HEAD
+  # itself, or HEAD's parent when HEAD is this release's own formula bump.
+  head=$(git -C "$dir" rev-parse HEAD)
+  parent=$(git -C "$dir" rev-parse -q --verify HEAD~1 || true)
+  if [[ "$tagged" != "$head" ]] &&
+     ! [[ "$tagged" == "$parent" && "$(git -C "$dir" log -1 --format=%s)" == "Homebrew: point formula at $version" ]]; then
+    echo "release: tag $version points at ${tagged:0:12}, not HEAD (${head:0:12})." >&2
+    echo "  Delete it (git tag -d $version) or pick a new version." >&2
+    exit 1
+  fi
   echo "release: tag $version already exists"
 else
   git -C "$dir" tag -a "$version" -m "$version"
@@ -75,7 +85,7 @@ echo "Pushed tag $version"
 echo
 echo "Computing sha256 for the GitHub release tarball..."
 echo "(GitHub may take a few seconds to generate the tarball after a push.)"
-sha=$(curl -fsSL --retry 5 --retry-delay 2 "$tarball" | shasum -a 256 | awk '{print $1}')
+sha=$(curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "$tarball" | shasum -a 256 | awk '{print $1}')
 [[ ${#sha} == 64 ]] || { echo "release: got a bad sha256 ('$sha')" >&2; exit 1; }
 
 if [[ "$update_formula" == 0 ]]; then

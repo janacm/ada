@@ -60,8 +60,10 @@ Claude/Codex hook commands, and the Paseo plist. So the `ada-setup` wrapper exec
 `#{opt_libexec}` (`<prefix>/opt/ada/libexec`, a version-stable symlink), and both
 `ada-install.sh` and `ada-paseo-watch.sh` additionally map a Cellar path back to
 its `opt` equivalent (`__ada_stable_dir`) in case they're invoked directly. `ada.sh`
-uses zsh `:a` (absolutize) rather than `:A` (realpath) for the same reason —
-`:A` would resolve the opt symlink straight back into the versioned Cellar dir.
+uses zsh `:A` (realpath, so a symlinked `ada.sh` still finds its real siblings)
+and then applies the same Cellar -> `opt` mapping, because `:A` alone resolves
+the opt symlink straight back into the versioned Cellar dir. `:a` looked like
+the fix but broke sourcing `ada.sh` through a file symlink.
 
 **Nothing may default to `~/.ada`.** That path only exists for a from-source
 install; a Homebrew install has no such directory. `alert.html` is therefore
@@ -112,7 +114,11 @@ plugin, and `ada-install.sh` installs it as a one-line shim
 - **Why a shim and not a symlink.** A symlink resolves to its realpath, and
   under Homebrew `<prefix>/opt/ada/libexec` realpaths straight into
   `<prefix>/Cellar/ada/<version>/libexec` — the same `:A`-vs-`:a` trap
-  documented below for `ada.sh`. The shim keeps the version-stable `opt` path.
+  documented above for `ada.sh`. The shim's import keeps the `opt` path, but
+  **opencode still realpaths the module**: `import.meta.url` comes back as the
+  Cellar path (verified on 1.18.30). So the plugin maps its own `LIB_DIR` back
+  to `opt` too; otherwise a long-running opencode spawns a deleted
+  `ada-notify.sh` after `brew upgrade` and alerts stop silently.
 - **Plugins load lazily, at the first session — not at server boot.** Starting
   `opencode serve` and grepping the log proves nothing; you have to create a
   session (`curl -X POST localhost:<port>/session -d '{}'`) before the plugin
@@ -266,7 +272,8 @@ alert from the LaunchAgent while still working in a dev checkout (the classic
 masking failure). The installer builds `ada-alert` with SwiftPM when needed and
 fails if it cannot stage the helper. Re-run `install` after editing any of those
 scripts or rebuilding the helper to re-stage (`status` prints both `runtime:` and,
-when they differ, `source:` — that mismatch is how you spot a stale stage). The
+when a staged file's contents differ from the checkout's, `source:` — that is
+how you spot a stale stage). The
 env file lives at `~/.local/share/ada/paseo-watch.env` in **both** modes: the
 plist sets `ADA_PASEO_ENV` explicitly so config survives a `brew upgrade`, which
 replaces `libexec` wholesale.
