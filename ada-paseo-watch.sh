@@ -192,6 +192,16 @@ __ada_from_brew_prefix() {
 runtime_files=(ada-paseo-watch.sh alert.html lib/ada-paseo-watch.py
                lib/ada-show-alert.sh lib/ada-snooze-daemon.py)
 
+# The native helper a stage would copy from this checkout, if any.
+__ada_source_native_alert() {
+  local f
+  for f in "${ADA_NATIVE_ALERT:-}" "$dir/ada-alert" \
+           "$dir/.build/release/ada-alert" "$dir/.build/debug/ada-alert"; do
+    [[ -n "$f" && -x "$f" ]] && { printf '%s' "$f"; return 0; }
+  done
+  return 1
+}
+
 __ada_check_in_place_runtime() {
   local f missing=0
   for f in "${runtime_files[@]}"; do
@@ -226,10 +236,7 @@ __ada_stage_runtime() {
   done
 
   local native_alert=""
-  for f in "${ADA_NATIVE_ALERT:-}" "$dir/ada-alert" \
-           "$dir/.build/release/ada-alert" "$dir/.build/debug/ada-alert"; do
-    if [[ -x "$f" ]]; then native_alert="$f"; break; fi
-  done
+  native_alert=$(__ada_source_native_alert) || native_alert=""
   if [[ -z "$native_alert" && -f "$dir/Package.swift" ]] && command -v swift >/dev/null 2>&1; then
     echo "Building native alert helper..."
     if (cd "$dir" && swift build -c release --product ada-alert >/dev/null 2>&1); then
@@ -295,7 +302,7 @@ ada_install() {
     <key>PATH</key>
     <string>${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>ADA_PASEO_ENV</key>
-    <string>${install_dir}/paseo-watch.env</string>
+    <string>${env_file}</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -317,7 +324,7 @@ PLIST
     echo "Installed and loaded: $plist"
     echo "  runtime: $(dirname "$script")"
     echo "  watching the Paseo daemon; logs -> $logfile"
-    echo "  configure via env file: $install_dir/paseo-watch.env"
+    echo "  configure via env file: $env_file"
     echo "  uninstall with: $script uninstall"
   else
     echo "Wrote $plist but 'launchctl load' failed — try: launchctl load -w \"$plist\"" >&2
@@ -364,6 +371,11 @@ ada_status() {
       for f in "${runtime_files[@]}"; do
         [[ -f "$dir/$f" ]] && ! cmp -s "$dir/$f" "$runtime_dir/$f" && stale=1
       done
+      # The helper is staged separately, so a rebuild after install counts too.
+      local helper
+      if helper=$(__ada_source_native_alert) && ! cmp -s "$helper" "$runtime_dir/ada-alert"; then
+        stale=1
+      fi
       if (( stale )); then
         echo "   source:  $dir differs from the staged copy (re-run install)"
       fi
