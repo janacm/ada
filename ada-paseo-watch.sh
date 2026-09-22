@@ -109,6 +109,9 @@ if [[ -f "$env_file" ]]; then
   set -a; # shellcheck disable=SC1090
   . "$env_file"; set +a
 fi
+# Re-read after sourcing so ADA_PASEO_INSTALL_DIR set in the env file is honored
+# (the env file itself was located from the pre-source value above).
+install_dir="${ADA_PASEO_INSTALL_DIR:-$HOME/.local/share/ada}"
 
 # Self-contained alert page: default to the one shipped next to this script so
 # the watcher works from any clone, not just ~/.ada. The loop and the launcher
@@ -183,10 +186,25 @@ __ada_from_brew_prefix() {
 
 # Homebrew keeps the whole repo tree intact in libexec, so there is nothing to
 # copy — just confirm the pieces the LaunchAgent will reach for are all there.
+# Everything the LaunchAgent reaches for, relative to the runtime root. Shared
+# by the in-place check, staging and the stale-stage check in status, so the
+# modes can't drift apart.
+runtime_files=(ada-paseo-watch.sh alert.html lib/ada-paseo-watch.py
+               lib/ada-show-alert.sh lib/ada-snooze-daemon.py)
+
+# The native helper a stage would copy from this checkout, if any.
+__ada_source_native_alert() {
+  local f
+  for f in "${ADA_NATIVE_ALERT:-}" "$dir/ada-alert" \
+           "$dir/.build/release/ada-alert" "$dir/.build/debug/ada-alert"; do
+    [[ -n "$f" && -x "$f" ]] && { printf '%s' "$f"; return 0; }
+  done
+  return 1
+}
+
 __ada_check_in_place_runtime() {
   local f missing=0
-  for f in ada-paseo-watch.sh alert.html lib/ada-paseo-watch.py \
-           lib/ada-show-alert.sh lib/ada-snooze-daemon.py; do
+  for f in "${runtime_files[@]}"; do
     [[ -f "$dir/$f" ]] || { echo "ada-paseo-watch: missing $dir/$f" >&2; missing=1; }
   done
   if [[ ! -x "${ADA_NATIVE_ALERT:-$dir/ada-alert}" ]]; then
@@ -211,22 +229,14 @@ __ada_stage_runtime() {
   # break the staged watcher.
   mkdir -p "$install_dir/lib" "$HOME/Library/LaunchAgents"
   local f
-  for f in ada-paseo-watch.sh alert.html; do
+  for f in "${runtime_files[@]}"; do
     if [[ -f "$dir/$f" ]] && ! [[ "$dir/$f" -ef "$install_dir/$f" ]]; then
       cp "$dir/$f" "$install_dir/$f"
     fi
   done
-  for f in ada-paseo-watch.py ada-show-alert.sh ada-snooze-daemon.py; do
-    if [[ -f "$dir/lib/$f" ]] && ! [[ "$dir/lib/$f" -ef "$install_dir/lib/$f" ]]; then
-      cp "$dir/lib/$f" "$install_dir/lib/$f"
-    fi
-  done
 
   local native_alert=""
-  for f in "${ADA_NATIVE_ALERT:-}" "$dir/ada-alert" \
-           "$dir/.build/release/ada-alert" "$dir/.build/debug/ada-alert"; do
-    if [[ -x "$f" ]]; then native_alert="$f"; break; fi
-  done
+  native_alert=$(__ada_source_native_alert) || native_alert=""
   if [[ -z "$native_alert" && -f "$dir/Package.swift" ]] && command -v swift >/dev/null 2>&1; then
     echo "Building native alert helper..."
     if (cd "$dir" && swift build -c release --product ada-alert >/dev/null 2>&1); then
@@ -292,7 +302,7 @@ ada_install() {
     <key>PATH</key>
     <string>${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>ADA_PASEO_ENV</key>
-    <string>${install_dir}/paseo-watch.env</string>
+    <string>${env_file}</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -314,7 +324,7 @@ PLIST
     echo "Installed and loaded: $plist"
     echo "  runtime: $(dirname "$script")"
     echo "  watching the Paseo daemon; logs -> $logfile"
-    echo "  configure via env file: $install_dir/paseo-watch.env"
+    echo "  configure via env file: $env_file"
     echo "  uninstall with: $script uninstall"
   else
     echo "Wrote $plist but 'launchctl load' failed — try: launchctl load -w \"$plist\"" >&2
@@ -334,9 +344,14 @@ ada_status() {
   # The real health signal is a live poll loop, not just a registered job.
   pid=$(launchctl print "gui/$(id -u)/${label_prefix}" 2>/dev/null \
         | sed -n 's/^[[:space:]]*pid = \([0-9][0-9]*\).*/\1/p' | head -1)
-  # Match the loop wherever it runs from: the staged copy for a dev checkout, or
-  # Homebrew's libexec when the watcher runs in place.
-  [[ -z "$pid" ]] && pid=$(pgrep -f "ada-paseo-watch.py" 2>/dev/null | head -1)
+  # Read the runtime back out of the plist rather than assuming: it is the staged
+  # dir for a checkout and Homebrew's libexec for a brew install.
+  local runtime="" runtime_dir=""
+  [[ -f "$plist" ]] && runtime=$(sed -n 's|.*<string>\(.*/ada-paseo-watch\.sh\)</string>.*|\1|p' "$plist" | head -1)
+  [[ -n "$runtime" ]] && runtime_dir=$(dirname "$runtime")
+  # Match only the loop running from the configured runtime, so an editor or a
+  # leftover watcher from another stage dir can't pass for a healthy one.
+  [[ -z "$pid" && -n "$runtime_dir" ]] && pid=$(pgrep -f "$runtime_dir/lib/ada-paseo-watch.py" 2>/dev/null | head -1)
 
   if [[ -n "$pid" ]]; then
     echo "✅ Paseo watcher: running (pid $pid)"
@@ -347,15 +362,23 @@ ada_status() {
   fi
 
   [[ -f "$plist" ]] && echo "✅ plist: $plist" || echo "❌ plist: (none)"
-  # Read the runtime back out of the plist rather than assuming: it is the staged
-  # dir for a checkout and Homebrew's libexec for a brew install, and a mismatch
-  # against $dir is exactly how you spot a stale stage after editing scripts.
-  local runtime=""
-  [[ -f "$plist" ]] && runtime=$(sed -n 's|.*<string>\(.*/ada-paseo-watch\.sh\)</string>.*|\1|p' "$plist" | head -1)
-  if [[ -n "$runtime" ]]; then
-    echo "   runtime: $(dirname "$runtime")"
-    if [[ "$(dirname "$runtime")" != "$dir" ]]; then
-      echo "   source:  $dir (re-run install after editing these scripts)"
+  if [[ -n "$runtime_dir" ]]; then
+    echo "   runtime: $runtime_dir"
+    # A staged runtime always lives somewhere other than $dir, so the paths
+    # differing says nothing; a staged file differing from its source does.
+    if [[ "$runtime_dir" != "$dir" ]]; then
+      local f stale=0
+      for f in "${runtime_files[@]}"; do
+        [[ -f "$dir/$f" ]] && ! cmp -s "$dir/$f" "$runtime_dir/$f" && stale=1
+      done
+      # The helper is staged separately, so a rebuild after install counts too.
+      local helper
+      if helper=$(__ada_source_native_alert) && ! cmp -s "$helper" "$runtime_dir/ada-alert"; then
+        stale=1
+      fi
+      if (( stale )); then
+        echo "   source:  $dir differs from the staged copy (re-run install)"
+      fi
     fi
   else
     echo "   runtime: (not installed)"

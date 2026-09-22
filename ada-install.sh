@@ -98,10 +98,12 @@ find_paseo() {
   return 1
 }
 
+# ADA_OPENCODE_FALLBACK_PATHS overrides the absolute fallbacks (the test suite
+# empties it to observe the no-CLI branch on a machine that has opencode).
 find_opencode() {
   local p
   p=$(command -v opencode 2>/dev/null) && { printf '%s' "$p"; return 0; }
-  for p in "$HOME/.opencode/bin/opencode" "/opt/homebrew/bin/opencode" "/usr/local/bin/opencode"; do
+  for p in ${ADA_OPENCODE_FALLBACK_PATHS-"$HOME/.opencode/bin/opencode" /opt/homebrew/bin/opencode /usr/local/bin/opencode}; do
     [[ -x "$p" ]] && { printf '%s' "$p"; return 0; }
   done
   return 1
@@ -114,15 +116,13 @@ find_opencode() {
 # Memoized because the interactive selector calls agent_status for every row on
 # every keypress, and asking opencode costs a process spawn. The config root
 # cannot change while the installer runs.
+# Callers read it via $(...), a subshell, so the memo is filled by
+# resolve_opencode_plugin_dir in the parent shell rather than in here.
 __ada_opencode_plugin_dir=""
-opencode_plugin_dir() {
+resolve_opencode_plugin_dir() {
   local oc config=""
   if [[ -n "${ADA_OPENCODE_PLUGIN_DIR:-}" ]]; then
-    printf '%s' "$ADA_OPENCODE_PLUGIN_DIR"
-    return 0
-  fi
-  if [[ -n "$__ada_opencode_plugin_dir" ]]; then
-    printf '%s' "$__ada_opencode_plugin_dir"
+    __ada_opencode_plugin_dir=$ADA_OPENCODE_PLUGIN_DIR
     return 0
   fi
   if oc=$(find_opencode); then
@@ -130,6 +130,9 @@ opencode_plugin_dir() {
   fi
   [[ -n "$config" ]] || config="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
   __ada_opencode_plugin_dir="$config/plugin"
+}
+opencode_plugin_dir() {
+  [[ -n "$__ada_opencode_plugin_dir" ]] || resolve_opencode_plugin_dir
   printf '%s' "$__ada_opencode_plugin_dir"
 }
 
@@ -497,12 +500,17 @@ install_opencode() {
     say "  note: no opencode CLI on PATH; the plugin will load once opencode is installed"
   mkdir -p "$plugin_dir" || die "could not create $plugin_dir"
 
-  # Don't clobber an unrelated plugin that happens to be called ada.js.
-  if [[ -f "$shim" ]] && ! grep -q 'ada-opencode-plugin' "$shim" 2>/dev/null; then
+  # Don't clobber an unrelated plugin that happens to be called ada.js. A
+  # symlink is never ours (the installer only writes plain files), and grep
+  # would follow it into whatever it points at, so back those up too.
+  if [[ -L "$shim" ]] || { [[ -f "$shim" ]] && ! grep -q 'ada-opencode-plugin' "$shim" 2>/dev/null; }; then
     local backup="$shim.bak.ada-$(date '+%Y%m%d-%H%M%S')"
-    cp "$shim" "$backup" || die "could not back up $shim"
+    cp -P "$shim" "$backup" || die "could not back up $shim"
     say "  backup: $backup"
   fi
+  # Remove first so `cat >` below creates a fresh file instead of writing
+  # through a symlink into its target.
+  rm -f "$shim"
 
   # opencode only scans `.js` here, so the drop-in is `.js` even though it is
   # ESM. It is a shim on purpose: the logic stays in the ada install directory,
@@ -536,6 +544,8 @@ run_test_alert() {
   fi
   ADA_AUTO_CLOSE="${ADA_AUTO_CLOSE:-20}" "$dir/lib/ada-show-alert.sh" "ada install test" "1s" 0
 }
+
+resolve_opencode_plugin_dir
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

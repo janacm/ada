@@ -339,19 +339,36 @@ JSON
   refute_output_contains "not found"
 }
 
-# The "config found, no CLI" branch itself can only be observed where no
-# opencode binary exists: find_opencode deliberately checks absolute fallback
-# paths (/opt/homebrew/bin, /usr/local/bin, ~/.opencode/bin), so PATH alone
-# cannot hide a real install.
+# The "config found, no CLI" branch. The suite's own test/stubs/opencode is on
+# PATH, and find_opencode also checks absolute fallback paths, so hide both:
+# a system-only PATH, and ADA_OPENCODE_FALLBACK_PATHS emptied.
 @test "with a config dir but no CLI anywhere, opencode reports the config, not absence" {
-  if command -v opencode >/dev/null 2>&1 \
-     || [ -x /opt/homebrew/bin/opencode ] || [ -x /usr/local/bin/opencode ]; then
-    skip "a real opencode CLI is installed; this branch is unobservable here"
+  if [ -x /usr/bin/opencode ] || [ -x /bin/opencode ]; then
+    skip "opencode is installed in a system directory; this branch is unobservable here"
   fi
+  export PATH="/usr/bin:/bin"
+  export ADA_OPENCODE_FALLBACK_PATHS=""
   export HOME="$BATS_TEST_TMPDIR/home"
   mkdir -p "$HOME/.config/opencode"
   export ADA_OPENCODE_PLUGIN_DIR="$HOME/.config/opencode/plugin"
   run bash -c "\"$INSTALL\" --list | grep '^opencode'"
   assert_success
   assert_output_contains "config found, no CLI"
+}
+
+# A symlinked ada.js is not ours: back it up, and never write through it into
+# whatever it points at.
+@test "opencode install replaces a symlinked ada.js without touching its target" {
+  require_native_helper
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME/.config/opencode/plugin" "$BATS_TEST_TMPDIR/target"
+  cp "$REPO_ROOT/lib/ada-opencode-plugin.mjs" "$BATS_TEST_TMPDIR/target/plugin.mjs"
+  ln -s "$BATS_TEST_TMPDIR/target/plugin.mjs" "$HOME/.config/opencode/plugin/ada.js"
+
+  run "$INSTALL" --agents opencode --no-test
+  assert_success
+  assert_output_contains "backup:"
+  cmp -s "$REPO_ROOT/lib/ada-opencode-plugin.mjs" "$BATS_TEST_TMPDIR/target/plugin.mjs"
+  [ ! -L "$HOME/.config/opencode/plugin/ada.js" ]
+  assert_file_contains "$HOME/.config/opencode/plugin/ada.js" "export *"
 }

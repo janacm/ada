@@ -104,6 +104,12 @@ def label_for(prompt):
     if not (INJECTED_OUTER_TAG.match(p) and p.endswith(">")):
         return one_line(p)
 
+    # The regexes below backtrack superlinearly on large or malformed markup
+    # (a big <local-command-stdout> of compiler output), and this runs inside a
+    # synchronous UserPromptSubmit hook. The label is clipped to 120 chars
+    # anyway, so only the head of the block is worth scanning.
+    p = p[:8192]
+
     # A slash command: show the command and its arguments, which IS what the
     # user typed, just wrapped in markup by the agent.
     m = re.search(r"<command-name>\s*(.*?)\s*</command-name>", p, re.S)
@@ -113,9 +119,9 @@ def label_for(prompt):
 
     # Task notifications and CI events carry a one-line <summary> written for a
     # human; prefer it over the ids and file paths around it.
-    m = re.search(r"<summary>\s*(.*?)\s*</summary>", p, re.S)
+    m = re.search(r"<summary>(.*?)</summary>", p, re.S)
     if m and m.group(1).strip():
-        return one_line("\u2699\ufe0f " + m.group(1))
+        return one_line("\u2699\ufe0f " + m.group(1).strip())
 
     # Any other injected block: keep the prose, drop the metadata. Metadata
     # lives in NESTED elements (task-id, status, id), so remove those whole
