@@ -377,6 +377,20 @@ Known injected shapes so far: `task-notification`, `command-name` /
 `command-message` / `command-args`, `local-command-stdout`, `system-reminder`,
 `ci-monitor-event`. Treat that list as incomplete — it grows with the harness.
 
+**Pastes are the exception to the hyphen rule.** The Claude desktop app wraps
+anything you paste as `<pasted_content id="c339">…</pasted_content id="c339">`:
+underscore not hyphen, usually mid-prompt after typed text, and the **id repeats
+on the closing tag**, so a `</pasted_content>` pattern never matches (checked
+against real transcripts, 2026-09-23). The injected-block path correctly ignores
+it, so `unpaste()` runs first: each paste becomes `[pasted text]` beside typed
+text, and a paste-only prompt shows the pasted text. A paste-only prompt also
+skips the injected-block rules, because a copied `<task-notification>` block is
+still something you sent; a paste inside an injected block (a slash command's
+arguments) is collapsed and the block around it is sanitized as usual. Tags are
+paired in one pass: the first version used a lazy `(.*?)` regex that rescanned
+the prompt from every unclosed opening tag, and 20,000 of them stalled the hook
+for 26s.
+
 **To capture a new shape**, the opt-in breadcrumb deliberately logs the RAW
 prompt, not the label:
 

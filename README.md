@@ -287,7 +287,9 @@ label is derived rather than printed verbatim, so such a turn shows
 full of `<task-notification><task-id>…`. A prompt you typed is never altered —
 including one that is itself markup, since the detection keys on the hyphenated
 tag names the harness uses (`task-notification`, `system-reminder`) rather than
-on markup alone.
+on markup alone. Text you paste into the Claude desktop app shows as
+`[pasted text]` next to what you typed, or as the pasted text itself when the
+paste is the whole prompt.
 
 Tune the trigger independently of the terminal threshold with
 `ADA_CLAUDE_THRESHOLD`. The own-terminal / `ADA_SKIP_WHEN_ACTIVE` silencing

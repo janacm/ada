@@ -345,6 +345,93 @@ UUID="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
   refute_file_contains "$STATE_DIR/sess-n13.prompt" "⚙️"
 }
 
+# The Claude desktop app wraps a paste as <pasted_content id="c339"> ...
+# </pasted_content id="c339">, id repeated on the closing tag. Before the fix the
+# alert read "create a plan for <pasted_content id="c339"> hey …".
+@test "a desktop-app paste after typed text collapses to a placeholder" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-p1","cwd":"/tmp","prompt":" pull latest main and then create a plan for \n\n<pasted_content id=\"c339\">\nhey can you look at the eval\nlots more\n</pasted_content id=\"c339\">\n"}'
+  assert_success
+  run cat "$STATE_DIR/sess-p1.prompt"
+  assert_equal "$output" "pull latest main and then create a plan for [pasted text]"
+}
+
+@test "a paste followed by a typed question keeps the question" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-p2","cwd":"/tmp","prompt":"<pasted_content id=\"6255\">\nTraceback (most recent call last)\n</pasted_content id=\"6255\">\n\nwhy does this fail?"}'
+  assert_success
+  run cat "$STATE_DIR/sess-p2.prompt"
+  assert_equal "$output" "[pasted text] why does this fail?"
+}
+
+# A lone placeholder names nothing, so a prompt that is only a paste shows it.
+@test "a prompt that is only a paste shows the pasted text" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-p3","cwd":"/tmp","prompt":"<pasted_content id=\"a1\">\nhey, can you review my PR?\n</pasted_content id=\"a1\">"}'
+  assert_success
+  run cat "$STATE_DIR/sess-p3.prompt"
+  assert_equal "$output" "hey, can you review my PR?"
+}
+
+@test "a plain closing tag and multiple pastes are both handled" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-p4","cwd":"/tmp","prompt":"compare <pasted_content>one</pasted_content> with <pasted_content id=\"b2\">two</pasted_content id=\"b2\">"}'
+  assert_success
+  run cat "$STATE_DIR/sess-p4.prompt"
+  assert_equal "$output" "compare [pasted text] with [pasted text]"
+}
+
+@test "an unclosed paste tag is dropped rather than shown" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-p5","cwd":"/tmp","prompt":"look at <pasted_content id=\"c9\"> this log"}'
+  assert_success
+  run cat "$STATE_DIR/sess-p5.prompt"
+  assert_equal "$output" "look at this log"
+}
+
+# The pairing is a single pass over the tags. A lazy regex rescanned the rest of
+# the prompt from every opening tag that never closed, so a prompt full of
+# unmatched tags stalled this synchronous hook for tens of seconds.
+@test "thousands of unclosed paste tags do not stall the hook" {
+  python3 - "$BATS_TEST_TMPDIR/payload.json" <<'PY'
+import json, sys
+prompt = "look " + '<pasted_content id="x">' * 20000 + " tail"
+json.dump({"hook_event_name": "UserPromptSubmit", "session_id": "sess-p7",
+           "cwd": "/tmp", "prompt": prompt}, open(sys.argv[1], "w"))
+PY
+  local start=$SECONDS
+  run bash -c "'$HOOK' < '$BATS_TEST_TMPDIR/payload.json'"
+  assert_success
+  (( SECONDS - start < 5 )) || { echo "hook took $(( SECONDS - start ))s"; false; }
+  run cat "$STATE_DIR/sess-p7.prompt"
+  assert_equal "$output" "look tail"
+}
+
+# A paste-only prompt is something you sent, even when what you pasted is a
+# copy of harness markup; the injected-block rules must not relabel it.
+@test "a paste-only prompt of copied harness markup is shown as pasted" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-p8","cwd":"/tmp","prompt":"<pasted_content id=\"d1\">\n<task-notification><summary>Build finished</summary></task-notification>\n</pasted_content id=\"d1\">"}'
+  assert_success
+  run cat "$STATE_DIR/sess-p8.prompt"
+  assert_equal "$output" "<task-notification><summary>Build finished</summary></task-notification>"
+}
+
+# Only a paste-ONLY prompt skips the sanitizer. A paste that sits inside an
+# injected block (here, a slash command's arguments) is collapsed first, and the
+# block around it is still reduced to its command and arguments.
+@test "a paste inside a slash command's arguments still yields the command label" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-p9","cwd":"/tmp","prompt":"<command-name>/review</command-name>\n<command-args><pasted_content id=\"a2\">diff --git a/x b/x</pasted_content id=\"a2\"></command-args>"}'
+  assert_success
+  run cat "$STATE_DIR/sess-p9.prompt"
+  assert_equal "$output" "/review [pasted text]"
+}
+
+@test "the paste placeholder survives all the way to the alert" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-p6","cwd":"/tmp","prompt":"plan for <pasted_content id=\"c339\">hey</pasted_content id=\"c339\">"}'
+  assert_success
+  printf '%s' "$(( $(/bin/date +%s) - 120 ))" > "$STATE_DIR/sess-p6.start"
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-p6","cwd":"/tmp"}'
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "cmd=plan%20for%20%5Bpasted%20text%5D"
+  refute_file_contains "$ADA_PROBE_OUT" "c339"
+}
+
 # clean() is shared with cwd and transcript_path, so collapsing whitespace there
 # would corrupt any path containing a double space: the repo badge would vanish
 # (git -C on a squeezed path) and the turn-error detection would silently stop
