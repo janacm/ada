@@ -91,22 +91,48 @@ INJECTED_OUTER_TAG = re.compile(r"^<([A-Za-z0-9_]+-[A-Za-z0-9_-]*)>")
 # so a plain "</pasted_content>" pattern never matches it. The name has an
 # underscore, not a hyphen, and the block usually sits mid-prompt after text you
 # typed, so INJECTED_OUTER_TAG rightly ignores it and it needs its own pass.
-PASTED_BLOCK = re.compile(r"<pasted_content(?:\s[^>]*)?>(.*?)</pasted_content(?:\s[^>]*)?>", re.S)
-PASTED_TAG = re.compile(r"</?pasted_content(?:\s[^>]*)?>")
+#
+# The attributes are bounded and may not contain "<", so each match attempt does
+# a fixed amount of work and one finditer over the prompt stays linear.
+PASTED_TAG = re.compile(r"<(/?)pasted_content(?:\s[^<>]{0,256})?>")
 
 def unpaste(p):
-    # Keep what you typed around a paste and collapse the paste itself to a
-    # placeholder: the typed words are what you remember sending, and a pasted
-    # Slack thread or log would otherwise fill the whole 120-char label. A prompt
-    # that is nothing BUT a paste shows the pasted text, since a lone placeholder
-    # names nothing. A stray tag (an unclosed paste) is dropped either way.
-    if PASTED_BLOCK.search(p):
-        typed = PASTED_TAG.sub("", PASTED_BLOCK.sub("", p))
-        if typed.strip():
-            p = PASTED_BLOCK.sub(" [pasted text] ", p)
-        else:
-            p = PASTED_BLOCK.sub(lambda m: " " + m.group(1) + " ", p)
-    return PASTED_TAG.sub(" ", p).strip()
+    # Returns (text, paste_only). Keep what you typed around a paste and
+    # collapse the paste itself to a placeholder: the typed words are what you
+    # remember sending, and a pasted Slack thread or log would otherwise fill the
+    # whole 120-char label. A prompt that is nothing BUT a paste shows the pasted
+    # text, since a lone placeholder names nothing. A stray tag (an unclosed
+    # paste) is dropped either way.
+    #
+    # One pass over the tags, pairing each opening tag with the next closing
+    # one. A lazy (.*?) regex did the same pairing but rescanned to the end of
+    # the prompt from every opening tag that never closed, which is quadratic,
+    # and this runs inside the synchronous UserPromptSubmit hook.
+    if "pasted_content" not in p:
+        return p, False
+    segments = []  # (is_paste, text) in prompt order
+    pos, open_end = 0, None
+    for m in PASTED_TAG.finditer(p):
+        closing = bool(m.group(1))
+        if open_end is None:
+            segments.append((False, p[pos:m.start()]))
+            if not closing:
+                open_end = m.end()
+            pos = m.end()
+        elif closing:
+            segments.append((True, p[open_end:m.start()]))
+            open_end = None
+            pos = m.end()
+        # an opening tag inside an open paste is part of the pasted text
+    segments.append((False, p[pos:]))
+    pastes = [t for is_paste, t in segments if is_paste]
+    if not pastes:
+        parts, paste_only = [t for _, t in segments], False
+    elif any(PASTED_TAG.sub("", t).strip() for is_paste, t in segments if not is_paste):
+        parts, paste_only = [" [pasted text] " if is_paste else t for is_paste, t in segments], False
+    else:
+        parts, paste_only = pastes, True
+    return PASTED_TAG.sub(" ", " ".join(parts)).strip(), paste_only
 
 def label_for(prompt):
     # A turn label a human can read on a maximized window.
@@ -116,7 +142,13 @@ def label_for(prompt):
     # background task finishing, a slash command, a system reminder, a CI event
     # -- and those arrive as raw markup. Rendering one verbatim fills the alert
     # with task ids and file paths, so recover the human part instead.
-    p = unpaste((prompt or "").strip())
+    p, paste_only = unpaste((prompt or "").strip())
+
+    # A prompt that is only a paste is something you sent, even when what you
+    # pasted is itself harness markup (a copied <task-notification> block). The
+    # injected-block rules below would relabel it as an agent event.
+    if paste_only:
+        return one_line(p)
 
     # Machine-generated only when the prompt is WHOLLY markup: it opens with a
     # hyphenated custom tag and closes on a tag. So neither

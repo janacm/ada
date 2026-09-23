@@ -384,6 +384,43 @@ UUID="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
   assert_equal "$output" "look at this log"
 }
 
+# The pairing is a single pass over the tags. A lazy regex rescanned the rest of
+# the prompt from every opening tag that never closed, so a prompt full of
+# unmatched tags stalled this synchronous hook for tens of seconds.
+@test "thousands of unclosed paste tags do not stall the hook" {
+  python3 - "$BATS_TEST_TMPDIR/payload.json" <<'PY'
+import json, sys
+prompt = "look " + '<pasted_content id="x">' * 20000 + " tail"
+json.dump({"hook_event_name": "UserPromptSubmit", "session_id": "sess-p7",
+           "cwd": "/tmp", "prompt": prompt}, open(sys.argv[1], "w"))
+PY
+  local start=$SECONDS
+  run bash -c "'$HOOK' < '$BATS_TEST_TMPDIR/payload.json'"
+  assert_success
+  (( SECONDS - start < 5 )) || { echo "hook took $(( SECONDS - start ))s"; false; }
+  run cat "$STATE_DIR/sess-p7.prompt"
+  assert_equal "$output" "look tail"
+}
+
+# A paste-only prompt is something you sent, even when what you pasted is a
+# copy of harness markup; the injected-block rules must not relabel it.
+@test "a paste-only prompt of copied harness markup is shown as pasted" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-p8","cwd":"/tmp","prompt":"<pasted_content id=\"d1\">\n<task-notification><summary>Build finished</summary></task-notification>\n</pasted_content id=\"d1\">"}'
+  assert_success
+  run cat "$STATE_DIR/sess-p8.prompt"
+  assert_equal "$output" "<task-notification><summary>Build finished</summary></task-notification>"
+}
+
+# Only a paste-ONLY prompt skips the sanitizer. A paste that sits inside an
+# injected block (here, a slash command's arguments) is collapsed first, and the
+# block around it is still reduced to its command and arguments.
+@test "a paste inside a slash command's arguments still yields the command label" {
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-p9","cwd":"/tmp","prompt":"<command-name>/review</command-name>\n<command-args><pasted_content id=\"a2\">diff --git a/x b/x</pasted_content id=\"a2\"></command-args>"}'
+  assert_success
+  run cat "$STATE_DIR/sess-p9.prompt"
+  assert_equal "$output" "/review [pasted text]"
+}
+
 @test "the paste placeholder survives all the way to the alert" {
   run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-p6","cwd":"/tmp","prompt":"plan for <pasted_content id=\"c339\">hey</pasted_content id=\"c339\">"}'
   assert_success

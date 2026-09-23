@@ -243,6 +243,10 @@ removed.
   typed words lead the label; a prompt that is only a paste must show the pasted
   text. The closing tag repeats the id, so matching must accept attributes on
   both tags, and an unclosed paste tag must be dropped.
+- A prompt that is only a paste must show the pasted text without the
+  injected-block sanitizing, even when the pasted text is itself harness
+  markup. Paste handling must stay linear in the prompt's length, because it
+  runs inside the synchronous `UserPromptSubmit` hook.
 - Whitespace collapsing must apply to display labels only. `cwd` and
   `transcript_path` must survive byte-for-byte, because a path containing a
   double space would otherwise break the repo badge and the turn-error
@@ -430,7 +434,8 @@ removed.
   id="c339">`, which the injected-block sanitizer skips (underscore, not hyphen,
   and it sits mid-prompt), so an alert read `create a plan for <pasted_content
   id="c339"> hey …`. Each paste now collapses to `[pasted text]` beside typed
-  text, and a paste-only prompt shows the pasted text.
+  text, and a paste-only prompt shows the pasted text without the injected-block
+  rules. Tags are paired in one linear pass, so unclosed tags can't stall the hook.
 - 2026-09-17: Claude Code / Codex alert labels are now derived from the prompt
   rather than printing it verbatim. `UserPromptSubmit` also fires for messages
   the agent injects, so a turn that began with a background-task notification
