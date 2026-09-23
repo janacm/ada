@@ -85,6 +85,29 @@ def one_line(s):
 # and it is what keeps a typed "<div>foo</div>" out of the sanitizer entirely.
 INJECTED_OUTER_TAG = re.compile(r"^<([A-Za-z0-9_]+-[A-Za-z0-9_-]*)>")
 
+# The Claude desktop app wraps anything you paste in a pasted_content element and
+# repeats the id on the CLOSING tag as well:
+#   <pasted_content id="c339"> ... </pasted_content id="c339">
+# so a plain "</pasted_content>" pattern never matches it. The name has an
+# underscore, not a hyphen, and the block usually sits mid-prompt after text you
+# typed, so INJECTED_OUTER_TAG rightly ignores it and it needs its own pass.
+PASTED_BLOCK = re.compile(r"<pasted_content(?:\s[^>]*)?>(.*?)</pasted_content(?:\s[^>]*)?>", re.S)
+PASTED_TAG = re.compile(r"</?pasted_content(?:\s[^>]*)?>")
+
+def unpaste(p):
+    # Keep what you typed around a paste and collapse the paste itself to a
+    # placeholder: the typed words are what you remember sending, and a pasted
+    # Slack thread or log would otherwise fill the whole 120-char label. A prompt
+    # that is nothing BUT a paste shows the pasted text, since a lone placeholder
+    # names nothing. A stray tag (an unclosed paste) is dropped either way.
+    if PASTED_BLOCK.search(p):
+        typed = PASTED_TAG.sub("", PASTED_BLOCK.sub("", p))
+        if typed.strip():
+            p = PASTED_BLOCK.sub(" [pasted text] ", p)
+        else:
+            p = PASTED_BLOCK.sub(lambda m: " " + m.group(1) + " ", p)
+    return PASTED_TAG.sub(" ", p).strip()
+
 def label_for(prompt):
     # A turn label a human can read on a maximized window.
     #
@@ -93,7 +116,7 @@ def label_for(prompt):
     # background task finishing, a slash command, a system reminder, a CI event
     # -- and those arrive as raw markup. Rendering one verbatim fills the alert
     # with task ids and file paths, so recover the human part instead.
-    p = (prompt or "").strip()
+    p = unpaste((prompt or "").strip())
 
     # Machine-generated only when the prompt is WHOLLY markup: it opens with a
     # hyphenated custom tag and closes on a tag. So neither

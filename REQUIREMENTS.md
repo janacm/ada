@@ -237,6 +237,12 @@ removed.
   one that begins with markup, one that is entirely HTML markup, and one that
   embeds a `<details><summary>` block before the user's question. Display labels
   must collapse whitespace to one line.
+- A paste that the Claude desktop app wraps as `<pasted_content id="…">…
+  </pasted_content id="…">` must not show its tags or id on the alert. When the
+  prompt also has typed text, each paste must collapse to `[pasted text]` so the
+  typed words lead the label; a prompt that is only a paste must show the pasted
+  text. The closing tag repeats the id, so matching must accept attributes on
+  both tags, and an unclosed paste tag must be dropped.
 - Whitespace collapsing must apply to display labels only. `cwd` and
   `transcript_path` must survive byte-for-byte, because a path containing a
   double space would otherwise break the repo badge and the turn-error
@@ -419,6 +425,12 @@ removed.
 
 ## Change Log
 
+- 2026-09-23: Pastes from the Claude desktop app no longer leak into alert
+  labels. The app wraps a paste as `<pasted_content id="c339">…</pasted_content
+  id="c339">`, which the injected-block sanitizer skips (underscore, not hyphen,
+  and it sits mid-prompt), so an alert read `create a plan for <pasted_content
+  id="c339"> hey …`. Each paste now collapses to `[pasted text]` beside typed
+  text, and a paste-only prompt shows the pasted text.
 - 2026-09-17: Claude Code / Codex alert labels are now derived from the prompt
   rather than printing it verbatim. `UserPromptSubmit` also fires for messages
   the agent injects, so a turn that began with a background-task notification
