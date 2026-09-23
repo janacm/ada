@@ -9,13 +9,15 @@ import Foundation
 /// `javascript:` or app URL (`claude://`, …) and launch something else.
 public enum ExternalLink {
     /// The URL to open for an `adaOpen` message body, or nil when the body is
-    /// not a string, does not parse as a URL, or is not http/https. The scheme
+    /// not a string, does not parse as a URL, is not http/https, or names no
+    /// host (a bare `https:` parses, but there is nothing to open). The scheme
     /// comparison is case-insensitive, as URL schemes are.
     public static func openableURL(from body: Any) -> URL? {
         guard let string = body as? String,
               let url = URL(string: string),
               let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https"
+              scheme == "http" || scheme == "https",
+              let host = url.host, !host.isEmpty
         else {
             return nil
         }

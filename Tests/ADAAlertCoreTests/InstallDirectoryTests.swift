@@ -60,6 +60,51 @@ import Testing
         #expect(InstallDirectory.launcher(in: install) != nil)
     }
 
+    // Homebrew: bin/ada-menubar -> ../Cellar/ada/<v>/bin/ada-menubar ->
+    // ../libexec/ada-menubar, and opt/ada -> ../Cellar/ada/<v>. The menu bar
+    // caches the install for its lifetime, so it must hold the opt path: after a
+    // `brew upgrade` swaps the keg, Test Alert still finds the launcher.
+    @Test func aHomebrewKegResolvesToItsOptPathAndSurvivesAnUpgrade() throws {
+        let prefix = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: prefix) }
+        func keg(_ version: String) throws -> URL {
+            let keg = prefix.appendingPathComponent("Cellar/ada/\(version)")
+            try FileManager.default.createDirectory(at: keg.appendingPathComponent("libexec/lib"), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: keg.appendingPathComponent("bin"), withIntermediateDirectories: true)
+            try executable(at: keg.appendingPathComponent("libexec/ada-menubar"))
+            try executable(at: keg.appendingPathComponent("libexec").appendingPathComponent(InstallDirectory.launcherPath))
+            try FileManager.default.createSymbolicLink(atPath: keg.appendingPathComponent("bin/ada-menubar").path,
+                                                       withDestinationPath: "../libexec/ada-menubar")
+            return keg
+        }
+        let old = try keg("9.9.9")
+        try FileManager.default.createDirectory(at: prefix.appendingPathComponent("bin"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: prefix.appendingPathComponent("opt"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: prefix.appendingPathComponent("opt/ada").path,
+                                                   withDestinationPath: "../Cellar/ada/9.9.9")
+        try FileManager.default.createSymbolicLink(atPath: prefix.appendingPathComponent("bin/ada-menubar").path,
+                                                   withDestinationPath: "../Cellar/ada/9.9.9/bin/ada-menubar")
+
+        let install = InstallDirectory.resolve(environment: [:], executableURL: prefix.appendingPathComponent("bin/ada-menubar"))
+        #expect(install.path == prefix.resolvingSymlinksInPath().appendingPathComponent("opt/ada/libexec").path)
+
+        // brew upgrade: a new keg, opt repointed, the old keg removed.
+        _ = try keg("10.0.0")
+        try FileManager.default.removeItem(at: prefix.appendingPathComponent("opt/ada"))
+        try FileManager.default.createSymbolicLink(atPath: prefix.appendingPathComponent("opt/ada").path,
+                                                   withDestinationPath: "../Cellar/ada/10.0.0")
+        try FileManager.default.removeItem(at: old)
+        #expect(InstallDirectory.launcher(in: install) != nil)
+    }
+
+    @Test func aKegWithNoOptLinkIsLeftAsItIs() throws {
+        let prefix = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: prefix) }
+        let libexec = prefix.appendingPathComponent("Cellar/ada/9.9.9/libexec")
+        try FileManager.default.createDirectory(at: libexec, withIntermediateDirectories: true)
+        #expect(InstallDirectory.stable(libexec).path == libexec.path)
+    }
+
     @Test func theLauncherIsFoundUnderLib() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

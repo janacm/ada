@@ -63,7 +63,10 @@ its `opt` equivalent (`__ada_stable_dir`) in case they're invoked directly. `ada
 uses zsh `:A` (realpath, so a symlinked `ada.sh` still finds its real siblings)
 and then applies the same Cellar -> `opt` mapping, because `:A` alone resolves
 the opt symlink straight back into the versioned Cellar dir. `:a` looked like
-the fix but broke sourcing `ada.sh` through a file symlink.
+the fix but broke sourcing `ada.sh` through a file symlink. The menu bar helper
+has the same problem in Swift: resolving Homebrew's `bin/ada-menubar` symlink
+lands in the keg, so `InstallDirectory.stable` maps it to `opt` before the path
+is cached for the life of the process.
 
 **Nothing may default to `~/.ada`.** That path only exists for a from-source
 install; a Homebrew install has no such directory. `alert.html` is therefore
@@ -87,7 +90,8 @@ Formula/ada.rb`, then `brew install` / `brew test janacm/ada/ada`.
 `ada-alert` is a SwiftPM executable that opens `alert.html` in an AppKit/WebKit
 window sized to the primary display's `visibleFrame`. The launcher looks for
 `ADA_NATIVE_ALERT`, then `ada-alert`, `.build/release/ada-alert`, and
-`.build/debug/ada-alert` beside `ada-show-alert.sh`.
+`.build/debug/ada-alert` in the install root, one level above
+`lib/ada-show-alert.sh`.
 
 There is intentionally **no browser fallback**. If the native helper is missing
 or not executable, `ada-show-alert.sh` exits with an error rather than opening

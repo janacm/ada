@@ -24,8 +24,9 @@
 # venv at .cov/venv and c8 comes from npx, so neither is a dependency
 # of ada itself. Swift and the page are skipped, with a note, when
 # their toolchain is missing; ADA_COV_SWIFT=0 / ADA_COV_PAGE=0 skip
-# them on purpose. Exits non-zero if any suite failed; the report is
-# printed either way. ADA_COV_MISSING=1 lists uncovered lines per file.
+# them on purpose. Exits non-zero if any suite failed or any collected
+# data could not be reported; the report is printed either way.
+# ADA_COV_MISSING=1 lists uncovered lines per file.
 # =============================================================
 set -u
 
@@ -33,6 +34,12 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 out="$root/.cov"
 venv="$out/venv"
 status=0
+
+# A step that collected data but could not turn it into a report.
+measure_failed() {
+  echo "coverage: $1; that language is missing from the total below" >&2
+  status=1
+}
 
 rm -rf "$out/shell" "$out/py" "$out/node" "$out/js" "$out/python.json" "$out/embedded" \
        "$out/page" "$out/swift-prof" "$out/swift.lcov" "$out/swift.profdata"
@@ -110,12 +117,15 @@ if [[ -n "$swift_bin" ]]; then
   fi
   unset LLVM_PROFILE_FILE
   test_bin=$(find "$swift_bin" -path '*.xctest/Contents/MacOS/*' -type f -perm -u+x | head -1)
-  if ls "$out"/swift-prof/*.profraw >/dev/null 2>&1 \
-     && xcrun llvm-profdata merge -sparse "$out"/swift-prof/*.profraw -o "$out/swift.profdata"; then
-    xcrun llvm-cov export -format=lcov -instr-profile "$out/swift.profdata" \
-      "$swift_bin/ada-alert" -object "$swift_bin/ada-menubar" ${test_bin:+-object "$test_bin"} \
-      -ignore-filename-regex='(Tests/|/\.cov/|/\.build/)' > "$out/swift.lcov" \
-      || echo "coverage: llvm-cov export failed" >&2
+  if ! ls "$out"/swift-prof/*.profraw >/dev/null 2>&1; then
+    measure_failed "no Swift profiles were written"
+  elif ! xcrun llvm-profdata merge -sparse "$out"/swift-prof/*.profraw -o "$out/swift.profdata"; then
+    measure_failed "llvm-profdata merge failed"
+  elif ! xcrun llvm-cov export -format=lcov -instr-profile "$out/swift.profdata" \
+         "$swift_bin/ada-alert" -object "$swift_bin/ada-menubar" ${test_bin:+-object "$test_bin"} \
+         -ignore-filename-regex='(Tests/|/\.cov/|/\.build/)' > "$out/swift.lcov"; then
+    rm -f "$out/swift.lcov"
+    measure_failed "llvm-cov export failed"
   fi
 fi
 
@@ -133,14 +143,20 @@ if [[ "${ADA_COV_PAGE:-1}" != 0 ]]; then
 fi
 
 # --- reports ------------------------------------------------------------------
-( cd "$out/py" && "$venv/bin/python" -m coverage combine --rcfile="$out/coveragerc" -q . \
-    && "$venv/bin/python" -m coverage json --rcfile="$out/coveragerc" -q -o "$out/python.json" ) \
-  || echo "coverage: no python data" >&2
+# A language whose data was collected but could not be converted must fail the
+# run: report.py would otherwise leave it out of the denominator and print a
+# higher total with no sign anything was missing. A subset run (a single .bats
+# file) that simply never started python or node has no data to convert.
+if ls "$out"/py/.coverage.* >/dev/null 2>&1; then
+  ( cd "$out/py" && "$venv/bin/python" -m coverage combine --rcfile="$out/coveragerc" -q . \
+      && "$venv/bin/python" -m coverage json --rcfile="$out/coveragerc" -q -o "$out/python.json" ) \
+    || measure_failed "coverage.py could not combine or report its data"
+fi
 
-if command -v npx >/dev/null 2>&1 && [[ -n "$(ls -A "$out/node" 2>/dev/null)" ]]; then
+if [[ -n "$(ls -A "$out/node" 2>/dev/null)" ]]; then
   ( cd "$root" && npx --yes c8@10 report --temp-directory "$out/node" \
       --reports-dir "$out/js" --reporter json --include 'lib/**' >/dev/null ) \
-    || echo "coverage: c8 report failed" >&2
+    || measure_failed "c8 report failed"
 fi
 
 echo

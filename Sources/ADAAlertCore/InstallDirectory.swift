@@ -16,6 +16,7 @@ public enum InstallDirectory {
     /// - Inside a SwiftPM build directory the install is the package root that
     ///   holds `.build`: `.build/release` with the native build system, and
     ///   `.build/out/Products/Release` with Swift 6.4's default one.
+    /// - A Homebrew keg is mapped to its version-stable `opt` path (`stable`).
     public static func resolve(environment: [String: String], executableURL: URL) -> URL {
         if let home = environment["ADA_HOME"], !home.isEmpty {
             return URL(fileURLWithPath: home, isDirectory: true)
@@ -29,11 +30,33 @@ public enum InstallDirectory {
         var ancestor = directory
         while ancestor.pathComponents.count > 1 {
             if ancestor.lastPathComponent == ".build" {
-                return ancestor.deletingLastPathComponent()
+                directory = ancestor.deletingLastPathComponent()
+                break
             }
             ancestor.deleteLastPathComponent()
         }
-        return directory
+        return stable(directory)
+    }
+
+    /// `<prefix>/opt/<name>/…` for a directory inside `<prefix>/Cellar/<name>/<version>/…`,
+    /// when that `opt` directory exists; otherwise `directory` unchanged.
+    ///
+    /// Resolving Homebrew's `bin/` symlink lands in the versioned keg, which the
+    /// next `brew upgrade` deletes while the menu bar keeps running with the path
+    /// cached. The `opt` symlink names the same install and survives upgrades.
+    /// This is the rule `__ada_stable_dir` applies in ada-install.sh and
+    /// ada-paseo-watch.sh.
+    public static func stable(_ directory: URL, fileManager: FileManager = .default) -> URL {
+        let parts = directory.pathComponents
+        guard let cellar = parts.firstIndex(of: "Cellar"), cellar + 2 < parts.count else {
+            return directory
+        }
+        let opt = NSString.path(withComponents: Array(parts[..<cellar]) + ["opt", parts[cellar + 1]] + Array(parts[(cellar + 3)...]))
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: opt, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return directory
+        }
+        return URL(fileURLWithPath: opt, isDirectory: true)
     }
 
     /// The launcher inside `directory`, or nil when it is missing or not executable.

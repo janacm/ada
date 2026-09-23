@@ -21,6 +21,8 @@ import Testing
         "claude://resume?session=abc",
         "mailto:someone@example.com",
         "not a url",               // parses, but has no scheme at all
+        "https:",                  // parses as https, but names no host
+        "https:///path-only",
     ])
     func refusesEverythingElse(_ link: String) {
         #expect(ExternalLink.openableURL(from: link) == nil)

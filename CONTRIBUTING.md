@@ -87,7 +87,8 @@ Python (including Python embedded in the shell scripts), the opencode plugin,
 `alert.html`'s script, and the Swift sources, plus a total. Results go to `.cov/`
 (gitignored); coverage.py is installed into `.cov/venv` and c8 comes from `npx`,
 so neither becomes a dependency of ada. Swift and the page are skipped with a
-note when their toolchain is missing. See `test/coverage/run.sh` for how each
+note when their toolchain is missing; a language whose data was collected but
+could not be reported fails the run instead of dropping out of the total. See `test/coverage/run.sh` for how each
 language is instrumented, and keep the total at or above 80%.
 
 When adding a script behavior, add or extend a `*.bats` file. Keep tests free of
