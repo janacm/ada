@@ -10,8 +10,10 @@
 const { test, expect } = require('@playwright/test');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { recordCoverage } = require('./alert-coverage');
 
 const ALERT_FILE = pathToFileURL(path.join(__dirname, '..', 'alert.html')).href;
+recordCoverage(test, ALERT_FILE);
 
 function alertURL(overrides = {}) {
   const params = new URLSearchParams({

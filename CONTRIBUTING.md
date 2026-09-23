@@ -14,6 +14,15 @@ brew install bats-core   # for the shell test suite
 ./ada-install.sh --list
 ```
 
+The Swift tests use Swift Testing, which the Command Line Tools include (XCTest
+needs a full Xcode). Under the Command Line Tools alone, SwiftPM's default build
+system does not find Swift Testing's macro plugin, so name it explicitly:
+
+```sh
+swift test -Xswiftc -plugin-path \
+  -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing
+```
+
 To preview the alert without installing hooks:
 
 ```sh
@@ -43,12 +52,44 @@ so they never touch your real `~/.zshrc`, `~/.claude/settings.json`, or
 elapsed-time thresholds are deterministic) so frontmost-app, launchd, and
 process checks never touch the real machine.
 
-Two Python-heavy components are covered by component tests driven from bats:
-the snooze daemon's loopback token trust boundary
-(`test/ada-snooze-daemon.bats`, spawns the real daemon on a loopback port with a
-short deadline) and the Paseo poll/diff loop
+The Python components are covered by component tests driven from bats: the
+snooze daemon's loopback token trust boundary (`test/ada-snooze-daemon.bats`,
+spawns the real daemon on a loopback port with a short deadline), everything
+past that boundary in-process (`test/snooze_daemon_check.py`: snooze relaunch,
+focus, preflight, failure paths), the Paseo poll/diff loop
 (`test/paseo_diff_check.py`, monkeypatches `run_json`/`fire`/the clock to assert
-finish/fail/seeding/dedupe/event-subset behavior).
+finish/fail/seeding/dedupe/event-subset behavior), and the helpers that file
+fakes (`test/paseo_helpers_check.py`, against stub `paseo`/`lsappinfo`). The
+installer's interactive selector only runs on a terminal, so its tests type keys
+into it through a pseudo-terminal (`test/pty_run.py`).
+
+## Page Tests
+
+`alert.html`'s in-page behavior (query-string decoding, success/failure states,
+dismissal, the snooze bar, the feedback link) is covered by Playwright specs in
+`test/*.spec.js`, which load the page off disk with the native bridge stubbed:
+
+```sh
+npm install && npx playwright install chromium   # one-time
+npx playwright test
+```
+
+## Coverage
+
+```sh
+./run-tests.sh --coverage          # every suite, instrumented
+ADA_COV_MISSING=1 ./run-tests.sh --coverage   # plus the uncovered lines per file
+```
+
+This runs the bats suite, `swift test`, and the Playwright specs against
+instrumented code and prints per-file line coverage for the shell scripts, the
+Python (including Python embedded in the shell scripts), the opencode plugin,
+`alert.html`'s script, and the Swift sources, plus a total. Results go to `.cov/`
+(gitignored); coverage.py is installed into `.cov/venv` and c8 comes from `npx`,
+so neither becomes a dependency of ada. Swift and the page are skipped with a
+note when their toolchain is missing; a language whose data was collected but
+could not be reported fails the run instead of dropping out of the total. See `test/coverage/run.sh` for how each
+language is instrumented, and keep the total at or above 80%.
 
 When adding a script behavior, add or extend a `*.bats` file. Keep tests free of
 real side effects: stub anything that opens a window, a socket, or a process,
@@ -60,6 +101,8 @@ use `refute_file_appears` (the launcher backgrounds the helper, so an immediate
 
 - Run `swift test` when touching Swift code.
 - Run `./run-tests.sh` when touching any shell script or the zsh hook.
+- Run `npx playwright test` when touching `alert.html`.
+- Run `./run-tests.sh --coverage` when adding behavior, and cover it.
 - Run `./ada-install.sh --list` after installer or integration changes.
 - Use `rg`, not `grep`, for repo search unless `rg` is unavailable.
 - Keep `README.md` current for user-facing behavior.

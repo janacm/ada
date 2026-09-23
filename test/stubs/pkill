@@ -1,4 +1,10 @@
 #!/bin/bash
 # Test double for `pkill` — a no-op so the launcher's legacy-browser cleanup can
 # never signal a real process during tests. Exit 1 mimics "no process matched".
+# STUB_PKILL_LOG makes it record its arguments and report a match instead, so a
+# test can reach the wait-for-exit loop that follows a successful pkill.
+if [ -n "${STUB_PKILL_LOG:-}" ]; then
+  printf '%s\n' "$*" >> "$STUB_PKILL_LOG"
+  exit 0
+fi
 exit 1

@@ -98,3 +98,80 @@ run_precmd() {
   assert_success
   assert_equal "$output" "FIRED"
 }
+
+@test "preexec records the command and a start time" {
+  run zsh_eval '__ada_preexec "make build"; print -r -- "[$__ada_cmd]"; (( __ada_start_time > 0 )) && print started'
+  assert_success
+  assert_output_contains "[make build]"
+  assert_output_contains "started"
+}
+
+@test "the ada manual trigger fires the alert through the sibling launcher" {
+  run zsh_eval 'ada hello world'
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "manual trigger never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "cmd=hello%20world"
+  assert_file_contains "$ADA_PROBE_OUT" "code=0"
+}
+
+@test "the ada manual trigger with no words labels the alert 'manual'" {
+  run zsh_eval 'ada'
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "manual trigger never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "cmd=manual"
+}
+
+# --- __ada_should_skip_active, against the lsappinfo stub ----------------------
+
+skip_active() {
+  run zsh -c "
+    source '$REPO_ROOT/ada.sh' >/dev/null 2>&1
+    if __ada_should_skip_active; then print SKIP; else print ALERT; fi
+  "
+}
+
+@test "skip_active: the terminal that ran the command is frontmost" {
+  export __CFBundleIdentifier=com.mitchellh.ghostty STUB_FRONT_BUNDLEID=com.mitchellh.ghostty
+  skip_active
+  assert_equal "$output" "SKIP"
+}
+
+@test "skip_active: another app is frontmost" {
+  export __CFBundleIdentifier=com.mitchellh.ghostty STUB_FRONT_BUNDLEID=com.apple.Safari
+  skip_active
+  assert_equal "$output" "ALERT"
+}
+
+@test "skip_active: own-terminal suppression can be switched off" {
+  export ADA_SKIP_OWN_TERMINAL=0
+  export __CFBundleIdentifier=com.mitchellh.ghostty STUB_FRONT_BUNDLEID=com.mitchellh.ghostty
+  skip_active
+  assert_equal "$output" "ALERT"
+}
+
+@test "skip_active: a skip-list entry matches the frontmost bundle id" {
+  export ADA_SKIP_WHEN_ACTIVE="com.apple.Safari" STUB_FRONT_BUNDLEID=com.apple.Safari
+  skip_active
+  assert_equal "$output" "SKIP"
+}
+
+@test "skip_active: a skip-list entry matches part of the frontmost app name" {
+  export ADA_SKIP_WHEN_ACTIVE="Termius" STUB_FRONT_NAME="Termius Beta"
+  skip_active
+  assert_equal "$output" "SKIP"
+}
+
+# Homebrew's keg is a real copy, not a symlink, so :A leaves it in the Cellar
+# and only the explicit Cellar -> opt mapping can make the path survive upgrade.
+@test "sourced from a Cellar keg, ada.sh resolves its siblings via the opt path" {
+  local prefix="$BATS_TEST_TMPDIR/brew"
+  local keg="$prefix/Cellar/ada/9.9.9/libexec"
+  mkdir -p "$keg" "$prefix/opt"
+  cp "$REPO_ROOT/ada.sh" "$keg/ada.sh"
+  ln -s "../Cellar/ada/9.9.9" "$prefix/opt/ada"
+  local real_prefix; real_prefix=$(cd "$prefix" && pwd -P)
+  unset ADA_ALERT_FILE
+  run zsh -c "source '$keg/ada.sh' >/dev/null 2>&1; print -r -- \"\$_ADA_DIR|\$ADA_ALERT_FILE\""
+  assert_success
+  assert_equal "$output" "$real_prefix/opt/ada/libexec|$real_prefix/opt/ada/libexec/alert.html"
+}

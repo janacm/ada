@@ -2,6 +2,7 @@
 # Test double for `launchctl`, used by `ada-paseo-watch.sh status`.
 #   launchctl list                  -> prints the label when STUB_LAUNCHCTL_LOADED set
 #   launchctl print gui/<uid>/<lbl> -> prints "    pid = N" when STUB_LAUNCHCTL_PID set
+#   launchctl load ...              -> fails when STUB_LAUNCHCTL_LOAD_FAIL set
 case "$1" in
   list)
     [ -n "${STUB_LAUNCHCTL_LOADED:-}" ] && echo "com.ada.paseo-watch"
@@ -9,7 +10,10 @@ case "$1" in
   print)
     [ -n "${STUB_LAUNCHCTL_PID:-}" ] && printf '    pid = %s\n' "$STUB_LAUNCHCTL_PID"
     ;;
-  load|unload|bootstrap|bootout|enable|disable)
+  load)
+    [ -n "${STUB_LAUNCHCTL_LOAD_FAIL:-}" ] && exit 1
+    ;;
+  unload|bootstrap|bootout|enable|disable)
     # no-op success so `install`/`uninstall` can be tested without touching launchd
     ;;
 esac

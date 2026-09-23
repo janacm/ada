@@ -106,3 +106,12 @@ EOF
   run bash -c "grep -q -- '-b' '$openlog' 2>/dev/null"
   assert_failure
 }
+
+# Everything past the trust boundary: argument fallbacks, preflight, the snooze
+# relaunch (which really sleeps minutes), bundle-id focus, and the error paths.
+# Driven in-process by test/snooze_daemon_check.py with the sleep patched out.
+@test "in-process: snooze relaunch, focus, preflight, and failure paths" {
+  run python3 "$BATS_TEST_DIRNAME/snooze_daemon_check.py"
+  assert_success
+  assert_output_contains "all snooze daemon checks passed"
+}

@@ -10,3 +10,4 @@ node_modules/
 /.playwright/
 /ada-alert
 /ada-menubar
+/.cov/

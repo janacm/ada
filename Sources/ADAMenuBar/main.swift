@@ -1,10 +1,14 @@
 #if canImport(AppKit)
+import ADAAlertCore
 import AppKit
 import Foundation
 
 final class MenuBarAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
-    private lazy var scriptDirectory: URL = resolveScriptDirectory()
+    private lazy var installDirectory: URL = InstallDirectory.resolve(
+        environment: ProcessInfo.processInfo.environment,
+        executableURL: Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
+    )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -24,9 +28,11 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showTestAlert() {
-        let launcher = scriptDirectory.appendingPathComponent("ada-show-alert.sh")
-        guard FileManager.default.isExecutableFile(atPath: launcher.path) else {
-            presentError("Missing launcher", informativeText: "Could not find executable ada-show-alert.sh next to ada-menubar or in ADA_HOME.")
+        guard let launcher = InstallDirectory.launcher(in: installDirectory) else {
+            presentError(
+                "Missing launcher",
+                informativeText: "Could not find an executable \(InstallDirectory.launcherPath) in \(installDirectory.path). Set ADA_HOME to your ada folder."
+            )
             return
         }
 
@@ -46,7 +52,7 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openFolder() {
-        NSWorkspace.shared.open(scriptDirectory)
+        NSWorkspace.shared.open(installDirectory)
     }
 
     @objc private func quit() {
@@ -57,20 +63,6 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
         return item
-    }
-
-    private func resolveScriptDirectory() -> URL {
-        let environment = ProcessInfo.processInfo.environment
-        if let adaHome = environment["ADA_HOME"], !adaHome.isEmpty {
-            return URL(fileURLWithPath: adaHome, isDirectory: true)
-        }
-
-        let executableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
-        var directory = executableURL.deletingLastPathComponent()
-        if directory.lastPathComponent == "MacOS" {
-            directory = directory.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        }
-        return directory
     }
 
     private func presentError(_ messageText: String, informativeText: String) {

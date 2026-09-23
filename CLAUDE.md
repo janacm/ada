@@ -63,7 +63,10 @@ its `opt` equivalent (`__ada_stable_dir`) in case they're invoked directly. `ada
 uses zsh `:A` (realpath, so a symlinked `ada.sh` still finds its real siblings)
 and then applies the same Cellar -> `opt` mapping, because `:A` alone resolves
 the opt symlink straight back into the versioned Cellar dir. `:a` looked like
-the fix but broke sourcing `ada.sh` through a file symlink.
+the fix but broke sourcing `ada.sh` through a file symlink. The menu bar helper
+has the same problem in Swift: resolving Homebrew's `bin/ada-menubar` symlink
+lands in the keg, so `InstallDirectory.stable` maps it to `opt` before the path
+is cached for the life of the process.
 
 **Nothing may default to `~/.ada`.** That path only exists for a from-source
 install; a Homebrew install has no such directory. `alert.html` is therefore
@@ -87,7 +90,8 @@ Formula/ada.rb`, then `brew install` / `brew test janacm/ada/ada`.
 `ada-alert` is a SwiftPM executable that opens `alert.html` in an AppKit/WebKit
 window sized to the primary display's `visibleFrame`. The launcher looks for
 `ADA_NATIVE_ALERT`, then `ada-alert`, `.build/release/ada-alert`, and
-`.build/debug/ada-alert` beside `ada-show-alert.sh`.
+`.build/debug/ada-alert` in the install root, one level above
+`lib/ada-show-alert.sh`.
 
 There is intentionally **no browser fallback**. If the native helper is missing
 or not executable, `ada-show-alert.sh` exits with an error rather than opening
@@ -328,6 +332,49 @@ hidden = fullscreen. Menu bar visible = windowed.
 - `~/.ada` is the installed clone the live hooks run from; it's separate from any
   dev checkout. After changing the launcher, `git -C ~/.ada pull` to go live.
 
+## Measuring test coverage
+
+`./run-tests.sh --coverage` (implemented in `test/coverage/`) runs the bats
+suite, `swift test` and the Playwright specs against instrumented code and
+prints per-file line coverage. Off-the-shelf tools do not cover most of this on
+macOS, and each piece has a trap:
+
+- **kcov and bashcov cannot trace these scripts.** Their xtrace mode needs
+  `BASH_XTRACEFD` (bash 4.1+), and macOS `/bin/bash` is 3.2. kcov's
+  `--bash-method=DEBUG` unsets `BASH_ENV`, so it never sees the child scripts
+  bats spawns. The harness uses its own DEBUG trap delivered through `BASH_ENV`
+  (`bash_env.sh`), and `report.py` owns the denominator, which lines are
+  statements at all: quotes, heredocs, `$(...)`, continuations, case patterns.
+- **Keep that DEBUG trap on one line.** bash 3.2 adds the trap string's own
+  line offset to `$LINENO`, so a multi-line trap body recorded every hit two
+  lines late. The symptom was files that are 96% covered reporting about 50%.
+- **Hits are matched by realpath**, and a verbatim copy of a repo script inside
+  the bats temp dir counts toward the repo file. The Cellar-layout installer
+  test and the Paseo staging dir both run copies, not the repo file.
+- **Embedded Python** (`python3 -c '...'`, `python3 - <<'PY'`) goes through
+  `test/coverage/bin/python3`, which saves each program to `.cov/embedded/` so
+  coverage.py can measure it. `report.py` maps it back by finding the program's
+  text in the shell file; single-quoted strings and quoted heredocs reach python
+  unchanged, which is what makes that match exact.
+- **zsh**: `ZDOTDIR` points at `test/coverage/zdotdir`, whose `.zshenv` defines
+  `TRAPDEBUG`. A plain `trap ... DEBUG` does not follow into functions there.
+- **Python**: `sitecustomize.py` on `PYTHONPATH` starts coverage.py in every
+  `python3` through `COVERAGE_PROCESS_START`. `patch = _exit` is required: the
+  snooze daemon's forked parents leave through `os._exit` and would drop data.
+- **c8 counts comments and blank lines as covered statements.** `report.py`
+  drops them so the JS number means the same as the shell and Python ones.
+- **Swift**: XCTest does not exist without a full Xcode, so the tests use Swift
+  Testing. Under the Command Line Tools, SwiftPM (Swift 6.4) also needs
+  `-Xswiftc -plugin-path -Xswiftc <CLT>/usr/lib/swift/host/plugins/testing`, or
+  every `@Test` fails with "plugin for module 'TestingMacros' not found". One
+  `-profile-generate` build serves both `swift test` and `test/ada-alert.bats`,
+  and llvm-cov merges the profiles.
+- **The AppKit delegates in the two `main.swift` files are not unit-tested.**
+  They only run inside a window session, and most of what stays uncovered is
+  there. Keep decisions out of them: the `adaOpen` scheme rule (`ExternalLink`)
+  and the menu bar's install lookup (`InstallDirectory`) live in `ADAAlertCore`,
+  where Swift Testing covers them.
+
 ## UserPromptSubmit is not only what the user typed
 
 The agent fires `UserPromptSubmit` for messages **it** injects into the
@@ -441,7 +488,9 @@ either be swallowed (no UI delegate) or replace the alert page.
 
 So the link routes through a dedicated native bridge: `alert.html` posts the URL
 to `window.webkit.messageHandlers.adaOpen`, and the helper opens it with
-`NSWorkspace.shared.open`, restricted to `http`/`https` schemes. This is separate
+`NSWorkspace.shared.open`, restricted to `http`/`https` schemes by
+`ExternalLink.openableURL` in `ADAAlertCore` (tested in
+`Tests/ADAAlertCoreTests/ExternalLinkTests.swift`). This is separate
 from the click-to-focus deep-link path above (which signals the snooze daemon to
 `open` a URL/bundle on a plain alert click): `adaOpen` opens directly from the
 helper, needs no daemon, and fires only for the feedback link — clicks inside the

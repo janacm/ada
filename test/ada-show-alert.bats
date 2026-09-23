@@ -145,3 +145,86 @@ setup() {
   run grep -nEi 'open[[:space:]]+-a[[:space:]]*"?(safari|google chrome|brave|microsoft edge|firefox|chromium)|/Applications/(Safari|Google Chrome|Brave Browser|Microsoft Edge|Firefox)\.app' "$LAUNCHER"
   assert_failure   # no match -> grep exits 1 -> guarantee holds
 }
+
+# With ADA_NATIVE_ALERT unset, the helper is looked up beside the install, in
+# the same order ada-install.sh builds it: ./ada-alert, then .build/release,
+# then .build/debug.
+@test "with ADA_NATIVE_ALERT unset, the helper is found in the install's build dir" {
+  local root="$BATS_TEST_TMPDIR/checkout"
+  mkdir -p "$root/lib" "$root/.build/debug"
+  cp "$REPO_ROOT/lib/ada-show-alert.sh" "$root/lib/"
+  cp "$STUBS/fake-ada-alert" "$root/.build/debug/ada-alert"
+  unset ADA_NATIVE_ALERT
+  run "$root/lib/ada-show-alert.sh" "found it" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "cmd=found%20it"
+}
+
+@test "with no alert.html beside the install, the page falls back to ~/.ada" {
+  local root="$BATS_TEST_TMPDIR/bare"
+  mkdir -p "$root/lib"
+  cp "$REPO_ROOT/lib/ada-show-alert.sh" "$root/lib/"
+  unset ADA_ALERT_FILE
+  run "$root/lib/ada-show-alert.sh" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "file://$HOME/.ada/alert.html?"
+}
+
+@test "a relaunch from snooze is marked snoozed=1" {
+  export ADA_SNOOZED=1
+  run "$LAUNCHER" "again" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&snoozed=1"
+}
+
+# The terminal the command ran in is the default click target, which spawns the
+# loopback daemon; the page learns its port/token and the app name to show.
+@test "the hosting terminal becomes the click target, with its display name" {
+  unset ADA_FOCUS_APP
+  export __CFBundleIdentifier=com.mitchellh.ghostty ADA_FOCUS_APP_NAME="Ghostty" ADA_AUTO_CLOSE=1
+  run "$LAUNCHER" "click me" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&focus=1"
+  assert_file_contains "$ADA_PROBE_OUT" "&focusname=Ghostty"
+  assert_file_contains "$ADA_PROBE_OUT" "&focusnameb64="
+  assert_file_contains "$ADA_PROBE_OUT" "&sport="
+  assert_file_contains "$ADA_PROBE_OUT" "&snooze=0"
+}
+
+# Only one alert at a time: a new one closes the previous window, found through
+# the pid file. The process is a copy of sleep named ada-alert, because the
+# launcher refuses to signal anything whose command name is not ada-alert.
+@test "a new alert closes the previous ada-alert window" {
+  cp /bin/sleep "$BATS_TEST_TMPDIR/ada-alert"
+  "$BATS_TEST_TMPDIR/ada-alert" 30 &
+  local old=$!
+  disown "$old"
+  echo "$old" > "$ADA_NATIVE_PID_FILE"
+  run "$LAUNCHER" "next" "1s" 0
+  assert_success
+  local tries=40
+  while kill -0 "$old" 2>/dev/null && (( tries-- > 0 )); do sleep 0.05; done
+  if kill -0 "$old" 2>/dev/null; then kill "$old"; echo "previous alert still running"; false; fi
+}
+
+@test "a pid file naming some other process is left alone" {
+  sleep 30 &
+  local other=$!
+  disown "$other"
+  echo "$other" > "$ADA_NATIVE_PID_FILE"
+  run "$LAUNCHER" "next" "1s" 0
+  assert_success
+  kill -0 "$other" 2>/dev/null || { echo "launcher killed a non-ada process"; false; }
+  kill "$other"
+}
+
+@test "a leftover browser-profile alert from an old ada is cleaned up" {
+  export STUB_PGREP_PID=4242 STUB_PKILL_LOG="$BATS_TEST_TMPDIR/pkill.log"
+  run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  assert_file_contains "$STUB_PKILL_LOG" "user-data-dir=$HOME/.ada-alert-profile"
+}

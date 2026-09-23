@@ -372,3 +372,241 @@ JSON
   [ ! -L "$HOME/.config/opencode/plugin/ada.js" ]
   assert_file_contains "$HOME/.config/opencode/plugin/ada.js" "export *"
 }
+
+# --- the interactive selector, driven through a pty ---------------------------
+# interactive_select refuses to run without a terminal, so these go through
+# test/pty_run.py. HOME has ~/.claude and ~/.codex and the opencode stub is on
+# PATH, so four rows start selected; Paseo has no CLI, so its row is locked.
+# --dry-run keeps every install step to a "would ..." line, which is how each
+# test reads back what the selection ended up being.
+select_keys() {
+  mkdir -p "$HOME/.claude" "$HOME/.codex"
+  run python3 "$BATS_TEST_DIRNAME/pty_run.py" "$@" -- "$INSTALL" --dry-run --no-test
+}
+
+@test "the selector lists every integration, locks the unavailable one, and confirms on enter" {
+  select_keys '\r'
+  assert_success
+  assert_output_contains "[-] Paseo"
+  assert_output_contains "unavailable: not found"
+  assert_output_contains "Selected: Terminal commands, Claude Code, Codex, opencode"
+  assert_output_contains "Installing terminal integration"
+  assert_output_contains "Installing Claude Code integration"
+  assert_output_contains "Installing Codex integration"
+  assert_output_contains "Installing opencode integration"
+}
+
+# macOS /bin/bash 3.2 rejects a fractional `read -t`, which used to leave the
+# arrow keys dead: the ESC read fine, its "[B" never did, and the space landed
+# on the first row instead of the second.
+@test "the down arrow moves the cursor before space toggles a row" {
+  select_keys '\x1b[B' ' ' '\r'
+  assert_success
+  assert_output_contains "Installing terminal integration"
+  refute_output_contains "Installing Claude Code integration"
+}
+
+@test "up from the first row wraps to the last available row, skipping Paseo" {
+  select_keys '\x1b[A' ' ' '\r'
+  assert_success
+  refute_output_contains "Installing opencode integration"
+  assert_output_contains "Installing terminal integration"
+}
+
+@test "j and k move the cursor too" {
+  select_keys j j k ' ' '\r'
+  assert_success
+  refute_output_contains "Installing Claude Code integration"
+  assert_output_contains "Installing Codex integration"
+}
+
+@test "a clears a full selection, and confirming nothing is refused" {
+  select_keys a '\r'
+  assert_failure
+  assert_output_contains "Selected: (none)"
+  assert_output_contains "no integrations selected"
+}
+
+@test "a selects every available row when any is unselected" {
+  select_keys ' ' a '\r'
+  assert_success
+  assert_output_contains "Installing terminal integration"
+  assert_output_contains "Installing opencode integration"
+}
+
+@test "q cancels without installing anything" {
+  select_keys q
+  assert_failure
+  assert_output_contains "cancelled"
+  refute_output_contains "Installing"
+}
+
+# --- argument forms and preflight checks --------------------------------------
+
+@test "--agents=LIST and --all are accepted spellings" {
+  run "$INSTALL" --agents=terminal --dry-run --no-test
+  assert_success
+  assert_output_contains "Installing terminal integration"
+  run "$INSTALL" --all --dry-run --no-test
+  assert_success
+  assert_output_contains "Installing terminal integration"
+}
+
+@test "--agents with no value is an error" {
+  run "$INSTALL" --agents
+  assert_failure
+  assert_output_contains "--agents requires a value"
+}
+
+@test "an unknown argument is an error" {
+  run "$INSTALL" --frobnicate
+  assert_failure
+  assert_output_contains "unknown argument '--frobnicate'"
+}
+
+@test "anything other than macOS is refused" {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\necho Linux\n' > "$BATS_TEST_TMPDIR/bin/uname"
+  chmod +x "$BATS_TEST_TMPDIR/bin/uname"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" run "$INSTALL" --agents terminal --dry-run
+  assert_failure
+  assert_output_contains "supports macOS only"
+}
+
+# A checkout that is missing part of the runtime. The installer is symlinked in,
+# so it resolves its directory to the fixture, not to the repo.
+make_partial_checkout() {
+  CHECKOUT="$BATS_TEST_TMPDIR/checkout"
+  mkdir -p "$CHECKOUT/lib"
+  ln -s "$REPO_ROOT/ada-install.sh" "$CHECKOUT/ada-install.sh"
+  local f
+  for f in "$@"; do ln -s "$REPO_ROOT/$f" "$CHECKOUT/$f"; done
+}
+
+@test "a checkout missing the launcher is refused" {
+  make_partial_checkout lib/ada-claude-hook.sh lib/ada-notify.sh lib/ada-opencode-plugin.mjs
+  run "$CHECKOUT/ada-install.sh" --agents terminal --dry-run
+  assert_failure
+  assert_output_contains "missing executable $CHECKOUT/lib/ada-show-alert.sh"
+}
+
+@test "a checkout missing the Claude hook is refused" {
+  make_partial_checkout lib/ada-show-alert.sh lib/ada-notify.sh lib/ada-opencode-plugin.mjs
+  run "$CHECKOUT/ada-install.sh" --agents terminal --dry-run
+  assert_failure
+  assert_output_contains "missing executable $CHECKOUT/lib/ada-claude-hook.sh"
+}
+
+@test "a checkout missing ada-notify.sh is refused" {
+  make_partial_checkout lib/ada-show-alert.sh lib/ada-claude-hook.sh lib/ada-opencode-plugin.mjs
+  run "$CHECKOUT/ada-install.sh" --agents terminal --dry-run
+  assert_failure
+  assert_output_contains "missing executable $CHECKOUT/lib/ada-notify.sh"
+}
+
+# --- building the native helper -----------------------------------------------
+# There is no browser fallback, so an install with no ada-alert must build one.
+# A stub swift stands in for SwiftPM; STUB_SWIFT says what the "build" does.
+
+full_checkout_without_helper() {
+  make_partial_checkout lib/ada-show-alert.sh lib/ada-claude-hook.sh \
+    lib/ada-notify.sh lib/ada-opencode-plugin.mjs ada.sh alert.html
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat > "$BATS_TEST_TMPDIR/bin/swift" <<'SH'
+#!/bin/bash
+echo "swift $*" >> "$BATS_TEST_TMPDIR/swift.log"
+case "${STUB_SWIFT:-ok}" in
+  ok) mkdir -p .build/release && printf '#!/bin/sh\nexit 0\n' > .build/release/ada-alert \
+        && chmod +x .build/release/ada-alert ;;
+  fail) exit 1 ;;
+  empty) exit 0 ;;
+esac
+SH
+  chmod +x "$BATS_TEST_TMPDIR/bin/swift"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+}
+
+@test "with no helper and no Package.swift, the installer cannot build one" {
+  full_checkout_without_helper
+  run "$CHECKOUT/ada-install.sh" --agents terminal --no-test
+  assert_failure
+  assert_output_contains "missing Package.swift"
+}
+
+@test "--dry-run reports the helper build instead of running it" {
+  full_checkout_without_helper
+  ln -s "$REPO_ROOT/Package.swift" "$CHECKOUT/Package.swift"
+  run "$CHECKOUT/ada-install.sh" --agents terminal --dry-run --no-test
+  assert_success
+  assert_output_contains "dry-run: would run swift build -c release --product ada-alert"
+  [ ! -e "$BATS_TEST_TMPDIR/swift.log" ]
+}
+
+@test "a missing helper is built with swift, then used" {
+  full_checkout_without_helper
+  ln -s "$REPO_ROOT/Package.swift" "$CHECKOUT/Package.swift"
+  run "$CHECKOUT/ada-install.sh" --agents terminal --no-test
+  assert_success
+  assert_output_contains "Building native alert helper"
+  assert_output_contains "Native alert helper -> $CHECKOUT/.build/release/ada-alert"
+  assert_file_contains "$BATS_TEST_TMPDIR/swift.log" "build -c release --product ada-alert"
+}
+
+@test "a failed helper build stops the install" {
+  full_checkout_without_helper
+  ln -s "$REPO_ROOT/Package.swift" "$CHECKOUT/Package.swift"
+  STUB_SWIFT=fail run "$CHECKOUT/ada-install.sh" --agents terminal --no-test
+  assert_failure
+  assert_output_contains "failed to build native ada-alert"
+  [ ! -f "$HOME/.zshrc" ]
+}
+
+@test "a build that produces no helper stops the install" {
+  full_checkout_without_helper
+  ln -s "$REPO_ROOT/Package.swift" "$CHECKOUT/Package.swift"
+  STUB_SWIFT=empty run "$CHECKOUT/ada-install.sh" --agents terminal --no-test
+  assert_failure
+  assert_output_contains "did not produce an executable ada-alert"
+}
+
+# --- the sample alert and Paseo delegation ------------------------------------
+
+@test "without --no-test the installer fires a sample alert" {
+  require_native_helper
+  run "$INSTALL" --agents terminal
+  assert_success
+  assert_output_contains "Firing a sample alert"
+  wait_for_file "$ADA_PROBE_OUT" || { echo "sample alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "ada%20install%20test"
+}
+
+@test "--dry-run describes the sample alert instead of firing it" {
+  run "$INSTALL" --agents terminal --dry-run
+  assert_success
+  assert_output_contains "dry-run: would run $REPO_ROOT/lib/ada-show-alert.sh"
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+# Paseo setup is delegated wholesale so LaunchAgent staging lives in one place.
+paseo_on_path() {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\necho "[]"\n' > "$BATS_TEST_TMPDIR/bin/paseo"
+  chmod +x "$BATS_TEST_TMPDIR/bin/paseo"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+}
+
+@test "--dry-run --agents paseo names the watcher install it would run" {
+  paseo_on_path
+  run "$INSTALL" --agents paseo --dry-run --no-test
+  assert_success
+  assert_output_contains "dry-run: would run $REPO_ROOT/ada-paseo-watch.sh install"
+}
+
+@test "--agents paseo delegates to ada-paseo-watch.sh install" {
+  require_native_helper
+  paseo_on_path
+  run "$INSTALL" --agents paseo --no-test
+  assert_success
+  assert_output_contains "Installing Paseo integration -> LaunchAgent"
+  [ -f "$HOME/Library/LaunchAgents/com.ada.paseo-watch.plist" ]
+}

@@ -152,8 +152,10 @@ swift build -c release --product ada-menubar
 `ada-menubar` is a lightweight native macOS status item. It does not replace the
 terminal, Claude/Codex, or Paseo integrations; it gives you a persistent **ADA**
 menu with **Test Alert**, **Open ADA Folder**, and **Quit ADA Menu Bar**. The
-helper expects `ada-show-alert.sh` next to the executable, or you can set
-`ADA_HOME=/path/to/ada` before launching it.
+helper works out which ada folder it belongs to (a checkout, its `.build`
+output, an `.app` bundle, or a Homebrew install) and runs
+`lib/ada-show-alert.sh` from there. Set `ADA_HOME=/path/to/ada` before launching
+it to point it at a different folder.
 
 Requires **zsh** on **macOS**. SwiftPM is used only to build the native helper;
 without a built helper the alert launcher fails closed. `python3` is used to
@@ -170,8 +172,8 @@ All settings are environment variables. Set them before `ada.sh` is sourced
 | `ADA_THRESHOLD` | `10` | Minimum command duration, in seconds, to trigger an alert. |
 | `ADA_AUTO_CLOSE` | `90` | Seconds the alert stays up before auto-dismissing. Unset or non-positive falls back to 90. |
 | `ADA_IGNORE_CMDS` | interactive tools (see below) | Space-separated list of command names to never alert on. Matched against the command's basename. |
-| `ADA_ALERT_FILE` | `~/.ada/alert.html` | Path to the alert HTML page. |
-| `ADA_NATIVE_ALERT` | _(auto)_ | Path to a specific `ada-alert` executable. Defaults to `ada-alert`, `.build/release/ada-alert`, or `.build/debug/ada-alert` beside `ada-show-alert.sh`. |
+| `ADA_ALERT_FILE` | `alert.html` in the ada install | Path to the alert HTML page. Defaults to the page shipped with the scripts, wherever ada is installed. |
+| `ADA_NATIVE_ALERT` | _(auto)_ | Path to a specific `ada-alert` executable. Defaults to `ada-alert`, `.build/release/ada-alert`, or `.build/debug/ada-alert` in the ada install, one level above `lib/ada-show-alert.sh`. |
 | `ADA_REPO` | _(auto: git repo name)_ | Repo name shown on the alert. Auto-detected as the basename of the command's git repository; set it to override the displayed name, or to empty (`ADA_REPO=""`) to hide the repo badge. A snooze re-launch reuses the value resolved on the first alert. |
 | `ADA_REPO_DIR` | _(where the command ran)_ | Directory whose git repo name is shown. Defaults to the launcher's working directory, which is almost always right; the [Claude/Codex hook integration](#claude-code-and-codex) sets it to the turn's project directory automatically. Ignored when `ADA_REPO` is set. |
 | `ADA_FOCUS_APP` | `__CFBundleIdentifier` | Bundle id to activate when you click the alert. Set to empty to make click-anywhere only dismiss. The Paseo watcher defaults this to `sh.paseo.desktop`. |

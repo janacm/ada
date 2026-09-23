@@ -157,6 +157,7 @@ idle() { printf '{"type":"event","event":{"type":"session.idle","properties":{"s
   wait_for_file "$ADA_PROBE_OUT" || { echo "permission alert never fired"; false; }
   assert_file_contains "$ADA_PROBE_OUT" "rm%20-rf%20build"
   # ...and the finish alert still fired afterwards: two alerts total.
+  wait_for_lines "$ADA_PROBE_OUT" 2
   run wc -l < "$ADA_PROBE_OUT"
   assert_equal "$(echo $output)" "2"
 }

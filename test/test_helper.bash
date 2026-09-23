@@ -70,6 +70,18 @@ wait_for_file() {
   return 1
 }
 
+# Poll until a file holds at least N lines. wait_for_file returns on the FIRST
+# alert, so counting right after it races any later alert that is still on its
+# way through the detached notify -> launcher -> helper chain.
+wait_for_lines() {
+  local f="$1" want="$2" tries="${3:-60}"
+  while (( tries-- > 0 )); do
+    [ -f "$f" ] && (( $(wc -l < "$f") >= want )) && return 0
+    sleep 0.05
+  done
+  return 1
+}
+
 # Assert a file does NOT appear within a bounded window. Use for "no alert
 # fired" checks: the launcher backgrounds the helper, so an immediate `[ ! -f ]`
 # could pass simply because the async write hasn't happened yet. This waits.
