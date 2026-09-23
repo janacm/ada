@@ -217,6 +217,77 @@ UUID="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
   assert_equal "$output" "ADA_CLICK_URL="
 }
 
+# --- a turn that ended in an API error ----------------------------------------
+# Claude Code writes a failed turn as a type:"assistant" transcript entry with
+# isApiErrorMessage:true. That alerts even when the turn was too short for the
+# duration threshold, because a fast failure is exactly what the threshold drops.
+
+# Write a transcript whose entries are the given JSON lines; echo its path.
+transcript() {
+  local t="$BATS_TEST_TMPDIR/transcript.jsonl"
+  printf '%s\n' "$@" > "$t"
+  printf '%s' "$t"
+}
+
+API_ERR='{"type":"assistant","isApiErrorMessage":true,"message":{"content":[{"type":"text","text":"API Error: 529 Overloaded"}]}}'
+
+@test "a turn that ended in an API error alerts even under the threshold" {
+  stamp_session "sess-e1" "$(( $(/bin/date +%s) - 5 ))" "quick turn"
+  t=$(transcript '{"type":"user","message":{"content":"hi"}}' "$API_ERR")
+  run_hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"sess-e1\",\"cwd\":\"/tmp\",\"transcript_path\":\"$t\"}"
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "error alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "Error%3A%20API%20Error%3A%20529%20Overloaded"
+  refute_file_contains "$ADA_PROBE_OUT" "quick%20turn"
+}
+
+@test "an API error whose content is a plain string is read too" {
+  stamp_session "sess-e2" "$(( $(/bin/date +%s) - 5 ))" "quick turn"
+  t=$(transcript '{"type":"assistant","isApiErrorMessage":true,"message":{"content":"Request timed out"}}')
+  run_hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"sess-e2\",\"cwd\":\"/tmp\",\"transcript_path\":\"$t\"}"
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "error alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "Request%20timed%20out"
+}
+
+# A retry that then succeeded leaves the error entry in the transcript; only the
+# LAST assistant entry says how the turn ended.
+@test "an API error followed by a normal reply does not count" {
+  stamp_session "sess-e3" "$(( $(/bin/date +%s) - 5 ))" "quick turn"
+  t=$(transcript "$API_ERR" '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}')
+  run_hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"sess-e3\",\"cwd\":\"/tmp\",\"transcript_path\":\"$t\"}"
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "ADA_CLAUDE_ALERT_ON_ERROR=0 leaves a fast failed turn silent" {
+  export ADA_CLAUDE_ALERT_ON_ERROR=0
+  stamp_session "sess-e4" "$(( $(/bin/date +%s) - 5 ))" "quick turn"
+  t=$(transcript "$API_ERR")
+  run_hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"sess-e4\",\"cwd\":\"/tmp\",\"transcript_path\":\"$t\"}"
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+# Malformed lines (a partial write mid-flush) must not hide the error after them.
+@test "unparseable transcript lines are skipped, not fatal" {
+  stamp_session "sess-e5" "$(( $(/bin/date +%s) - 5 ))" "quick turn"
+  t=$(transcript '{"type":"assistant", truncated' '' "$API_ERR")
+  run_hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"sess-e5\",\"cwd\":\"/tmp\",\"transcript_path\":\"$t\"}"
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "error alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "529%20Overloaded"
+}
+
+@test "a long label is clipped to 120 characters with an ellipsis" {
+  long=$(printf 'x%.0s' $(seq 1 200))
+  stamp_session "sess-e6" "$(( $(/bin/date +%s) - 120 ))" "$long"
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-e6","cwd":"/tmp"}'
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "cmd=$(printf 'x%.0s' $(seq 1 120))%E2%80%A6&"
+}
+
 # --- displayable labels for agent-injected prompts -------------------------
 #
 # UserPromptSubmit does NOT only carry what the user typed: the agent fires the

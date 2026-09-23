@@ -1,0 +1,21 @@
+#!/bin/bash
+# python3 shim for `./run-tests.sh --coverage`, first on PATH during the bats run.
+#
+# The shell scripts embed Python as `python3 -c '...'` strings and
+# `python3 - <<'PY'` heredocs (the Claude hook's payload parser, the installer's
+# JSON merge, release.sh's formula rewrite). coverage.py only measures code it
+# can map to a file, so this saves each such program to .cov/embedded/<hash>.py
+# and runs that file instead; report.py then finds the program's text inside the
+# shell script and maps its line numbers back. argv positions are unchanged:
+# `-c CODE a b` and `FILE a b` both give the program sys.argv[1:] == [a, b].
+# Anything else (a real script, -m, no args) goes straight to the real python3.
+real=${ADA_COV_REAL_PYTHON:?ADA_COV_REAL_PYTHON is set by test/coverage/run.sh}
+case "${1:-}" in
+  -c) code=$2; shift 2 ;;
+  -)  code=$(cat; printf x); code=${code%x}; shift ;;
+  *)  exec "$real" "$@" ;;
+esac
+sum=$(printf '%s' "$code" | shasum | cut -c1-16)
+file="$ADA_COV_EMBED_DIR/$sum.py"
+[ -f "$file" ] || { printf '%s' "$code" > "$file.$$" && mv -f "$file.$$" "$file"; }
+exec "$real" "$file" "$@"

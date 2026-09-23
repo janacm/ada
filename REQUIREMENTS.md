@@ -77,6 +77,8 @@ removed.
   and a scriptable `--agents` path for non-interactive install flows.
 - The selector must include Terminal commands, Claude Code, Codex, opencode, and
   Paseo as independently selectable integrations.
+- The selector must move with the up/down arrow keys as well as `j`/`k` under
+  macOS `/bin/bash` 3.2, which accepts only whole-second `read -t` timeouts.
 - The shared alert runtime files, including the native `ada-alert` helper, must
   be treated as always included; the selector controls integration wiring, not
   whether the launcher exists.
@@ -427,8 +429,33 @@ removed.
 - Docs-refresh automation should accept a no-op when the repo has no relevant
   changes and the docs still match implementation.
 
+## Test Coverage
+
+- `./run-tests.sh --coverage` must measure line coverage for every language ada
+  ships: the shell scripts, `ada.sh` (zsh), the Python components, Python
+  embedded in the shell scripts, the opencode plugin, `alert.html`'s inline
+  script, and the Swift sources. It must print per-file and total numbers.
+- Instrumentation must stay in the test harness. Coverage must not require a
+  change to how any shipped script runs outside a coverage run.
+- Total line coverage reported by `./run-tests.sh --coverage` should stay at or
+  above 80%.
+
 ## Change Log
 
+- 2026-09-23: Line coverage is measured. `./run-tests.sh --coverage` instruments
+  every suite (bats, `swift test`, Playwright) and reports 87.1% of 1751
+  statements: shell 96.1% (Python embedded in the scripts included), Python
+  98.9%, the opencode plugin 95.7%, `alert.html`'s script 100%, Swift 22.6%.
+  Nearly all of what remains is the AppKit window and menu code in the two Swift
+  `main.swift` files. New tests cover `release.sh`, the installer's selector and
+  preflight checks, Paseo install/uninstall/status and the real poll loop, the
+  snooze relaunch, the frontmost-app checks, the page's decoding and dismissal
+  paths, and the turn-ending API-error alert, which had no test at all.
+- 2026-09-23: The installer's up/down arrow keys work. The selector read the rest
+  of an arrow sequence with `read -t 0.05`, which macOS `/bin/bash` 3.2 rejects,
+  so only `j`/`k` ever moved the cursor.
+- 2026-09-23: The Swift tests moved from XCTest to Swift Testing, so `swift test`
+  runs under the Command Line Tools alone, where XCTest does not exist.
 - 2026-09-23: Pastes from the Claude desktop app no longer leak into alert
   labels. The app wraps a paste as `<pasted_content id="c339">…</pasted_content
   id="c339">`, which the injected-block sanitizer skips (underscore, not hyphen,

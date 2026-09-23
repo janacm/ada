@@ -11,6 +11,8 @@
 # Usage:
 #   ./run-tests.sh            # run everything in test/
 #   ./run-tests.sh test/ada-claude-hook.bats   # a single file
+#   ./run-tests.sh --coverage [files]          # same, plus line coverage
+#                                              # (see test/coverage/run.sh)
 # =============================================================
 set -u
 
@@ -20,6 +22,11 @@ if ! command -v bats >/dev/null 2>&1; then
   echo "bats not found. Install it with:" >&2
   echo "  brew install bats-core" >&2
   exit 1
+fi
+
+if [[ "${1:-}" == --coverage ]]; then
+  shift
+  exec "$dir/test/coverage/run.sh" "$@"
 fi
 
 # Self-heal the stub execute bit in case a checkout dropped it.

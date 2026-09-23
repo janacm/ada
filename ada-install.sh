@@ -324,7 +324,11 @@ interactive_select() {
     IFS= read -rsn1 key || true
     case "$key" in
       $'\x1b')
-        IFS= read -rsn2 -t 0.05 rest || true
+        # Whole seconds only: macOS /bin/bash 3.2 rejects a fractional -t
+        # ("invalid timeout specification"), which left rest empty and made
+        # the arrow keys dead. An arrow's "[A"/"[B" arrives in the same write
+        # as its ESC, so the wait only runs out for a bare Esc press.
+        IFS= read -rsn2 -t 1 rest || true
         case "$rest" in
           "[A") key="up" ;;
           "[B") key="down" ;;
