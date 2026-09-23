@@ -17,7 +17,10 @@ let package = Package(
             name: "ADAAlert",
             dependencies: ["ADAAlertCore"]
         ),
-        .executableTarget(name: "ADAMenuBar"),
+        .executableTarget(
+            name: "ADAMenuBar",
+            dependencies: ["ADAAlertCore"]
+        ),
         .testTarget(
             name: "ADAAlertCoreTests",
             dependencies: ["ADAAlertCore"]

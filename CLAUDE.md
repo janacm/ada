@@ -367,7 +367,9 @@ macOS, and each piece has a trap:
   and llvm-cov merges the profiles.
 - **The AppKit delegates in the two `main.swift` files are not unit-tested.**
   They only run inside a window session, and most of what stays uncovered is
-  there.
+  there. Keep decisions out of them: the `adaOpen` scheme rule (`ExternalLink`)
+  and the menu bar's install lookup (`InstallDirectory`) live in `ADAAlertCore`,
+  where Swift Testing covers them.
 
 ## UserPromptSubmit is not only what the user typed
 
@@ -482,7 +484,9 @@ either be swallowed (no UI delegate) or replace the alert page.
 
 So the link routes through a dedicated native bridge: `alert.html` posts the URL
 to `window.webkit.messageHandlers.adaOpen`, and the helper opens it with
-`NSWorkspace.shared.open`, restricted to `http`/`https` schemes. This is separate
+`NSWorkspace.shared.open`, restricted to `http`/`https` schemes by
+`ExternalLink.openableURL` in `ADAAlertCore` (tested in
+`Tests/ADAAlertCoreTests/ExternalLinkTests.swift`). This is separate
 from the click-to-focus deep-link path above (which signals the snooze daemon to
 `open` a URL/bundle on a plain alert click): `adaOpen` opens directly from the
 helper, needs no daemon, and fires only for the feedback link — clicks inside the

@@ -152,8 +152,10 @@ swift build -c release --product ada-menubar
 `ada-menubar` is a lightweight native macOS status item. It does not replace the
 terminal, Claude/Codex, or Paseo integrations; it gives you a persistent **ADA**
 menu with **Test Alert**, **Open ADA Folder**, and **Quit ADA Menu Bar**. The
-helper expects `ada-show-alert.sh` next to the executable, or you can set
-`ADA_HOME=/path/to/ada` before launching it.
+helper works out which ada folder it belongs to (a checkout, its `.build`
+output, an `.app` bundle, or a Homebrew install) and runs
+`lib/ada-show-alert.sh` from there. Set `ADA_HOME=/path/to/ada` before launching
+it to point it at a different folder.
 
 Requires **zsh** on **macOS**. SwiftPM is used only to build the native helper;
 without a built helper the alert launcher fails closed. `python3` is used to

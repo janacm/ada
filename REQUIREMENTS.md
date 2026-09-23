@@ -176,6 +176,15 @@ removed.
 - The menu bar helper must trigger alerts through `ada-show-alert.sh` so it
   shares the same native-only rendering path and configuration as every other
   entry point.
+- The menu bar helper must find the ada install from `ADA_HOME` when it is set,
+  and otherwise from its executable's resolved path, because Homebrew runs it
+  through a `bin/` symlink: the folder holding an `.app` bundle, the package root
+  above a SwiftPM `.build` directory, or the executable's own directory. It must
+  run `lib/ada-show-alert.sh` from that install.
+- The native helper must act on an `adaOpen` message only when its body is a
+  string that parses as an `http` or `https` URL, scheme compared
+  case-insensitively, so the page cannot launch any other scheme. That rule must
+  live in `ADAAlertCore`, outside the AppKit delegate, where it is unit-tested.
 - The launcher must use the native `ada-alert` helper when it is executable at
   `ADA_NATIVE_ALERT`, beside `ada-show-alert.sh`, or in the SwiftPM
   `.build/release` or `.build/debug` output beside the launcher.
@@ -442,6 +451,12 @@ removed.
 
 ## Change Log
 
+- 2026-09-23: The menu bar's **Test Alert** finds the launcher again. It looked
+  for `ada-show-alert.sh` at the install root, but the launcher moved to `lib/`
+  on 2026-06-18, so every documented layout showed "Missing launcher"; a SwiftPM
+  build also resolved to `.build/release`, and Homebrew's `bin/` symlink to
+  `bin/`. The lookup (`InstallDirectory`) and the `adaOpen` http(s)-only rule
+  (`ExternalLink`) now live in `ADAAlertCore` with Swift Testing coverage.
 - 2026-09-23: Line coverage is measured. `./run-tests.sh --coverage` instruments
   every suite (bats, `swift test`, Playwright) and reports 87.1% of 1751
   statements: shell 96.1% (Python embedded in the scripts included), Python
