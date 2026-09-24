@@ -125,3 +125,19 @@ age_marker() {
   . "$MUTE"
   assert_equal "$(__ada_mute_dir)" "$TMPDIR/ada-muted"
 }
+
+@test "a zero-padded ADA_MUTE_MAX_AGE is read as decimal, not octal" {
+  export ADA_MUTE_MAX_AGE=086400
+  "$MUTE" add k-1 >/dev/null
+  . "$MUTE"
+  assert_equal "$(__ada_mute_max_age)" "86400"
+  __ada_is_muted k-1
+  export ADA_MUTE_MAX_AGE=00
+  assert_equal "$(__ada_mute_max_age)" "0"
+}
+
+@test "an absurdly long ADA_MUTE_MAX_AGE falls back instead of overflowing" {
+  export ADA_MUTE_MAX_AGE=99999999999999999999999
+  . "$MUTE"
+  assert_equal "$(__ada_mute_max_age)" "86400"
+}

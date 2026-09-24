@@ -34,8 +34,10 @@ __ada_mute_dir() {
 
 __ada_mute_max_age() {
   local age=${ADA_MUTE_MAX_AGE:-86400}
-  [[ "$age" =~ ^[0-9]+$ ]] || age=86400
-  printf '%s' "$age"
+  [[ "$age" =~ ^[0-9]{1,15}$ ]] || age=86400
+  # Force base 10: bash arithmetic reads "086400" as octal and fails on the 8,
+  # which would make every mute look expired.
+  printf '%s' "$(( 10#$age ))"
 }
 
 __ada_mute_key_ok() {
