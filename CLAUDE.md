@@ -497,6 +497,27 @@ helper, needs no daemon, and fires only for the feedback link — clicks inside 
 note are kept off the dismiss handler with `stopPropagation`. The link currently
 points at the project's GitHub issues.
 
+## The snooze pin lives in user defaults, not the page
+
+The snooze delays sit collapsed behind a "Snooze" toggle, and the row's **Pin
+open** button keeps them expanded on every later alert. The page cannot
+remember that itself: each alert is a fresh `file://` load in a fresh
+`ada-alert` process. So the helper reads `snoozePinned` from the
+`com.ada.alert` defaults suite, injects it at document start as
+`window.adaPrefs.snoozePinned`, and stores whatever boolean the page posts to
+the `adaSnoozePin` handler. `SnoozePreference` in `ADAAlertCore` owns the key,
+the script, and the boolean-only message rule. A named suite, because an
+unbundled SwiftPM executable has no bundle id for `UserDefaults.standard`.
+
+A staged Paseo copy of `ada-alert` built before this handler existed just has
+no pin: the page treats a missing `adaPrefs` as unpinned and the post is a
+no-op. Re-run `ada-paseo-watch.sh install` to re-stage.
+
+To check the round trip without clicking, load a probe page that posts
+`!window.adaPrefs?.snoozePinned` to `adaSnoozePin` and closes, run it twice
+through `.build/debug/ada-alert file://…`, and watch
+`defaults read com.ada.alert snoozePinned` go 1 then 0.
+
 ## Window geometry
 
 Size = the **primary** display's `visibleFrame` (below the menu bar, above the
