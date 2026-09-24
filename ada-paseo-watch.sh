@@ -190,7 +190,7 @@ __ada_from_brew_prefix() {
 # by the in-place check, staging and the stale-stage check in status, so the
 # modes can't drift apart.
 runtime_files=(ada-paseo-watch.sh alert.html lib/ada-paseo-watch.py
-               lib/ada-show-alert.sh lib/ada-snooze-daemon.py)
+               lib/ada-show-alert.sh lib/ada-snooze-daemon.py lib/ada-mute.sh)
 
 # The native helper a stage would copy from this checkout, if any.
 __ada_source_native_alert() {

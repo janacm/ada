@@ -53,6 +53,12 @@ class Ada < Formula
       #!/bin/bash
       exec "#{opt_libexec}/ada-install.sh" "$@"
     SH
+
+    # List or clear the sessions muted from an alert's "Mute this …" button.
+    (bin/"ada-mute").write <<~SH
+      #!/bin/bash
+      exec "#{opt_libexec}/lib/ada-mute.sh" "$@"
+    SH
   end
 
   def caveats

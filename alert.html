@@ -243,6 +243,29 @@
     margin: 0;
   }
 
+  /* "Mute this conversation": its own row under the snooze bar, a quieter grey
+     pill than the snooze ones. Shown with a class for the same reason as
+     .badge.repo — a display rule would beat the [hidden] UA rule. */
+  .mute {
+    margin-top: 1rem;
+    display: none;
+    justify-content: center;
+  }
+
+  .mute.is-visible { display: flex; }
+
+  .snooze-btn.mute-btn {
+    color: #a1a1aa;
+    background: rgba(63, 63, 70, 0.25);
+    border-color: rgba(82, 82, 91, 0.5);
+  }
+
+  .snooze-btn.mute-btn:hover {
+    color: #e4e4e7;
+    background: rgba(63, 63, 70, 0.5);
+    border-color: rgba(113, 113, 122, 0.8);
+  }
+
   @keyframes snooze-shake {
     0%, 100% { transform: translateX(0); }
     25% { transform: translateX(-4px); }
@@ -349,6 +372,8 @@
       Snooze
     </span>
   </div>
+
+  <div class="mute" id="muteBar"></div>
 </div>
 
 <div class="feedback" id="feedbackBox">
@@ -437,6 +462,7 @@
   const daemonEnabled = Boolean(sport && stoken);
   const snoozeEnabled = params.get('snooze') === '1' && daemonEnabled;
   const focusEnabled = params.get('focus') === '1' && daemonEnabled;
+  const muteEnabled = params.get('mute') === '1' && daemonEnabled;
 
   if (focusEnabled) {
     const focusName = textParam('focusnameb64', 'focusname');
@@ -490,6 +516,35 @@
       '<p class="title">Snoozed</p>' +
       '<p class="subtitle">Back in ' + mins + ' minute' + (mins === 1 ? '' : 's') + '</p>';
     setTimeout(closeWindow, 650);
+  }
+
+  // Silence this session for good (until the mute expires or `ada-mute clear`).
+  // The daemon writes the marker; the launcher drops every later alert with the
+  // same session key, a pending snooze relaunch included.
+  function mute(kind) {
+    if (decided || dismissed) return;
+    decided = true;
+    signal('mute');
+    document.getElementById('app').innerHTML =
+      '<span class="icon">🔕</span>' +
+      '<p class="title">Muted</p>' +
+      '<p class="subtitle"></p>';
+    document.querySelector('#app .subtitle').textContent = 'No more alerts from this ' + kind;
+    setTimeout(closeWindow, 650);
+  }
+
+  if (muteEnabled) {
+    const kind = textParam('mutekindb64', 'mutekind') || 'session';
+    const bar = document.getElementById('muteBar');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'snooze-btn mute-btn';
+    btn.id = 'muteBtn';
+    btn.textContent = '🔕 Mute this ' + kind;
+    btn.addEventListener('click', (e) => { e.stopPropagation(); mute(kind); });
+    bar.appendChild(btn);
+    bar.addEventListener('click', (e) => e.stopPropagation());
+    bar.classList.add('is-visible');
   }
 
   document.addEventListener('click', () => dismiss(focusEnabled ? 'focus' : 'dismiss'));

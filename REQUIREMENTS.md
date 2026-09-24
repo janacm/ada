@@ -229,6 +229,34 @@ removed.
 - If `python3` or the daemon script is unavailable, snooze and focus must degrade
   cleanly without breaking the base alert.
 
+## Per-Session Mute
+
+- An alert whose integration names its session (`ADA_SESSION_KEY`) must offer a
+  "Mute this <kind>" button. Muting must silence every later alert for that
+  session: finished turns, errors, permission prompts, and a pending snooze
+  relaunch. Other sessions must keep alerting.
+- Claude Code / Codex (`claude-<session id>`), opencode (`opencode-<session
+  id>`), Paseo (`paseo-<agent id>`) and the zsh hook (`zsh-<pid>-<start time>`,
+  one key per interactive shell) must all set a key. The terminal `ada` test
+  command must not, so it keeps working in a muted shell.
+- The mute check must live only in `ada-show-alert.sh`, the launcher every
+  integration reaches, and must run before the helper lookup or any spawn. No
+  integration may reimplement it.
+- A key must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$`, because it names a file
+  under `ADA_MUTE_DIR` (default `$TMPDIR/ada-muted`). An invalid key must get no
+  button and no marker, never a path outside that directory.
+- A mute must expire after `ADA_MUTE_MAX_AGE` seconds (default 86400; `0` means
+  until cleared), and the launcher must prune expired markers.
+- The button must go through the existing loopback daemon (`GET
+  /<token>/mute`), which writes the marker the launcher named in
+  `ADA_MUTE_FILE` and neither relaunches nor focuses. Without `python3` the
+  button must not render.
+- `ADA_MUTE_BUTTON=0` must hide the button while leaving existing mutes in force.
+- `lib/ada-mute.sh list|clear [key...]|add <key>` must list and undo mutes, and
+  Homebrew must expose it as `ada-mute`.
+- A launcher running without `ada-mute.sh` beside it must still alert, with no
+  muting.
+
 ## Claude Code And Codex Hooks
 
 - `ada-claude-hook.sh` must support the shared Claude Code and Codex hook payload
@@ -382,8 +410,8 @@ removed.
   install directory in both modes, so watcher configuration survives a
   `brew upgrade` replacing the Homebrew-managed tree.
 - The staged runtime must include `ada-paseo-watch.sh`,
-  `ada-paseo-watch.py`, `ada-show-alert.sh`, `ada-snooze-daemon.py`, and
-  `alert.html`. Staging must mirror the dev-checkout layout — the front door
+  `ada-paseo-watch.py`, `ada-show-alert.sh`, `ada-snooze-daemon.py`,
+  `ada-mute.sh`, and `alert.html`. Staging must mirror the dev-checkout layout — the front door
   (`ada-paseo-watch.sh`) and `alert.html` at the top, the internal scripts under
   `lib/` — so every `lib/`-relative reference resolves identically whether run
   from a checkout or from the staged LaunchAgent.
@@ -456,6 +484,12 @@ removed.
 
 ## Change Log
 
+- 2026-09-24: Alerts can mute their session. A **Mute this conversation** (or
+  session, agent, terminal) button under the snooze row silences every later
+  alert for that Claude Code / Codex conversation, opencode session, Paseo agent
+  or zsh shell for 24 hours (`ADA_MUTE_MAX_AGE`). Each integration passes an
+  `ADA_SESSION_KEY`; `ada-show-alert.sh` drops alerts for a muted key, and
+  `ada-mute list|clear` undoes it.
 - 2026-09-23: The menu bar's **Test Alert** finds the launcher again. It looked
   for `ada-show-alert.sh` at the install root, but the launcher moved to `lib/`
   on 2026-06-18, so every documented layout showed "Missing launcher"; a SwiftPM

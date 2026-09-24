@@ -528,3 +528,44 @@ PY
   assert_success
   assert_file_contains "$ADA_DEBUG_LOG_FILE" "task-notification"
 }
+
+# --- per-session mute ---------------------------------------------------------
+# The hook names the conversation; the launcher does the muting. So these only
+# need to prove the key reaches the launcher and a muted key stays quiet
+# through the real notify -> launcher chain.
+
+@test "Stop tags the alert with the conversation's session key" {
+  export ADA_PROBE_SESSION_OUT="$BATS_TEST_TMPDIR/probe-session.txt"
+  stamp_session "$UUID" "$(( $(/bin/date +%s) - 120 ))" "keyed turn"
+  run_hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"$UUID\",\"cwd\":\"/tmp\"}"
+  assert_success
+  wait_for_file "$ADA_PROBE_SESSION_OUT" || { echo "alert never fired"; false; }
+  run cat "$ADA_PROBE_SESSION_OUT"
+  assert_equal "$output" "claude-$UUID conversation"
+}
+
+@test "the Codex fallback keys the alert by the stamp it fell back to" {
+  export ADA_PROBE_SESSION_OUT="$BATS_TEST_TMPDIR/probe-session.txt"
+  stamp_session "codex-real-1" "$(( $(/bin/date +%s) - 120 ))" "codex turn"
+  run_hook '{"hook_event_name":"Stop","session_id":"something-else","cwd":"/tmp"}'
+  wait_for_file "$ADA_PROBE_SESSION_OUT" || { echo "alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_SESSION_OUT" "claude-codex-real-1 conversation"
+}
+
+@test "a muted conversation gets no alert, not even for an API error" {
+  export ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted"
+  "$REPO_ROOT/lib/ada-mute.sh" add "claude-sess-m1" >/dev/null
+  stamp_session "sess-m1" "$(( $(/bin/date +%s) - 120 ))" "long turn"
+  t=$(transcript "$API_ERR")
+  run_hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"sess-m1\",\"cwd\":\"/tmp\",\"transcript_path\":\"$t\"}"
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "muting one conversation leaves another alerting" {
+  export ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted"
+  "$REPO_ROOT/lib/ada-mute.sh" add "claude-sess-m1" >/dev/null
+  stamp_session "sess-m2" "$(( $(/bin/date +%s) - 120 ))" "other turn"
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-m2","cwd":"/tmp"}'
+  wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
+}

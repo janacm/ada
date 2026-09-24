@@ -16,6 +16,13 @@
 #   ADA_FOCUS_APP_NAME  optional display name for the click hint
 #   ADA_CLICK_URL       URL to `open` on click (e.g. claude://resume?session=…);
 #                       takes precedence over ADA_FOCUS_APP for the click action
+#   ADA_SESSION_KEY     which session this alert belongs to (e.g. claude-<id>);
+#                       a muted key drops the alert, a valid one adds the
+#                       "Mute this …" button. See lib/ada-mute.sh.
+#   ADA_SESSION_KIND    what the button calls it: conversation, session, agent,
+#                       terminal (default "session")
+#   ADA_MUTE_BUTTON     0 hides the mute button (existing mutes still apply)
+#   ADA_MUTE_DIR / ADA_MUTE_MAX_AGE  see lib/ada-mute.sh
 #   ADA_SNOOZED         set by the snooze daemon when re-arming an alert
 #   ADA_NATIVE_ALERT    path to ada-alert native helper
 # =============================================================
@@ -28,6 +35,26 @@ code=${3:-0}
 # Where this script lives, so the snooze daemon and the sibling alert page can
 # be found and re-invoked.
 selfdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+# A muted session drops every alert, whichever integration raised it: this
+# launcher is the one place they all pass through, the snooze relaunch included.
+# A missing ada-mute.sh (an old copy of just this script) means no muting, never
+# a missing alert.
+session_key=${ADA_SESSION_KEY:-}
+mute_file=""
+if [[ -f "$selfdir/ada-mute.sh" ]]; then
+  # shellcheck source=lib/ada-mute.sh
+  . "$selfdir/ada-mute.sh"
+  __ada_mute_prune
+  if [[ -n "$session_key" ]]; then
+    __ada_is_muted "$session_key" && exit 0
+    # ADA_MUTE_BUTTON=0 hides the button; existing mutes still apply.
+    if [[ "${ADA_MUTE_BUTTON:-1}" == 1 ]]; then
+      mute_file=$(__ada_mute_file "$session_key") || mute_file=""
+    fi
+  fi
+fi
+session_kind=${ADA_SESSION_KIND:-session}
 
 # alert.html ships one level up from lib/. Resolve it relative to THIS script so
 # the launcher works from a dev checkout, ~/.ada, Homebrew's libexec, or the
@@ -143,6 +170,8 @@ encoded_repo=$(__ada_url_encode "$ADA_REPO")
 encoded_repo_b64=$(__ada_b64url_encode "$ADA_REPO")
 encoded_focus_app_name=$(__ada_url_encode "$focus_app_name")
 encoded_focus_app_name_b64=$(__ada_b64url_encode "$focus_app_name")
+encoded_session_kind_b64=""
+[[ -n "$mute_file" ]] && encoded_session_kind_b64=$(__ada_b64url_encode "$session_kind")
 
 # Snooze/focus: a sandboxed file:// page can't outlive its window or activate
 # another app itself, so we spawn a tiny detached daemon that the page signals
@@ -150,12 +179,12 @@ encoded_focus_app_name_b64=$(__ada_b64url_encode "$focus_app_name")
 # snooze controls and click-anywhere degrades to plain dismiss.
 sport=""; stoken=""
 needs_daemon=0
-[[ -n "${snooze_minutes// /}" || -n "${focus_app// /}" || -n "${click_url// /}" ]] && needs_daemon=1
+[[ -n "${snooze_minutes// /}" || -n "${focus_app// /}" || -n "${click_url// /}" || -n "$mute_file" ]] && needs_daemon=1
 if [[ "$needs_daemon" == 1 ]] && command -v python3 >/dev/null 2>&1 \
    && [[ -f "$selfdir/ada-snooze-daemon.py" ]]; then
   handoff=$(mktemp -t ada-snooze.XXXXXX 2>/dev/null) || handoff="${TMPDIR:-/tmp}/ada-snooze.$$"
   deadline=$(( ${auto_close%%.*} + 15 )); (( deadline > 0 )) || deadline=105
-  python3 "$selfdir/ada-snooze-daemon.py" "$handoff" "$deadline" \
+  ADA_MUTE_FILE="$mute_file" python3 "$selfdir/ada-snooze-daemon.py" "$handoff" "$deadline" \
     "$selfdir/ada-show-alert.sh" "$cmd" "$duration" "$code" \
     "$alert_file" "$auto_close" "$snooze_minutes" "$focus_app" "$click_url" >/dev/null 2>&1 &
   for _ in {1..60}; do
@@ -179,6 +208,10 @@ if [[ -n "$sport" && -n "$stoken" ]]; then
     [[ -n "$encoded_focus_app_name_b64" ]] && daemon_q="${daemon_q}&focusnameb64=${encoded_focus_app_name_b64}"
   else
     daemon_q="${daemon_q}&focus=0"
+  fi
+  if [[ -n "$mute_file" ]]; then
+    daemon_q="${daemon_q}&mute=1"
+    [[ -n "$encoded_session_kind_b64" ]] && daemon_q="${daemon_q}&mutekindb64=${encoded_session_kind_b64}"
   fi
 fi
 [[ -n "${ADA_SNOOZED:-}" ]] && daemon_q="${daemon_q}&snoozed=1"

@@ -7,4 +7,6 @@
 # asserted without spawning the loopback daemon (the var is in our environment
 # because the launcher execs us with it inherited).
 [ -n "${ADA_PROBE_ENV_OUT:-}" ] && printf 'ADA_CLICK_URL=%s\n' "${ADA_CLICK_URL:-}" > "$ADA_PROBE_ENV_OUT"
+# The session identity the integration passed, for the mute-key assertions.
+[ -n "${ADA_PROBE_SESSION_OUT:-}" ] && printf '%s %s\n' "${ADA_SESSION_KEY:-}" "${ADA_SESSION_KIND:-}" > "$ADA_PROBE_SESSION_OUT"
 exit 0

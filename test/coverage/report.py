@@ -21,6 +21,7 @@ SHELL_FILES = [
     "ada-paseo-watch.sh",
     "ada.sh",
     "lib/ada-claude-hook.sh",
+    "lib/ada-mute.sh",
     "lib/ada-notify.sh",
     "lib/ada-show-alert.sh",
     "release.sh",

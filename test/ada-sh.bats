@@ -175,3 +175,44 @@ skip_active() {
   assert_success
   assert_equal "$output" "$real_prefix/opt/ada/libexec|$real_prefix/opt/ada/libexec/alert.html"
 }
+
+# --- per-session mute: one key per interactive shell -------------------------
+
+@test "a precmd alert carries this shell's session key" {
+  export ADA_PROBE_SESSION_OUT="$BATS_TEST_TMPDIR/probe-session.txt"
+  run zsh -c "
+    source '$REPO_ROOT/ada.sh' >/dev/null 2>&1
+    __ada_should_skip_active() { return 1; }
+    ADA_THRESHOLD=1 __ada_cmd='make' __ada_start_time=\$(( EPOCHREALTIME - 5 ))
+    __ada_precmd
+    print -r -- \"\$_ADA_SESSION_KEY\"
+  "
+  assert_success
+  [[ "$output" =~ ^zsh-[0-9]+-[0-9]+$ ]] || { echo "unexpected key: $output"; false; }
+  wait_for_file "$ADA_PROBE_SESSION_OUT" || { echo "alert never fired"; false; }
+  assert_equal "$(cat "$ADA_PROBE_SESSION_OUT")" "$output terminal"
+}
+
+@test "two shells get different session keys" {
+  a=$(zsh_eval 'print -r -- $_ADA_SESSION_KEY')
+  b=$(zsh_eval 'print -r -- $_ADA_SESSION_KEY')
+  [ -n "$a" ] && [ "$a" != "$b" ]
+}
+
+@test "a muted terminal stays quiet, but the manual ada trigger still fires" {
+  export ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted"
+  run zsh -c "
+    source '$REPO_ROOT/ada.sh' >/dev/null 2>&1
+    __ada_should_skip_active() { return 1; }
+    '$REPO_ROOT/lib/ada-mute.sh' add \"\$_ADA_SESSION_KEY\" >/dev/null
+    ADA_THRESHOLD=1 __ada_cmd='make' __ada_start_time=\$(( EPOCHREALTIME - 5 ))
+    __ada_precmd
+    sleep 0.5
+    [[ -e '$ADA_PROBE_OUT' ]] && print -r -- LEAKED
+    ada still here
+  "
+  assert_success
+  refute_output_contains "LEAKED"
+  wait_for_file "$ADA_PROBE_OUT" || { echo "manual trigger never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "cmd=still%20here"
+}
