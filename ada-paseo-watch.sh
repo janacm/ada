@@ -194,7 +194,7 @@ __ada_from_brew_prefix() {
 # ada-notify.sh is here because `ada-mute.sh list` and ada-pause.sh source it.
 runtime_files=(ada-paseo-watch.sh alert.html lib/ada-paseo-watch.py
                lib/ada-show-alert.sh lib/ada-snooze-daemon.py lib/ada-mute.sh
-               lib/ada-pause.sh lib/ada-notify.sh)
+               lib/ada-pause.sh lib/ada-history.sh lib/ada-notify.sh)
 
 # True when $1 is a SwiftPM build of this checkout that is older than the
 # checkout's Swift sources: a `git pull` brought in helper changes (a new message

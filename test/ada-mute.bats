@@ -199,3 +199,26 @@ age_marker() {
   assert_success
   assert_output_contains "unmuted never-1"
 }
+
+@test "add with a label stores it and list shows it" {
+  run "$MUTE" add claude-abc $'fix the\tflaky\ntest'
+  assert_success
+  assert_equal "$(cat "$ADA_MUTE_DIR/claude-abc")" "fix the flaky test"
+  assert_equal "$(stat -f %Lp "$ADA_MUTE_DIR/claude-abc")" 600
+  run "$MUTE" list
+  assert_success
+  [[ "$output" == claude-abc$'\t'"muted "*" ago"$'\t'"fix the flaky test" ]] || { echo "got: $output"; false; }
+}
+
+@test "a marker without a label lists as key and age only" {
+  "$MUTE" add claude-abc >/dev/null
+  run "$MUTE" list
+  [[ "$output" == claude-abc$'\t'"muted "*" ago" ]] || { echo "got: $output"; false; }
+  refute_output_contains $'ago\t'
+}
+
+@test "adding a label to a muted key replaces the old one" {
+  "$MUTE" add claude-abc "old" >/dev/null
+  "$MUTE" add claude-abc "new" >/dev/null
+  assert_equal "$(cat "$ADA_MUTE_DIR/claude-abc")" "new"
+}

@@ -195,9 +195,11 @@ All settings are environment variables. Set them before `ada.sh` is sourced
 | `ADA_SNOOZE_MINUTES` | `5 10 30 60` | Space-separated snooze options, in minutes, shown as buttons on the alert. Set to empty to hide the buttons. Requires `python3` (see [Snoozing the alert](#snoozing-the-alert)). |
 | `ADA_MUTE_BUTTON` | `1` | Set to `0` to hide the **Mute this …** button. Sessions you already muted stay muted. See [Muting a session](#muting-a-session). |
 | `ADA_MUTE_MAX_AGE` | `86400` | Seconds a mute lasts before that session alerts again. `0` keeps it until you clear it. |
-| `ADA_MUTE_DIR` | `${TMPDIR}/ada-muted` | Where the mute markers live, one empty file per muted session. |
+| `ADA_MUTE_DIR` | `${TMPDIR}/ada-muted` | Where the mute markers live: one file per muted session, holding the label of the alert it was muted from. |
 | `ADA_PAUSE_FILE` | `${TMPDIR}/ada-paused` | Where the [pause](#pausing-every-alert) is kept: one number, the time it ends (`0` = until resumed). |
 | `ADA_IGNORE_PAUSE` | _(empty)_ | `1` makes an alert show even while paused. The test alerts (`ada`, the installer's sample, `ada-paseo-watch.sh test`, the menu bar's **Test Alert**) set it. |
+| `ADA_HISTORY_FILE` | `${TMPDIR}/ada-history.tsv` | The [alert history](#alert-history), one line per alert. |
+| `ADA_HISTORY_MAX` | `50` | How many alerts the history keeps. `0` keeps none. |
 | `ADA_SESSION_KEY` | _(set by each integration)_ | Which session an alert belongs to; the integrations set it for you. Only letters, digits, `.`, `_` and `-` are accepted, and an alert without a valid key has no mute button. |
 
 The default ignore list covers common interactive / long-lived foreground tools:
@@ -539,6 +541,9 @@ ada-mute clear claude-…    # unmute one session
 ada-mute clear             # unmute everything
 ```
 
+`list` shows each muted key, how long ago it was muted and the alert you muted
+it from.
+
 The `ada` test command in the terminal is never muted, so it still works as a
 check. Muting uses the same `python3` daemon as snoozing, so without `python3`
 the button isn't shown.
@@ -561,6 +566,22 @@ is dropped too. The test alerts still show, so you can check that ada works.
 The pause is a file in `$TMPDIR`, so it lasts until it runs out, you resume,
 or macOS clears that folder (after a restart, for example); in every case
 alerts simply come back.
+
+## Alert history
+
+ada keeps the last 50 alerts it decided on (`ADA_HISTORY_MAX`), including the
+ones a pause or a mute kept off your screen, so you can find what finished
+while you were away. Each line records when, what (the command or prompt), how
+long it ran, its exit code, the repo, and where clicking the alert would have
+taken you:
+
+```sh
+lib/ada-history.sh list    # from the ada folder; tab-separated, oldest first
+lib/ada-history.sh clear
+```
+
+The labels are your commands and prompts, so the file is readable only by you
+and never leaves this Mac. `ADA_HISTORY_MAX=0` turns it off.
 
 ## Feedback
 

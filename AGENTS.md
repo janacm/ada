@@ -268,12 +268,12 @@ freeze a snapshot brew could never update.
 
 Everything else (a dev checkout, `~/.ada`) **stages** the runtime it needs
 (`ada-paseo-watch.sh`, `ada-paseo-watch.py`, `ada-show-alert.sh`,
-`ada-snooze-daemon.py`, `ada-mute.sh`, `ada-pause.sh`, `ada-notify.sh`, `alert.html`, and `ada-alert`) into a non-TCC dir —
+`ada-snooze-daemon.py`, `ada-mute.sh`, `ada-pause.sh`, `ada-history.sh`, `ada-notify.sh`, `alert.html`, and `ada-alert`) into a non-TCC dir —
 `~/.local/share/ada` (override `ADA_PASEO_INSTALL_DIR`) — and points the plist
 there. **Staging mirrors the dev-checkout layout**: the front door
 (`ada-paseo-watch.sh`), `alert.html`, and `ada-alert` sit at the top, while the
 internal scripts (`ada-paseo-watch.py`, `ada-show-alert.sh`,
-`ada-snooze-daemon.py`, `ada-mute.sh`, `ada-pause.sh`, `ada-notify.sh`) go under `~/.local/share/ada/lib/`. Keeping the two
+`ada-snooze-daemon.py`, `ada-mute.sh`, `ada-pause.sh`, `ada-history.sh`, `ada-notify.sh`) go under `~/.local/share/ada/lib/`. Keeping the two
 layouts identical is load-bearing: the watcher resolves `ada-show-alert.sh` via
 `$dir/lib/…` / a sibling of the `.py`, so a flat stage would break every Paseo
 alert from the LaunchAgent while still working in a dev checkout (the classic
@@ -516,6 +516,10 @@ before anything spawns when the key is muted.
   uses `O_NOFOLLOW` for the same reason. A recursive `find -delete` there would
   erase unrelated old files on every alert if someone pointed it at a real
   directory.
+- **A marker's first line is the label of the alert it was muted from.** The
+  daemon writes it (`O_TRUNC`, mode 600) and `ada-mute list` and the menu bar
+  show it. The launcher still reads only the name and the mtime, so an empty
+  marker from an older daemon or `add` without a label mutes just the same.
 
 ## Pausing is enforced in the launcher only
 
@@ -550,6 +554,27 @@ while paused, so the snooze relaunch is dropped too.
   -INT`.** Non-interactive bash starts background jobs with SIGINT ignored and
   Python keeps that, so `wait` never returns. The Ctrl-C loop test re-arms
   SIGINT itself for exactly this reason.
+
+## The alert history is written by the launcher only
+
+`lib/ada-history.sh` appends one tab-separated line per alert the launcher
+decides on (`shown`, `paused`, `muted`) to `$TMPDIR/ada-history.tsv`; the
+format is in its header, version first. The menu bar reads it for Recent
+Alerts. Three constraints shape where the calls sit in `ada-show-alert.sh`:
+
+- **The session and click-target assignments come before the pause and mute
+  checks**, so a dropped alert's line still carries `ADA_CLICK_URL` and the
+  focus app. That is the point of recording dropped alerts at all.
+- **A dropped alert does not resolve the repo.** `git rev-parse` runs only once
+  the alert is known to show; a dropped line records `ADA_REPO` only when it was
+  inherited (a snooze relaunch). REQUIREMENTS keeps the mute decision ahead of
+  that spawn.
+- **Building a line costs no subshells.** `__ada_history_add` appends to a
+  variable instead of printing, because eleven `$(…)` fields per alert were
+  eleven forks. Only `date` and the trim's `wc` spawn.
+
+A missing `ada-history.sh` defines a no-op `__ada_history_record`, so an old
+copy of the launcher still alerts; the file is in the Paseo `runtime_files`.
 
 ## The feedback note opens links via the adaOpen bridge
 

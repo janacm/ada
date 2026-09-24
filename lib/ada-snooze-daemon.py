@@ -67,6 +67,11 @@ if deadline <= 0:
 
 token = token_urlsafe(8)
 
+
+def marker_label(text):
+    """One line of at most 200 characters, the rule lib/ada-mute.sh uses."""
+    return " ".join(text.replace("\t", " ").replace("\r", " ").split("\n"))[:200]
+
 # Opt-in tracing: set ADA_SNOOZE_LOG=/path to append a line per request/decision.
 _log_path = os.environ.get("ADA_SNOOZE_LOG", "")
 
@@ -182,10 +187,13 @@ def main():
             os.makedirs(os.path.dirname(mute_file), exist_ok=True)
             # O_NOFOLLOW: ADA_MUTE_DIR is user-configurable, so a symlink by
             # the marker's name must not be followed to touch its target.
-            fd = os.open(mute_file, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+            fd = os.open(mute_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
             try:
-                # Re-muting an already muted session restarts its expiry clock.
-                os.utime(fd, None)
+                # The marker holds the alert's label, so the menu bar and
+                # `ada-mute list` can say what was muted. It is your prompt, so
+                # keep it private. Writing also restarts the expiry clock.
+                os.fchmod(fd, 0o600)
+                os.write(fd, (marker_label(cmd) + "\n").encode("utf-8", "replace"))
             finally:
                 os.close(fd)
         except OSError:

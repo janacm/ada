@@ -300,6 +300,29 @@ removed.
 - A launcher running without `ada-pause.sh` beside it must still alert, with no
   pausing.
 
+## Alert History
+
+- The launcher must append one line to the history (`ADA_HISTORY_FILE`, default
+  `$TMPDIR/ada-history.tsv`) for every alert it decides on: shown, or dropped
+  by a pause or a mute. A snooze relaunch must be flagged as one.
+- Each line must be tab-separated, version first: `1 epoch outcome snoozed key
+  kind label duration code repo focus_app focus_app_name click_url`. Tabs and
+  line breaks in a field must become spaces, and a field must be cut to 200
+  characters (the click URL to 500). Readers must skip lines of another version
+  and ignore columns past the last one they know.
+- A dropped alert must not resolve the repo (that runs git), so it records
+  `ADA_REPO` only when it inherited one.
+- The file must be created mode 600 and never written through a symlink or when
+  another user owns it. It must be trimmed to the newest `ADA_HISTORY_MAX`
+  lines (default 50; `0` keeps none) once it reaches twice that.
+- A history failure must never cost the alert, and a launcher without
+  `ada-history.sh` beside it must still alert.
+- `lib/ada-history.sh list|clear` must print and forget the history.
+- A mute marker must hold the label of the alert it was muted from, one line of
+  at most 200 characters, mode 600; `ada-mute list` must show it and `ada-mute
+  add <key> [label]` must accept one. The launcher must keep using only the
+  marker's name and mtime.
+
 ## Claude Code And Codex Hooks
 
 - `ada-claude-hook.sh` must support the shared Claude Code and Codex hook payload
@@ -454,8 +477,8 @@ removed.
   `brew upgrade` replacing the Homebrew-managed tree.
 - The staged runtime must include `ada-paseo-watch.sh`,
   `ada-paseo-watch.py`, `ada-show-alert.sh`, `ada-snooze-daemon.py`,
-  `ada-mute.sh`, `ada-pause.sh`, `ada-notify.sh` (which `ada-mute.sh list` and
-  `ada-pause.sh` source), and `alert.html`. Staging must mirror the dev-checkout layout — the front door
+  `ada-mute.sh`, `ada-pause.sh`, `ada-history.sh`, `ada-notify.sh` (which
+  `ada-mute.sh list` and `ada-pause.sh` source), and `alert.html`. Staging must mirror the dev-checkout layout — the front door
   (`ada-paseo-watch.sh`) and `alert.html` at the top, the internal scripts under
   `lib/` — so every `lib/`-relative reference resolves identically whether run
   from a checkout or from the staged LaunchAgent.
@@ -528,6 +551,11 @@ removed.
 
 ## Change Log
 
+- 2026-09-24: The launcher keeps an alert history for the menu bar's Recent
+  Alerts: one line per alert, shown or dropped by a pause or a mute, with the
+  click target so a dropped Claude turn is still one click away. Mute markers
+  now hold the label of the alert they were muted from, which `ada-mute list`
+  shows.
 - 2026-09-24: Alerts can be paused. `ada-pause <minutes>|until <epoch>|forever`
   silences every integration until the pause ends or `ada-pause resume`, the
   switch the menu bar's Pause menu will use. The check sits in

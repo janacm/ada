@@ -25,6 +25,7 @@
 #   ADA_MUTE_DIR / ADA_MUTE_MAX_AGE  see lib/ada-mute.sh
 #   ADA_PAUSE_FILE      see lib/ada-pause.sh; a pause drops every alert
 #   ADA_IGNORE_PAUSE    1 for an alert the user asked for (the test alerts)
+#   ADA_HISTORY_FILE / ADA_HISTORY_MAX  see lib/ada-history.sh
 #   ADA_SNOOZED         set by the snooze daemon when re-arming an alert
 #   ADA_NATIVE_ALERT    path to ada-alert native helper
 # =============================================================
@@ -49,6 +50,36 @@ if [[ -z "${TMPDIR:-}" ]]; then
   export TMPDIR
 fi
 
+# Which session raised this alert and where a click on it leads. Plain
+# assignments, made before the pause and mute checks so that the history line
+# of a dropped alert still carries its click target.
+session_key=${ADA_SESSION_KEY:-}
+session_kind=${ADA_SESSION_KIND:-session}
+if [[ -n "${ADA_FOCUS_APP+x}" ]]; then
+  focus_app=$ADA_FOCUS_APP
+else
+  focus_app=${__CFBundleIdentifier:-}
+fi
+focus_app_name=${ADA_FOCUS_APP_NAME:-}
+click_url=${ADA_CLICK_URL:-}
+
+# Every alert decided here gets a line in the history (lib/ada-history.sh) that
+# the menu bar's Recent Alerts reads: shown, paused or muted. A missing
+# ada-history.sh means no history, never a missing alert.
+if [[ -f "$selfdir/ada-history.sh" ]]; then
+  # shellcheck source=lib/ada-history.sh
+  . "$selfdir/ada-history.sh"
+else
+  __ada_history_record() { :; }
+fi
+# A dropped alert records ADA_REPO only when it was inherited (a snooze
+# relaunch has it): resolving the repo runs git, which waits until the alert is
+# known to be shown.
+__ada_record() {
+  __ada_history_record "$1" "$session_key" "$session_kind" "$cmd" "$duration" "$code" \
+    "${ADA_REPO:-}" "$focus_app" "$focus_app_name" "$click_url"
+}
+
 # A pause (the menu bar's Pause menu, or lib/ada-pause.sh) drops every alert,
 # whichever integration raised it, the snooze relaunch included. Test alerts
 # pass ADA_IGNORE_PAUSE=1. A missing ada-pause.sh means no pausing, never a
@@ -56,28 +87,32 @@ fi
 if [[ "${ADA_IGNORE_PAUSE:-}" != 1 && -f "$selfdir/ada-pause.sh" ]]; then
   # shellcheck source=lib/ada-pause.sh
   . "$selfdir/ada-pause.sh"
-  __ada_is_paused && exit 0
+  if __ada_is_paused; then
+    __ada_record paused
+    exit 0
+  fi
 fi
 
 # A muted session drops every alert, whichever integration raised it: this
 # launcher is the one place they all pass through, the snooze relaunch included.
 # A missing ada-mute.sh (an old copy of just this script) means no muting, never
 # a missing alert.
-session_key=${ADA_SESSION_KEY:-}
 mute_file=""
 if [[ -f "$selfdir/ada-mute.sh" ]]; then
   # shellcheck source=lib/ada-mute.sh
   . "$selfdir/ada-mute.sh"
   __ada_mute_prune
   if [[ -n "$session_key" ]]; then
-    __ada_is_muted "$session_key" && exit 0
+    if __ada_is_muted "$session_key"; then
+      __ada_record muted
+      exit 0
+    fi
     # ADA_MUTE_BUTTON=0 hides the button; existing mutes still apply.
     if [[ "${ADA_MUTE_BUTTON:-1}" == 1 ]]; then
       mute_file=$(__ada_mute_file "$session_key") || mute_file=""
     fi
   fi
 fi
-session_kind=${ADA_SESSION_KIND:-session}
 
 # alert.html ships one level up from lib/. Resolve it relative to THIS script so
 # the launcher works from a dev checkout, ~/.ada, Homebrew's libexec, or the
@@ -95,13 +130,6 @@ fi
 auto_close=${ADA_AUTO_CLOSE:-90}
 # Colon-less default: unset -> the defaults, but an explicit "" disables snooze.
 snooze_minutes=${ADA_SNOOZE_MINUTES-"5 10 30 60"}
-if [[ -n "${ADA_FOCUS_APP+x}" ]]; then
-  focus_app=$ADA_FOCUS_APP
-else
-  focus_app=${__CFBundleIdentifier:-}
-fi
-focus_app_name=${ADA_FOCUS_APP_NAME:-}
-click_url=${ADA_CLICK_URL:-}
 
 __ada_url_encode() {
   local value=${1:-}
@@ -189,6 +217,7 @@ if [[ -z "${ADA_REPO+set}" ]]; then
   repo=$(git -C "${ADA_REPO_DIR:-$PWD}" rev-parse --show-toplevel 2>/dev/null)
   export ADA_REPO="${repo##*/}"
 fi
+__ada_record shown
 encoded_repo=$(__ada_url_encode "$ADA_REPO")
 encoded_repo_b64=$(__ada_b64url_encode "$ADA_REPO")
 encoded_focus_app_name=$(__ada_url_encode "$focus_app_name")
