@@ -268,12 +268,12 @@ freeze a snapshot brew could never update.
 
 Everything else (a dev checkout, `~/.ada`) **stages** the runtime it needs
 (`ada-paseo-watch.sh`, `ada-paseo-watch.py`, `ada-show-alert.sh`,
-`ada-snooze-daemon.py`, `alert.html`, and `ada-alert`) into a non-TCC dir —
+`ada-snooze-daemon.py`, `ada-mute.sh`, `alert.html`, and `ada-alert`) into a non-TCC dir —
 `~/.local/share/ada` (override `ADA_PASEO_INSTALL_DIR`) — and points the plist
 there. **Staging mirrors the dev-checkout layout**: the front door
 (`ada-paseo-watch.sh`), `alert.html`, and `ada-alert` sit at the top, while the
 internal scripts (`ada-paseo-watch.py`, `ada-show-alert.sh`,
-`ada-snooze-daemon.py`) go under `~/.local/share/ada/lib/`. Keeping the two
+`ada-snooze-daemon.py`, `ada-mute.sh`) go under `~/.local/share/ada/lib/`. Keeping the two
 layouts identical is load-bearing: the watcher resolves `ada-show-alert.sh` via
 `$dir/lib/…` / a sibling of the `.py`, so a flat stage would break every Paseo
 alert from the LaunchAgent while still working in a dev checkout (the classic
@@ -483,6 +483,39 @@ values. To confirm a deep link lands live, fire `open "claude://resume?session=
 <real-id>"` and watch `~/Library/Logs/Claude/main.log` for
 `Resume deep link: importing CLI session <id>` → `Imported CLI session … as
 Desktop session local_<id>`.
+
+## Muting a session is enforced in the launcher only
+
+The alert's "Mute this …" button silences one session. Each integration passes
+`ADA_SESSION_KEY` (`claude-<id>`, `opencode-<id>`, `paseo-<agent id>`,
+`zsh-<pid>-<epoch>`) and `ADA_SESSION_KIND` for the wording. The button signals
+the snooze daemon (`/mute`), which touches the marker file the launcher named in
+`ADA_MUTE_FILE`. `lib/ada-show-alert.sh` sources `lib/ada-mute.sh` and exits
+before anything spawns when the key is muted.
+
+- **Do not add a mute check to an integration.** The launcher is the one place
+  every path passes through, the snooze daemon's relaunch included, so a mute
+  set while an alert is snoozed also cancels it. The frontmost-app check already
+  has three copies; this one has one.
+- **`ada-mute.sh` must stay in the Paseo `runtime_files`.** The launcher treats
+  a missing `ada-mute.sh` as "no muting" so an old copy can't lose alerts, and
+  that tolerance means a stage without it fails silently: Paseo alerts just
+  stop being mutable under the LaunchAgent while the dev checkout works.
+- **A session key alone spawns the daemon** (the button needs it). The bats
+  suite sets `ADA_MUTE_BUTTON=0` in `setup_common` for that reason: the daemon
+  keeps bats' output fd open until its deadline (autoclose + 15s), so every
+  firing hook test waited ~105s. Tests that exercise the button turn it back on
+  and end the daemon with `dismiss_daemon` in `test/ada-show-alert.bats`.
+- **Keys are file names.** `__ada_mute_key_ok` allows `[A-Za-z0-9._-]` with an
+  alphanumeric first character. An invalid key gets no button, not a sanitized
+  name, so two sessions can never collide on a rewritten key.
+- **Only marker files are ever read, written or deleted.** `ADA_MUTE_DIR` is
+  user-configurable, so every path goes through `__ada_mute_is_marker` (a
+  plain file, not a symlink, whose name passes the key rule): prune, `list`,
+  `clear` with or without a key, `add`, and the mute check. The daemon's write
+  uses `O_NOFOLLOW` for the same reason. A recursive `find -delete` there would
+  erase unrelated old files on every alert if someone pointed it at a real
+  directory.
 
 ## The feedback note opens links via the adaOpen bridge
 

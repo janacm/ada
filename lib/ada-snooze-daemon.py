@@ -18,6 +18,9 @@
 #   GET /<token>/focus             -> `open` the click URL if one was provided
 #                                     (e.g. claude://resume?session=…), else
 #                                     focus the source app; no relaunch
+#   GET /<token>/mute              -> touch $ADA_MUTE_FILE so the launcher drops
+#                                     every later alert for this session; no
+#                                     relaunch (only honored when that is set)
 #   GET /<token>/dismiss           -> exit, no relaunch
 #
 # If the user never decides (plain dismiss with the beacon blocked,
@@ -51,6 +54,9 @@ except ValueError:
     sys.exit(0)
 focus_app = sys.argv[10] if len(sys.argv) > 10 else os.environ.get("ADA_FOCUS_APP", "")
 click_url = sys.argv[11] if len(sys.argv) > 11 else os.environ.get("ADA_CLICK_URL", "")
+# The marker the "Mute this …" button creates. ada-show-alert.sh resolves and
+# validates it (lib/ada-mute.sh owns the naming rule), so it is used verbatim.
+mute_file = os.environ.get("ADA_MUTE_FILE", "")
 
 try:
     deadline = float(deadline_s)
@@ -114,6 +120,9 @@ class Handler(BaseHTTPRequestHandler):
         elif action == "dismiss":
             self.server.ada_result = ("dismiss", 0)
             self.server.ada_done = True
+        elif action == "mute" and mute_file:
+            self.server.ada_result = ("mute", 0)
+            self.server.ada_done = True
         elif action == "focus" and (click_url or focus_app):
             self.server.ada_result = ("focus", 0)
             self.server.ada_done = True
@@ -167,6 +176,22 @@ def main():
     httpd.server_close()
 
     result = httpd.ada_result
+    if result and result[0] == "mute":
+        trace("mute %s" % mute_file)
+        try:
+            os.makedirs(os.path.dirname(mute_file), exist_ok=True)
+            # O_NOFOLLOW: ADA_MUTE_DIR is user-configurable, so a symlink by
+            # the marker's name must not be followed to touch its target.
+            fd = os.open(mute_file, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+            try:
+                # Re-muting an already muted session restarts its expiry clock.
+                os.utime(fd, None)
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
+        return
+
     if result and result[0] == "focus":
         # A click URL (e.g. claude://resume?session=…) both launches/focuses the
         # target app and navigates it, so prefer it over a bare bundle-id focus.

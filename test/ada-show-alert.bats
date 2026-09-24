@@ -7,6 +7,18 @@ setup() {
   LAUNCHER="$REPO_ROOT/lib/ada-show-alert.sh"
 }
 
+# A test that lets the launcher spawn the loopback daemon ends it here, via the
+# port and token in the recorded URL. Otherwise bats waits out the daemon's
+# deadline (autoclose + 15s) before finishing the test.
+dismiss_daemon() {
+  local url port token
+  url=$(cat "$ADA_PROBE_OUT")
+  port=$(sed -n 's/.*[?&]sport=\([0-9]*\).*/\1/p' <<<"$url")
+  token=$(sed -n 's/.*[?&]stoken=\([^&]*\).*/\1/p' <<<"$url")
+  [[ -n "$port" && -n "$token" ]] || return 0
+  curl -s -o /dev/null "http://127.0.0.1:$port/$token/${1:-dismiss}" || true
+}
+
 @test "exits non-zero when the native helper is missing" {
   export ADA_NATIVE_ALERT="$BATS_TEST_TMPDIR/does-not-exist"
   run "$LAUNCHER" "build" "1s" 0
@@ -193,6 +205,7 @@ setup() {
   assert_file_contains "$ADA_PROBE_OUT" "&focusnameb64="
   assert_file_contains "$ADA_PROBE_OUT" "&sport="
   assert_file_contains "$ADA_PROBE_OUT" "&snooze=0"
+  dismiss_daemon
 }
 
 # Only one alert at a time: a new one closes the previous window, found through
@@ -227,4 +240,98 @@ setup() {
   run "$LAUNCHER" "x" "1s" 0
   assert_success
   assert_file_contains "$STUB_PKILL_LOG" "user-data-dir=$HOME/.ada-alert-profile"
+}
+
+# --- per-session mute (lib/ada-mute.sh) -------------------------------------
+
+@test "an alert for a muted session is dropped before anything launches" {
+  export ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted" ADA_SESSION_KEY=claude-abc
+  "$REPO_ROOT/lib/ada-mute.sh" add claude-abc >/dev/null
+  run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "an expired mute no longer drops the alert" {
+  export ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted" ADA_SESSION_KEY=claude-abc ADA_MUTE_MAX_AGE=60
+  "$REPO_ROOT/lib/ada-mute.sh" add claude-abc >/dev/null
+  touch -t "$(/bin/date -r $(( $(/bin/date +%s) - 3600 )) +%Y%m%d%H%M.%S)" "$ADA_MUTE_DIR/claude-abc"
+  run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  [ ! -e "$ADA_MUTE_DIR/claude-abc" ]
+}
+
+@test "another session's mute leaves this alert alone" {
+  export ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted" ADA_SESSION_KEY=claude-def
+  "$REPO_ROOT/lib/ada-mute.sh" add claude-abc >/dev/null
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+}
+
+@test "a session key starts the daemon and offers the mute button with its kind" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  export ADA_MUTE_BUTTON=1 ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted" ADA_SESSION_KEY=zsh-1-2 ADA_SESSION_KIND=terminal ADA_AUTO_CLOSE=1
+  run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&sport="
+  assert_file_contains "$ADA_PROBE_OUT" "&mute=1"
+  assert_file_contains "$ADA_PROBE_OUT" "&mutekindb64=dGVybWluYWw"
+  # snooze and focus are still off; only mute needed the daemon
+  assert_file_contains "$ADA_PROBE_OUT" "&snooze=0"
+  assert_file_contains "$ADA_PROBE_OUT" "&focus=0"
+  dismiss_daemon
+}
+
+@test "an invalid session key gets no mute button and no daemon" {
+  export ADA_MUTE_BUTTON=1 ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted" ADA_SESSION_KEY="../escape"
+  run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  refute_file_contains "$ADA_PROBE_OUT" "mute=1"
+  refute_file_contains "$ADA_PROBE_OUT" "sport="
+}
+
+@test "a launcher copied without ada-mute.sh still alerts" {
+  local root="$BATS_TEST_TMPDIR/old"
+  mkdir -p "$root/lib"
+  cp "$REPO_ROOT/lib/ada-show-alert.sh" "$root/lib/"
+  export ADA_MUTE_BUTTON=1 ADA_SESSION_KEY=claude-abc
+  run "$root/lib/ada-show-alert.sh" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  refute_file_contains "$ADA_PROBE_OUT" "mute=1"
+}
+
+# The whole button path minus the window: the page's mute signal reaches the
+# daemon the launcher spawned, the daemon writes the marker the launcher named,
+# and the next alert for that session is dropped.
+@test "the mute signal writes the marker and silences the next alert" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  command -v curl >/dev/null 2>&1 || skip "curl required"
+  export ADA_MUTE_BUTTON=1 ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted" ADA_SESSION_KEY=opencode-ses_1 ADA_AUTO_CLOSE=5
+  run "$LAUNCHER" "first" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  dismiss_daemon mute
+  wait_for_file_exists() { local t=60; while (( t-- > 0 )); do [ -e "$1" ] && return 0; sleep 0.05; done; return 1; }
+  wait_for_file_exists "$ADA_MUTE_DIR/opencode-ses_1" || { echo "marker never written"; false; }
+
+  rm -f "$ADA_PROBE_OUT"
+  run "$LAUNCHER" "second" "1s" 0
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "ADA_MUTE_BUTTON=0 hides the button but a muted session stays muted" {
+  export ADA_MUTE_BUTTON=0 ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted" ADA_SESSION_KEY=claude-abc
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  refute_file_contains "$ADA_PROBE_OUT" "mute=1"
+  refute_file_contains "$ADA_PROBE_OUT" "sport="
+
+  "$REPO_ROOT/lib/ada-mute.sh" add claude-abc >/dev/null
+  rm -f "$ADA_PROBE_OUT"
+  run "$LAUNCHER" "x" "1s" 0
+  refute_file_appears "$ADA_PROBE_OUT"
 }

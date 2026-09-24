@@ -34,7 +34,8 @@ def load_mod(env):
 def run_loop(mod, ls_snaps, permit_snaps, times):
     """Run main() over len(ls_snaps) polls; return the list of fire() calls."""
     fires = []
-    mod.fire = lambda label, duration, code: fires.append((label, duration, code))
+    mod.fire = lambda label, duration, code, agent_id="": fires.append(
+        (label, duration, code, agent_id))
     mod.should_skip_active = lambda: False
 
     ls_iter = iter(ls_snaps)
@@ -136,6 +137,24 @@ m = load_mod({"ADA_PASEO_THRESHOLD": "0", "ADA_PASEO_EVENTS": "error",
 fires = run_loop(m, [[agent("a1", "running")], [agent("a1", "idle")]],
                  [[], []], [1000, 1100])
 check("ADA_PASEO_EVENTS='error' suppresses finish alerts", fires == [], fires)
+
+# 7. mute keys: every alert names the agent it is about, so the launcher can
+#    drop alerts for a muted one. A permission only gets the id when one of its
+#    fields names an agent from the same poll's `ls`.
+m = load_mod({"ADA_PASEO_THRESHOLD": "0", "ADA_PASEO_EVENTS": "finish error permission",
+              "ADA_PASEO_SKIP_WHEN_ACTIVE": ""})
+fires = run_loop(m, [[agent("a1", "running"), agent("a2", "running")],
+                     [agent("a1", "idle"), agent("a2", "error")]],
+                 [[], []], [1000, 1010])
+check("finish and error alerts carry their agent id",
+      sorted(f[3] for f in fires) == ["a1", "a2"], fires)
+
+m = load_mod({"ADA_PASEO_EVENTS": "permission", "ADA_PASEO_SKIP_WHEN_ACTIVE": ""})
+fires = run_loop(m, [[agent("a1", "running")], [agent("a1", "running")]],
+                 [[], [{"toolName": "bash", "agentName": "fixer", "agentId": "a1"},
+                       {"toolName": "write", "agentName": "ghost"}]], [1, 2])
+check("a permission naming a known agent carries its id; one that doesn't carries none",
+      sorted(f[3] for f in fires) == ["", "a1"], fires)
 
 if FAILURES:
     raise SystemExit("paseo diff-loop checks failed: %s" % ", ".join(FAILURES))

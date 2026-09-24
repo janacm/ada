@@ -41,6 +41,13 @@ export ADA_SKIP_WHEN_ACTIVE=${ADA_SKIP_WHEN_ACTIVE:-""}
 
 zmodload zsh/datetime 2>/dev/null
 
+# This shell's identity for the alert's "Mute this terminal" button. The pid
+# alone could be reused by a later shell and inherit its mute; the pid plus the
+# time this file was first sourced can't. Re-sourcing (`source ~/.zshrc`) keeps
+# the key, or a muted terminal would start alerting again. See lib/ada-mute.sh.
+[[ "${_ADA_SESSION_KEY:-}" == "zsh-$$-"* ]] \
+  || typeset -g _ADA_SESSION_KEY="zsh-$$-${EPOCHSECONDS:-0}"
+
 __ada_is_ignored() {
   local cmd="${1%% *}"
   cmd="${cmd##*/}"
@@ -112,14 +119,16 @@ __ada_precmd() {
 }
 
 __ada_show_alert() {
-  local cmd=$1 duration=$2 code=$3
+  local cmd=$1 duration=$2 code=$3 key=${4-$_ADA_SESSION_KEY}
   local formatted=$(__ada_format_duration $duration)
-  "$_ADA_DIR/lib/ada-show-alert.sh" "$cmd" "$formatted" "$code"
+  ADA_SESSION_KEY="$key" ADA_SESSION_KIND=terminal \
+    "$_ADA_DIR/lib/ada-show-alert.sh" "$cmd" "$formatted" "$code"
 }
 
-# Manual trigger for testing: ada any command here
+# Manual trigger for testing: ada any command here. No session key, so a muted
+# terminal still gets its test alert.
 ada() {
-  __ada_show_alert "${*:-manual}" 0.5 0
+  __ada_show_alert "${*:-manual}" 0.5 0 ""
 }
 
 autoload -Uz add-zsh-hook

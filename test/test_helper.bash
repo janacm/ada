@@ -46,6 +46,10 @@ setup_common() {
   # and no app is activated during tests. (Empty, not unset — see ada-show-alert.)
   export ADA_SNOOZE_MINUTES=""
   export ADA_FOCUS_APP=""
+  # Every integration now passes a session key, and a key alone would spawn the
+  # daemon for the mute button. Tests that exercise the button turn it back on.
+  export ADA_MUTE_BUTTON=0
+  unset ADA_SESSION_KEY ADA_SESSION_KIND ADA_MUTE_DIR ADA_MUTE_MAX_AGE ADA_MUTE_FILE
 
   export ADA_ALERT_FILE="$REPO_ROOT/alert.html"
 

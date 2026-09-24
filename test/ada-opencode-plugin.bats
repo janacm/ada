@@ -487,3 +487,54 @@ PY
   assert_success
   refute_file_appears "$ADA_PROBE_OUT"
 }
+
+# --- per-session mute ---------------------------------------------------------
+
+@test "a finish alert carries the opencode session key" {
+  export ADA_PROBE_SESSION_OUT="$BATS_TEST_TMPDIR/probe-session.txt"
+  drive '{"steps":[
+    {"type":"chat.message","sessionID":"ses_k1","text":"keyed","ageSeconds":120},
+    '"$(idle ses_k1)"'
+  ]}'
+  wait_for_file "$ADA_PROBE_SESSION_OUT" || { echo "alert never fired"; false; }
+  run cat "$ADA_PROBE_SESSION_OUT"
+  assert_equal "$output" "opencode-ses_k1 session"
+}
+
+@test "a session-less error alert carries no key" {
+  export ADA_PROBE_SESSION_OUT="$BATS_TEST_TMPDIR/probe-session.txt"
+  drive '{"steps":[
+    {"type":"event","event":{"type":"session.error","properties":{
+      "error":{"name":"UnknownError","data":{"message":"boom"}}}}},
+    {"type":"settle","ms":400}
+  ]}'
+  wait_for_file "$ADA_PROBE_SESSION_OUT" || { echo "alert never fired"; false; }
+  run cat "$ADA_PROBE_SESSION_OUT"
+  assert_equal "$output" " session"
+}
+
+@test "a muted session gets no finish, error or permission alert" {
+  export ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted"
+  "$REPO_ROOT/lib/ada-mute.sh" add opencode-ses_m >/dev/null
+  drive '{"steps":[
+    {"type":"chat.message","sessionID":"ses_m","text":"muted","ageSeconds":300},
+    {"type":"event","event":{"type":"permission.asked","properties":{"id":"per_m",
+      "sessionID":"ses_m","permission":"bash"}}},
+    {"type":"event","event":{"type":"session.error","properties":{"sessionID":"ses_m",
+      "error":{"name":"APIError","data":{"message":"overloaded"}}}}},
+    '"$(idle ses_m)"',
+    {"type":"settle","ms":400}
+  ]}'
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "muting one opencode session leaves another alerting" {
+  export ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted"
+  "$REPO_ROOT/lib/ada-mute.sh" add opencode-ses_m >/dev/null
+  drive '{"steps":[
+    {"type":"chat.message","sessionID":"ses_other","text":"loud","ageSeconds":300},
+    '"$(idle ses_other)"'
+  ]}'
+  wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
+}

@@ -112,12 +112,18 @@ def fmt_duration(s):
     return "%dh %dm" % (s // 3600, (s % 3600) // 60)
 
 
-def fire(label, duration, code):
+def fire(label, duration, code, agent_id=""):
     if len(label) > 120:
         label = label[:119] + "…"
+    # The agent id lets the alert's "Mute this agent" button silence this
+    # agent; the launcher drops alerts for a muted key (lib/ada-mute.sh).
+    env = dict(os.environ)
+    env["ADA_SESSION_KEY"] = ("paseo-" + agent_id) if agent_id else ""
+    env["ADA_SESSION_KIND"] = "agent"
     try:
         subprocess.Popen(
             [LAUNCHER, label, duration, str(code)],
+            env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except Exception as exc:
@@ -140,15 +146,17 @@ def agents_snapshot():
     return snap
 
 
-def permits_snapshot():
-    """Map dedupe-key -> (label, agent-hint). Dedupe by the whole request object
-    so we don't depend on Paseo's internal field names."""
+def permits_snapshot(known_ids=()):
+    """Map dedupe-key -> (label, agent-hint, agent-id). Dedupe by the whole
+    request object so we don't depend on Paseo's internal field names. The
+    agent id is whichever id-ish field names an agent from the current `ls`
+    snapshot, so a permission alert carries the same mute key as a finish."""
     out = {}
     for a in run_json(["permit", "ls"]):
         key = hashlib.sha1(
             json.dumps(a, sort_keys=True, default=str).encode()
         ).hexdigest()[:16]
-        label, agent = "", ""
+        label, agent, agent_id = "", "", ""
         if isinstance(a, dict):
             for k in ("toolName", "tool", "title", "summary", "reason", "action", "name"):
                 if a.get(k):
@@ -158,7 +166,11 @@ def permits_snapshot():
                 if a.get(k):
                     agent = str(a[k]).strip()
                     break
-        out[key] = (label or "permission needed", agent)
+            for k in ("agentId", "agent", "agentShortId", "sessionId", "id"):
+                if str(a.get(k) or "").strip() in known_ids:
+                    agent_id = str(a[k]).strip()
+                    break
+        out[key] = (label or "permission needed", agent, agent_id)
     return out
 
 
@@ -187,9 +199,9 @@ def main():
                 tag = ("%s · %s" % (provider, name)) if provider else name
                 if status == "idle" and "finish" in EVENTS \
                         and elapsed >= THRESHOLD and not should_skip_active():
-                    fire("Paseo · " + tag, fmt_duration(elapsed), 0)
+                    fire("Paseo · " + tag, fmt_duration(elapsed), 0, aid)
                 elif status == "error" and "error" in EVENTS and not should_skip_active():
-                    fire("Paseo · failed · " + tag, fmt_duration(elapsed), 1)
+                    fire("Paseo · failed · " + tag, fmt_duration(elapsed), 1, aid)
                 run_start.pop(aid, None)
 
             prev_status[aid] = status
@@ -203,16 +215,16 @@ def main():
 
         # --- pending permission requests ---
         if "permission" in EVENTS:
-            perms = permits_snapshot()
+            perms = permits_snapshot(snap)
             if seeded:
-                for key, (label, agent) in perms.items():
+                for key, (label, agent, agent_id) in perms.items():
                     if key in seen_perm or should_skip_active():
                         continue
                     who = names.get(agent, agent)
                     lbl = "Paseo · needs you" + (" · " + who if who else "")
                     if label:
                         lbl += " — " + label
-                    fire(lbl, "permission", 0)
+                    fire(lbl, "permission", 0, agent_id)
             seen_perm = set(perms)
 
         seeded = True

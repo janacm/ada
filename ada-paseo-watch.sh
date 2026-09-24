@@ -190,7 +190,7 @@ __ada_from_brew_prefix() {
 # by the in-place check, staging and the stale-stage check in status, so the
 # modes can't drift apart.
 runtime_files=(ada-paseo-watch.sh alert.html lib/ada-paseo-watch.py
-               lib/ada-show-alert.sh lib/ada-snooze-daemon.py)
+               lib/ada-show-alert.sh lib/ada-snooze-daemon.py lib/ada-mute.sh)
 
 # True when $1 is a SwiftPM build of this checkout that is older than the
 # checkout's Swift sources: a `git pull` brought in helper changes (a new message

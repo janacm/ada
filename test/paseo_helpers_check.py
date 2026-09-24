@@ -88,8 +88,15 @@ m.run_json = lambda args: [{"title": "Run tests", "agentName": "fixer"}, "raw", 
 perms = m.permits_snapshot()
 labels = sorted(perms.values())
 check("permits_snapshot labels by the first descriptive field, else a generic label",
-      labels == [("Run tests", "fixer"), ("permission needed", ""), ("permission needed", "")],
+      labels == [("Run tests", "fixer", ""), ("permission needed", "", ""),
+                 ("permission needed", "", "")],
       labels)
+
+m.run_json = lambda args: [{"title": "Run tests", "agentName": "fixer", "agentId": "a1"},
+                           {"title": "Other", "agentId": "gone"}]
+ids = sorted(v[2] for v in m.permits_snapshot({"a1": ("running", "fixer", "")}).values())
+check("permits_snapshot takes the agent id only when it names a known agent",
+      ids == ["", "a1"], ids)
 
 # --- should_skip_active against the lsappinfo stub ---------------------------------
 m = load_mod(dict(BASE, ADA_PASEO_SKIP_WHEN_ACTIVE="sh.paseo.desktop"))
@@ -118,6 +125,21 @@ os.environ["PATH"] = TMP
 check("lsappinfo() passes through a value with no key=value shape",
       m.lsappinfo("name", "x") == "plain-value", m.lsappinfo("name", "x"))
 os.environ["PATH"] = saved_path
+
+# --- fire: the mute key reaches the launcher ----------------------------------------
+keyrec = os.path.join(TMP, "fired-key.txt")
+m.LAUNCHER = script("launcher-key",
+                    'printf "%%s|%%s\\n" "$ADA_SESSION_KEY" "$ADA_SESSION_KIND" >> %s\n' % keyrec)
+m.fire("finished", "3s", 0, "a1")
+m.fire("needs you", "permission", 0)
+for _ in range(100):
+    if os.path.exists(keyrec) and len(open(keyrec).read().splitlines()) >= 2:
+        break
+    time.sleep(0.02)
+keys = sorted(open(keyrec).read().splitlines()) if os.path.exists(keyrec) else []
+check("fire passes paseo-<agent id> as the session key, and none without an id",
+      keys == sorted(["paseo-a1|agent", "|agent"]),
+      keys)
 
 # --- fire: label clipping and a launcher that can't start --------------------------
 record = os.path.join(TMP, "fired.txt")

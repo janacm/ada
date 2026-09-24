@@ -193,6 +193,10 @@ All settings are environment variables. Set them before `ada.sh` is sourced
 | `ADA_PASEO_EVENTS` | `finish error permission` | Which Paseo agent events fire an alert — any subset of `finish` (turn done), `error` (turn failed), `permission` (agent is blocked waiting on you). Only used by the [Paseo integration](#paseo). |
 | `ADA_PASEO_SKIP_WHEN_ACTIVE` | `sh.paseo.desktop` | Like `ADA_SKIP_WHEN_ACTIVE`, but for the Paseo watcher: stay silent when the Paseo desktop app is frontmost (you're already watching). Set to empty to always alert. |
 | `ADA_SNOOZE_MINUTES` | `5 10 30 60` | Space-separated snooze options, in minutes, shown as buttons on the alert. Set to empty to hide the buttons. Requires `python3` (see [Snoozing the alert](#snoozing-the-alert)). |
+| `ADA_MUTE_BUTTON` | `1` | Set to `0` to hide the **Mute this …** button. Sessions you already muted stay muted. See [Muting a session](#muting-a-session). |
+| `ADA_MUTE_MAX_AGE` | `86400` | Seconds a mute lasts before that session alerts again. `0` keeps it until you clear it. |
+| `ADA_MUTE_DIR` | `${TMPDIR}/ada-muted` | Where the mute markers live, one empty file per muted session. |
+| `ADA_SESSION_KEY` | _(set by each integration)_ | Which session an alert belongs to; the integrations set it for you. Only letters, digits, `.`, `_` and `-` are accepted, and an alert without a valid key has no mute button. |
 
 The default ignore list covers common interactive / long-lived foreground tools:
 
@@ -508,6 +512,34 @@ Because the daemon is `python3`, snooze and click-to-focus are unavailable when
 `python3` isn't on `PATH` — the buttons simply don't render, click-anywhere
 becomes a plain dismiss, and everything else behaves as before. Setting
 `ADA_SNOOZE_MINUTES=""` also hides the snooze buttons.
+
+## Muting a session
+
+When one conversation keeps finishing turns you don't need to hear about, click
+**🔕 Mute this conversation** under the snooze buttons. The alert closes and
+that session stops alerting: finished turns, errors and permission prompts all
+stay silent. Other sessions alert as usual. The button's wording follows the
+integration:
+
+| Integration | What gets muted | Key |
+| --- | --- | --- |
+| Claude Code / Codex | this conversation | `claude-<session id>` |
+| opencode | this session | `opencode-<session id>` |
+| Paseo | this agent | `paseo-<agent id>` |
+| Terminal (zsh hook) | this terminal tab, until the shell exits | `zsh-<pid>-<start time>` |
+
+A mute lasts 24 hours (`ADA_MUTE_MAX_AGE`), then the session alerts again. To
+look at or undo mutes before then:
+
+```sh
+ada-mute list              # Homebrew (releases after v0.4); from a checkout: lib/ada-mute.sh list
+ada-mute clear claude-…    # unmute one session
+ada-mute clear             # unmute everything
+```
+
+The `ada` test command in the terminal is never muted, so it still works as a
+check. Muting uses the same `python3` daemon as snoozing, so without `python3`
+the button isn't shown.
 
 ## Feedback
 

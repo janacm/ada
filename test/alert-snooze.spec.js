@@ -262,3 +262,55 @@ test('snooze controls stay hidden when the daemon is disabled', async ({ page })
   await expect(page.locator('.snooze-custom')).toBeHidden();
   await expect(customBtn(page)).toHaveCount(0);
 });
+
+// --- "Mute this …" -----------------------------------------------------------
+const muteBtn = (page) => page.locator('#muteBtn');
+const b64url = (s) => Buffer.from(s).toString('base64url');
+
+test('no mute button unless the launcher asked for one', async ({ page }) => {
+  await open(page);
+  await expect(muteBtn(page)).toHaveCount(0);
+  await expect(page.locator('#muteBar')).toBeHidden();
+});
+
+test('no mute button without a daemon to write the marker', async ({ page }) => {
+  await open(page, { mute: '1', sport: '', stoken: '' });
+  await expect(muteBtn(page)).toHaveCount(0);
+});
+
+test('the mute button names the session kind', async ({ page }) => {
+  await open(page, { mute: '1', mutekindb64: b64url('conversation') });
+  await expect(muteBtn(page)).toBeVisible();
+  await expect(muteBtn(page)).toHaveText('🔕 Mute this conversation');
+});
+
+test('with no kind the button says session', async ({ page }) => {
+  await open(page, { mute: '1' });
+  await expect(muteBtn(page)).toHaveText('🔕 Mute this session');
+});
+
+test('muting signals mute once, shows the muted screen, and closes', async ({ page }) => {
+  await open(page, { mute: '1', mutekindb64: b64url('terminal') });
+  await muteBtn(page).click();
+  await expect(page.locator('.title')).toHaveText('Muted');
+  await expect(page.locator('.subtitle')).toHaveText('No more alerts from this terminal');
+  await expect.poll(() => page.evaluate(() => window.__closed === true)).toBe(true);
+  // The click must not bubble into a dismiss/focus, and no second decision fires.
+  await page.mouse.click(10, 10);
+  expect(await signals(page)).toEqual(['mute']);
+});
+
+test('a kind with markup is shown as text, not parsed', async ({ page }) => {
+  await open(page, { mute: '1', mutekindb64: b64url('<b>x</b>') });
+  await muteBtn(page).click();
+  await expect(page.locator('.subtitle')).toHaveText('No more alerts from this <b>x</b>');
+  await expect(page.locator('#app b')).toHaveCount(0);
+});
+
+test('after a snooze the mute button does nothing', async ({ page }) => {
+  await openExpanded(page, { mute: '1' });
+  const btn = await muteBtn(page).elementHandle();
+  await page.locator('button.snooze-btn').filter({ hasText: /^5m$/ }).click();
+  await btn.evaluate((b) => b.click());
+  expect(await signals(page)).toEqual(['snooze/5']);
+});

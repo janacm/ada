@@ -198,6 +198,56 @@ status = drive(mod, handoff, "GET", lambda tok: "/%s/focus" % tok)
 subprocess.Popen = REAL_POPEN
 check("a missing open(1) does not raise", status == 200, status)
 
+# --- mute ----------------------------------------------------------------------------------
+marker = os.path.join(TMP, "muted", "nested", "claude-abc")
+handoff = os.path.join(TMP, "h7")
+script, out = recorder("mute-relaunch")
+mod, _ = load(argv(handoff, script=script, focus="com.mitchellh.ghostty"),
+              env={"ADA_MUTE_FILE": marker})
+opened = []
+mod.subprocess.Popen = lambda cmd, **kw: opened.append(cmd)
+status = drive(mod, handoff, "GET", lambda tok: "/%s/mute" % tok)
+subprocess.Popen = REAL_POPEN
+check("a mute request is accepted", status == 200, status)
+check("mute writes the marker, creating its directory", os.path.isfile(marker))
+check("mute neither relaunches nor focuses anything",
+      opened == [] and not os.path.exists(out), opened)
+
+os.utime(marker, (1, 1))
+handoff = os.path.join(TMP, "h8")
+mod, _ = load(argv(handoff), env={"ADA_MUTE_FILE": marker})
+drive(mod, handoff, "GET", lambda tok: "/%s/mute" % tok)
+check("muting again restarts the expiry clock", os.stat(marker).st_mtime > 1000,
+      os.stat(marker).st_mtime)
+
+handoff = os.path.join(TMP, "h9")
+log = os.path.join(TMP, "mute-ignored.log")
+mod, _ = load(argv(handoff, deadline="1"), env={"ADA_MUTE_FILE": None, "ADA_SNOOZE_LOG": log})
+status = drive(mod, handoff, "GET", lambda tok: "/%s/mute" % tok)
+os.environ.pop("ADA_SNOOZE_LOG")
+trace_text = open(log).read() if os.path.exists(log) else ""
+check("mute is ignored when the launcher named no marker",
+      status == 200 and "exit without snooze: None" in trace_text, trace_text)
+
+blocker = os.path.join(TMP, "not-a-dir")
+open(blocker, "w").close()
+handoff = os.path.join(TMP, "h10")
+mod, _ = load(argv(handoff), env={"ADA_MUTE_FILE": os.path.join(blocker, "k")})
+status = drive(mod, handoff, "GET", lambda tok: "/%s/mute" % tok)
+check("an unwritable marker path does not raise", status == 200, status)
+target = os.path.join(TMP, "link-target")
+open(target, "w").close()
+os.utime(target, (1, 1))
+link = os.path.join(TMP, "muted", "nested", "link-1")
+os.symlink(target, link)
+handoff = os.path.join(TMP, "h11")
+mod, _ = load(argv(handoff), env={"ADA_MUTE_FILE": link})
+status = drive(mod, handoff, "GET", lambda tok: "/%s/mute" % tok)
+check("mute does not follow a symlink named like the marker",
+      status == 200 and os.stat(target).st_mtime < 1000 and os.path.islink(link),
+      os.stat(target).st_mtime)
+os.environ.pop("ADA_MUTE_FILE", None)
+
 # --- failure paths in main() ---------------------------------------------------------------
 mod, _ = load(argv(os.path.join(TMP, "missing-dir", "handoff")))
 mod.daemonize = lambda: None

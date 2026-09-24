@@ -324,9 +324,12 @@ case "$event" in
     # back to the launcher's cwd, which is the project in the usual setup.
     # ADA_CLICK_URL makes clicking the alert open the deep link above (empty =
     # plain dismiss). ADA_FOCUS_APP_NAME labels the click hint ("…return to Claude").
+    # ADA_SESSION_KEY lets the alert's "Mute this conversation" button silence
+    # this session; the launcher drops alerts for a muted key (lib/ada-mute.sh).
     # __ada_notify (lib/ada-notify.sh) owns the frontmost-app suppression, the
     # duration formatting and the launcher call, shared with the opencode plugin.
     ADA_REPO_DIR="$cwd" ADA_CLICK_URL="$click_url" ADA_FOCUS_APP_NAME="$focus_name" \
+    ADA_SESSION_KEY="claude-$resolved_sid" ADA_SESSION_KIND=conversation \
       __ada_notify "$label" "$elapsed" 0 >/dev/null 2>&1 &
     ;;
 esac
