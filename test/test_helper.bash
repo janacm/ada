@@ -53,6 +53,12 @@ setup_common() {
 
   export ADA_ALERT_FILE="$REPO_ROOT/alert.html"
 
+  # The installers rebuild a .build/ helper older than the Swift sources. Tests
+  # run them straight from the repo, so without this a suite run after a Swift
+  # edit would start a real swift build in the developer's checkout. The
+  # staleness tests turn it back on inside a scratch checkout.
+  export ADA_REBUILD_HELPER=0
+
   # Always shadow the process-touching tools (pgrep/pkill) and the macOS
   # introspection tools (lsappinfo/launchctl) so no test can ever signal or
   # query a real process. Behaviour is still opt-in via STUB_* env vars.

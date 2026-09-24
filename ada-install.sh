@@ -155,10 +155,56 @@ find_native_alert() {
   return 1
 }
 
+# True when $1 is a SwiftPM build of this checkout that is older than the
+# checkout's Swift sources: a `git pull` brought in helper changes (a new message
+# handler, say) since the last build, and copying or using the old binary would
+# silently drop them. Only a .build/ output counts; a prebuilt $dir/ada-alert
+# (Homebrew's, inside a read-only keg) or any other path is used as-is.
+# ADA_REBUILD_HELPER=0 turns the check off, which the test suite does so a run
+# from a dev checkout never kicks off a real swift build.
+# Deliberately duplicated in ada-install.sh and ada-paseo-watch.sh, like
+# __ada_stable_dir and for the same reason.
+__ada_helper_stale() {
+  local helper=$1
+  [[ "${ADA_REBUILD_HELPER:-1}" != 0 ]] || return 1
+  case "$helper" in "$dir"/.build/*) ;; *) return 1 ;; esac
+  [[ -f "$dir/Package.swift" ]] || return 1
+  [[ "$dir/Package.swift" -nt "$helper" ]] && return 0
+  [[ -d "$dir/Sources" ]] || return 1
+  [[ -n "$(find "$dir/Sources" -name '*.swift' -newer "$helper" -print -quit 2>/dev/null)" ]]
+}
+
+# A helper that exists but predates the Swift sources is rebuilt. Unlike a
+# missing helper, a failed rebuild keeps the install going on the old binary:
+# it still renders alerts, it just lacks whatever the new sources added.
+rebuild_stale_native_alert() {
+  local helper=$1 swift_bin
+  if [[ "$dry_run" == 1 ]]; then
+    say "dry-run: would rebuild $helper (Swift sources are newer)"
+    return 0
+  fi
+  say "Swift sources changed since $helper was built; rebuilding"
+  if swift_bin=$(find_swift) \
+     && (cd "$dir" && "$swift_bin" build -c release --product ada-alert) \
+     && [[ -x "$dir/.build/release/ada-alert" ]]; then
+    # SwiftPM leaves an up-to-date binary untouched, so stamp it; otherwise a
+    # source touched without a real change would trigger a rebuild every run.
+    touch "$dir/.build/release/ada-alert"
+    helper="$dir/.build/release/ada-alert"
+  else
+    printf 'ada-install: could not rebuild ada-alert; keeping the older %s\n' "$helper" >&2
+  fi
+  say "Native alert helper -> $helper"
+}
+
 ensure_native_alert() {
   local helper swift_bin
   if helper=$(find_native_alert); then
-    say "Native alert helper -> $helper"
+    if __ada_helper_stale "$helper"; then
+      rebuild_stale_native_alert "$helper"
+    else
+      say "Native alert helper -> $helper"
+    fi
     return 0
   fi
 

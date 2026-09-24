@@ -305,6 +305,7 @@ swift_stub() {
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   cat > "$BATS_TEST_TMPDIR/bin/swift" <<'SH'
 #!/bin/bash
+echo "swift $*" >> "$BATS_TEST_TMPDIR/swift.log"
 [ "${STUB_SWIFT:-ok}" = fail ] && exit 1
 mkdir -p .build/release && printf '#!/bin/sh\nexit 0\n' > .build/release/ada-alert
 chmod +x .build/release/ada-alert
@@ -330,6 +331,46 @@ SH
   STUB_SWIFT=fail run "$CHECKOUT/ada-paseo-watch.sh" install
   assert_failure
   assert_output_contains "native helper build failed"
+}
+
+# A staged helper older than the page it ships with would drop whatever the
+# Swift side added (the adaSnoozePin bridge was the case that surfaced this).
+stale_watch_checkout() {
+  make_watch_checkout
+  swift_stub
+  export ADA_REBUILD_HELPER=1
+  mkdir -p "$CHECKOUT/.build/release" "$CHECKOUT/Sources/ADAAlert"
+  printf '#!/bin/sh\nexit 7\n' > "$CHECKOUT/.build/release/ada-alert"
+  chmod +x "$CHECKOUT/.build/release/ada-alert"
+  touch -t 202001010000 "$CHECKOUT/Package.swift" "$CHECKOUT/.build/release/ada-alert"
+  touch -t 202101010000 "$CHECKOUT/Sources/ADAAlert/main.swift"
+}
+
+@test "install rebuilds a helper older than the Swift sources before staging it" {
+  stale_watch_checkout
+  run "$CHECKOUT/ada-paseo-watch.sh" install
+  assert_success
+  assert_output_contains "Rebuilding native alert helper"
+  assert_file_contains "$BATS_TEST_TMPDIR/swift.log" "build -c release --product ada-alert"
+  assert_file_contains "$ADA_PASEO_INSTALL_DIR/ada-alert" "exit 0"
+}
+
+@test "install stages an up-to-date helper without building" {
+  stale_watch_checkout
+  touch -t 202201010000 "$CHECKOUT/.build/release/ada-alert"
+  run "$CHECKOUT/ada-paseo-watch.sh" install
+  assert_success
+  [ ! -e "$BATS_TEST_TMPDIR/swift.log" ]
+  assert_file_contains "$ADA_PASEO_INSTALL_DIR/ada-alert" "exit 7"
+}
+
+@test "a failed rebuild stages the older helper with a warning" {
+  stale_watch_checkout
+  STUB_SWIFT=fail run "$CHECKOUT/ada-paseo-watch.sh" install
+  assert_success
+  assert_output_contains "native helper build failed"
+  assert_output_contains "staging the older $CHECKOUT/.build/release/ada-alert"
+  assert_file_contains "$ADA_PASEO_INSTALL_DIR/ada-alert" "exit 7"
 }
 
 @test "install from a Homebrew prefix refuses a keg missing runtime files" {

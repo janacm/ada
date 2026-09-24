@@ -18,6 +18,7 @@ final class AlertAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     private let signalBaseURL: URL?
     private var window: NSWindow?
     private var webView: WKWebView?
+    private let preferences = UserDefaults(suiteName: SnoozePreference.suiteName) ?? .standard
 
     init(alertURL: URL) {
         self.alertURL = alertURL
@@ -48,9 +49,15 @@ final class AlertAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
+        userContentController.addUserScript(WKUserScript(
+            source: SnoozePreference.bootstrapScript(pinned: SnoozePreference.isPinned(in: preferences)),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
         userContentController.add(self, name: "adaClose")
         userContentController.add(self, name: "adaSignal")
         userContentController.add(self, name: "adaOpen")
+        userContentController.add(self, name: SnoozePreference.messageHandlerName)
 
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = userContentController
@@ -93,6 +100,11 @@ final class AlertAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             // http(s)-only rule lives in ADAAlertCore, where it is unit-tested.
             if let url = ExternalLink.openableURL(from: message.body) {
                 NSWorkspace.shared.open(url)
+            }
+        case SnoozePreference.messageHandlerName:
+            // "Pin open" on the snooze options: remembered for every later alert.
+            if let pinned = SnoozePreference.pinned(fromMessageBody: message.body) {
+                SnoozePreference.setPinned(pinned, in: preferences)
             }
         default:
             break
