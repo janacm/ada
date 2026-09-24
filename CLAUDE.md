@@ -511,7 +511,10 @@ unbundled SwiftPM executable has no bundle id for `UserDefaults.standard`.
 
 A staged Paseo copy of `ada-alert` built before this handler existed just has
 no pin: the page treats a missing `adaPrefs` as unpinned and the post is a
-no-op. Re-run `ada-paseo-watch.sh install` to re-stage.
+no-op. Re-running `install` alone does not fix that, because staging copies
+whatever `ada-alert` already exists in the checkout and only builds when none
+does. Rebuild first (`swift build -c release --product ada-alert`), then run
+`ada-paseo-watch.sh install`.
 
 To check the round trip without clicking, load a probe page that posts
 `!window.adaPrefs?.snoozePinned` to `adaSnoozePin` and closes, run it twice
