@@ -30,6 +30,13 @@ setup() {
   wait_for_file "$ADA_PROBE_OUT" || { echo "sample alert never fired"; false; }
 }
 
+@test "test subcommand fires even while alerts are paused" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  run "$WATCH" test
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "sample alert never fired"; false; }
+}
+
 @test "status reports not-loaded when launchctl has no job" {
   use_stubs
   export HOME="$BATS_TEST_TMPDIR/home"; mkdir -p "$HOME"
@@ -68,6 +75,9 @@ setup() {
   # Sourced by the staged launcher; without it the LaunchAgent's alerts would
   # silently lose muting while a dev checkout kept it.
   [ -f "$ADA_PASEO_INSTALL_DIR/lib/ada-mute.sh" ]
+  # The same for pausing; and `ada-mute.sh list` sources ada-notify.sh.
+  [ -f "$ADA_PASEO_INSTALL_DIR/lib/ada-pause.sh" ]
+  [ -f "$ADA_PASEO_INSTALL_DIR/lib/ada-notify.sh" ]
 
   # Anchor to the code, not a restatement: load the staged module and assert the
   # launcher it would exec actually exists on disk.
@@ -109,7 +119,8 @@ PY
   mkdir -p "$libexec/lib" "$HOME/Library/LaunchAgents"
   cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/alert.html" "$libexec/"
   cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$REPO_ROOT/lib/ada-show-alert.sh" \
-     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" "$libexec/lib/"
+     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" \
+     "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-notify.sh" "$libexec/lib/"
   cp "$REPO_ROOT/ada-alert" "$libexec/ada-alert" 2>/dev/null \
     || cp "$REPO_ROOT/.build/release/ada-alert" "$libexec/ada-alert"
 
@@ -138,7 +149,8 @@ PY
   mkdir -p "$libexec/lib"
   cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/alert.html" "$libexec/"
   cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$REPO_ROOT/lib/ada-show-alert.sh" \
-     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" "$libexec/lib/"
+     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" \
+     "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-notify.sh" "$libexec/lib/"
 
   export HOMEBREW_PREFIX="$BATS_TEST_TMPDIR/brew"
   export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
@@ -288,7 +300,8 @@ make_watch_checkout() {
   mkdir -p "$CHECKOUT/lib"
   cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/alert.html" "$CHECKOUT/"
   cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$REPO_ROOT/lib/ada-show-alert.sh" \
-     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" "$CHECKOUT/lib/"
+     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" \
+     "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-notify.sh" "$CHECKOUT/lib/"
   export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
   unset ADA_NATIVE_ALERT
 }
@@ -475,4 +488,36 @@ SH
   assert_equal "$(echo $output)" "1"
   assert_file_contains "$ADA_PROBE_OUT" "loud"
   refute_file_contains "$ADA_PROBE_OUT" "muted"
+}
+
+# A pause silences the watcher through the same real chain. The poll counter is
+# the positive control: the loop really saw both agents finish.
+@test "the watcher loop drops every alert while paused" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat > "$BATS_TEST_TMPDIR/bin/paseo" <<'SH'
+#!/bin/bash
+state="$BATS_TEST_TMPDIR/paseo-polls"
+case "$1" in
+  ls)
+    n=$(cat "$state" 2>/dev/null || echo 0); echo $((n + 1)) > "$state"
+    if (( n == 0 )); then s=running; else s=idle; fi
+    printf '[{"id":"a1","name":"one","status":"%s"},{"id":"a2","name":"two","status":"%s"}]\n' "$s" "$s" ;;
+  permit) echo '[]' ;;
+esac
+SH
+  chmod +x "$BATS_TEST_TMPDIR/bin/paseo"
+  export PASEO_BIN="$BATS_TEST_TMPDIR/bin/paseo" ADA_PASEO_POLL=1 ADA_PASEO_THRESHOLD=0
+  python3 "$REPO_ROOT/lib/ada-paseo-watch.py" > "$BATS_TEST_TMPDIR/loop.out" 2>&1 &
+  local pid=$! tries=100
+  while (( tries-- > 0 )) && (( $(cat "$BATS_TEST_TMPDIR/paseo-polls" 2>/dev/null || echo 0) < 3 )); do
+    sleep 0.1
+  done
+  sleep 0.5
+  # TERM, not INT: bash starts background jobs with SIGINT ignored.
+  kill "$pid"; wait "$pid" 2>/dev/null || true
+  (( $(cat "$BATS_TEST_TMPDIR/paseo-polls") >= 3 )) || { cat "$BATS_TEST_TMPDIR/loop.out"; echo "the loop never polled"; false; }
+  [ ! -e "$ADA_PROBE_OUT" ] || { echo "an alert fired while paused:"; cat "$ADA_PROBE_OUT"; false; }
+  refute_file_contains "$BATS_TEST_TMPDIR/loop.out" "Traceback"
 }

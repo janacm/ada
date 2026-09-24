@@ -592,7 +592,8 @@ run_test_alert() {
     say "dry-run: would run $dir/lib/ada-show-alert.sh \"ada install test\" \"1s\" 0"
     return 0
   fi
-  ADA_AUTO_CLOSE="${ADA_AUTO_CLOSE:-20}" "$dir/lib/ada-show-alert.sh" "ada install test" "1s" 0
+  # The sample alert is one you asked for, so it shows even while paused.
+  ADA_IGNORE_PAUSE=1 ADA_AUTO_CLOSE="${ADA_AUTO_CLOSE:-20}" "$dir/lib/ada-show-alert.sh" "ada install test" "1s" 0
 }
 
 resolve_opencode_plugin_dir

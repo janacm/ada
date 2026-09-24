@@ -42,6 +42,8 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate {
 
         var environment = ProcessInfo.processInfo.environment
         environment["ADA_AUTO_CLOSE"] = environment["ADA_AUTO_CLOSE"] ?? "20"
+        // A test alert is one you asked for, so it shows even while paused.
+        environment["ADA_IGNORE_PAUSE"] = "1"
         process.environment = environment
 
         do {

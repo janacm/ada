@@ -268,12 +268,12 @@ freeze a snapshot brew could never update.
 
 Everything else (a dev checkout, `~/.ada`) **stages** the runtime it needs
 (`ada-paseo-watch.sh`, `ada-paseo-watch.py`, `ada-show-alert.sh`,
-`ada-snooze-daemon.py`, `ada-mute.sh`, `alert.html`, and `ada-alert`) into a non-TCC dir —
+`ada-snooze-daemon.py`, `ada-mute.sh`, `ada-pause.sh`, `ada-notify.sh`, `alert.html`, and `ada-alert`) into a non-TCC dir —
 `~/.local/share/ada` (override `ADA_PASEO_INSTALL_DIR`) — and points the plist
 there. **Staging mirrors the dev-checkout layout**: the front door
 (`ada-paseo-watch.sh`), `alert.html`, and `ada-alert` sit at the top, while the
 internal scripts (`ada-paseo-watch.py`, `ada-show-alert.sh`,
-`ada-snooze-daemon.py`, `ada-mute.sh`) go under `~/.local/share/ada/lib/`. Keeping the two
+`ada-snooze-daemon.py`, `ada-mute.sh`, `ada-pause.sh`, `ada-notify.sh`) go under `~/.local/share/ada/lib/`. Keeping the two
 layouts identical is load-bearing: the watcher resolves `ada-show-alert.sh` via
 `$dir/lib/…` / a sibling of the `.py`, so a flat stage would break every Paseo
 alert from the LaunchAgent while still working in a dev checkout (the classic
@@ -516,6 +516,40 @@ before anything spawns when the key is muted.
   uses `O_NOFOLLOW` for the same reason. A recursive `find -delete` there would
   erase unrelated old files on every alert if someone pointed it at a real
   directory.
+
+## Pausing is enforced in the launcher only
+
+`lib/ada-pause.sh` is the global switch (the menu bar's Pause menu, and
+`ada-pause` under Homebrew). The state is one file, `$TMPDIR/ada-paused`
+(`ADA_PAUSE_FILE`), holding the epoch second the pause ends or `0` for until
+resumed. `lib/ada-show-alert.sh` sources it just before the mute block and exits
+while paused, so the snooze relaunch is dropped too.
+
+- **The launcher never deletes the pause file**, even an expired one. The CLI
+  writes through a temp file and `mv`; a launcher `rm` landing between that
+  rename and its own read would erase a pause set a moment earlier. `status`
+  and `resume` clean up.
+- **Anything at that path that isn't a pause file is left alone** and pauses
+  nothing: a symlink, a directory, a file that isn't a number. The path is
+  user-configurable, so the CLI refuses to overwrite or delete it, same as the
+  mute markers.
+- **Test alerts pass `ADA_IGNORE_PAUSE=1`**: `ada()` in `ada.sh` (a fifth
+  argument to `__ada_show_alert`, set on the launcher's command line only),
+  `run_test_alert` in the installer, `ada-paseo-watch.sh test` (a fourth
+  argument to `__ada_fire`), and the menu bar's Test Alert. A snoozed test
+  alert keeps the flag through the daemon's environment.
+- **`TMPDIR` is normalized first.** A launcher started without `TMPDIR` asks
+  `getconf DARWIN_USER_TEMP_DIR` before falling back to `/tmp`, because the
+  pause, the mute markers and the pid file all live there. launchd jobs get the
+  same per-user temp dir as a terminal (checked on this machine), which is what
+  lets the menu bar, the hooks and the Paseo watcher share this state.
+- **`ada-pause.sh` and `ada-notify.sh` are in the Paseo `runtime_files`.** A
+  missing `ada-pause.sh` means no pausing, never a missing alert, so a stage
+  without it would fail silently.
+- **In bats, stop a background python loop with `kill` (TERM), not `kill
+  -INT`.** Non-interactive bash starts background jobs with SIGINT ignored and
+  Python keeps that, so `wait` never returns. The Ctrl-C loop test re-arms
+  SIGINT itself for exactly this reason.
 
 ## The feedback note opens links via the adaOpen bridge
 

@@ -118,17 +118,20 @@ __ada_precmd() {
   __ada_cmd=
 }
 
+# $5 = 1 for an alert you asked for, which ignores a pause. It is passed as an
+# argument and set on the launcher's command line only, because a prefix
+# assignment on a zsh function call is easy to get wrong.
 __ada_show_alert() {
-  local cmd=$1 duration=$2 code=$3 key=${4-$_ADA_SESSION_KEY}
+  local cmd=$1 duration=$2 code=$3 key=${4-$_ADA_SESSION_KEY} ignore_pause=${5:-${ADA_IGNORE_PAUSE:-}}
   local formatted=$(__ada_format_duration $duration)
-  ADA_SESSION_KEY="$key" ADA_SESSION_KIND=terminal \
+  ADA_SESSION_KEY="$key" ADA_SESSION_KIND=terminal ADA_IGNORE_PAUSE="$ignore_pause" \
     "$_ADA_DIR/lib/ada-show-alert.sh" "$cmd" "$formatted" "$code"
 }
 
 # Manual trigger for testing: ada any command here. No session key, so a muted
-# terminal still gets its test alert.
+# terminal still gets its test alert, and it ignores a pause for the same reason.
 ada() {
-  __ada_show_alert "${*:-manual}" 0.5 0 ""
+  __ada_show_alert "${*:-manual}" 0.5 0 "" 1
 }
 
 autoload -Uz add-zsh-hook

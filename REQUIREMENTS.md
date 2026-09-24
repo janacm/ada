@@ -273,6 +273,33 @@ removed.
 - A launcher running without `ada-mute.sh` beside it must still alert, with no
   muting.
 
+## Global Pause
+
+- A pause must silence every alert from every integration, including a pending
+  snooze relaunch that comes due while paused, until it ends or is resumed.
+- The pause check must live only in `ada-show-alert.sh`, beside the mute check
+  and before it. No integration may reimplement it.
+- The pause state must be one file (`ADA_PAUSE_FILE`, default
+  `$TMPDIR/ada-paused`) holding one decimal integer: the epoch second the pause
+  ends, or `0` for until resumed. Writers must replace it atomically (temp file
+  and rename).
+- A file at that path that is not a pause file (not a regular file, a symlink,
+  or not a number) must pause nothing and must never be overwritten or deleted.
+- The launcher must only read the pause file. An expired pause lets alerts
+  through; only the CLI deletes the file, so a launcher cannot race a new pause
+  being renamed into place.
+- Alerts the user asked for must show while paused: the terminal `ada` command,
+  the installer's sample alert, `ada-paseo-watch.sh test`, and the menu bar's
+  Test Alert pass `ADA_IGNORE_PAUSE=1`. zsh must pass it on the launcher's
+  command line only, never into the interactive shell.
+- When `TMPDIR` is unset, the launcher must use `getconf DARWIN_USER_TEMP_DIR`
+  (then `/tmp`), so a stripped environment still finds the pause and the mute
+  markers that terminals and launchd jobs see under the per-user temp dir.
+- `lib/ada-pause.sh <minutes>|until <epoch>|forever|resume|status` must set,
+  clear and describe the pause, and Homebrew must expose it as `ada-pause`.
+- A launcher running without `ada-pause.sh` beside it must still alert, with no
+  pausing.
+
 ## Claude Code And Codex Hooks
 
 - `ada-claude-hook.sh` must support the shared Claude Code and Codex hook payload
@@ -427,7 +454,8 @@ removed.
   `brew upgrade` replacing the Homebrew-managed tree.
 - The staged runtime must include `ada-paseo-watch.sh`,
   `ada-paseo-watch.py`, `ada-show-alert.sh`, `ada-snooze-daemon.py`,
-  `ada-mute.sh`, and `alert.html`. Staging must mirror the dev-checkout layout — the front door
+  `ada-mute.sh`, `ada-pause.sh`, `ada-notify.sh` (which `ada-mute.sh list` and
+  `ada-pause.sh` source), and `alert.html`. Staging must mirror the dev-checkout layout — the front door
   (`ada-paseo-watch.sh`) and `alert.html` at the top, the internal scripts under
   `lib/` — so every `lib/`-relative reference resolves identically whether run
   from a checkout or from the staged LaunchAgent.
@@ -500,6 +528,15 @@ removed.
 
 ## Change Log
 
+- 2026-09-24: Alerts can be paused. `ada-pause <minutes>|until <epoch>|forever`
+  silences every integration until the pause ends or `ada-pause resume`, the
+  switch the menu bar's Pause menu will use. The check sits in
+  `ada-show-alert.sh` beside the mute check; test alerts pass
+  `ADA_IGNORE_PAUSE=1`. With `TMPDIR` unset the launcher now asks `getconf
+  DARWIN_USER_TEMP_DIR` instead of falling back to `/tmp`, where it could not
+  see a pause, or mutes set from alerts that had `TMPDIR`. The Paseo stage gains
+  `ada-pause.sh` and `ada-notify.sh`; without the latter a staged `ada-mute.sh
+  list` printed errors and a blank "muted  ago" for every key.
 - 2026-09-24: Alerts can mute their session. A **Mute this conversation** (or
   session, agent, terminal) button under the snooze row silences every later
   alert for that Claude Code / Codex conversation, opencode session, Paseo agent

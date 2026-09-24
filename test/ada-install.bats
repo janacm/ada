@@ -667,6 +667,15 @@ stale_helper_checkout() {
   assert_file_contains "$ADA_PROBE_OUT" "ada%20install%20test"
 }
 
+@test "the sample alert fires even while alerts are paused" {
+  require_native_helper
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  run "$INSTALL" --agents terminal
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "sample alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "ada%20install%20test"
+}
+
 @test "--dry-run describes the sample alert instead of firing it" {
   run "$INSTALL" --agents terminal --dry-run
   assert_success

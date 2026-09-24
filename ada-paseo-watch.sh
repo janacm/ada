@@ -149,8 +149,10 @@ __ada_find_python() {
 }
 
 # Fire the shared launcher. <label> <duration-string> <exit-code>
+# $4 = 1 for an alert you asked for (the test), which ignores a pause.
 __ada_fire() {
-  "$dir/lib/ada-show-alert.sh" "$1" "$2" "${3:-0}" >/dev/null 2>&1 &
+  ADA_IGNORE_PAUSE="${4:-${ADA_IGNORE_PAUSE:-}}" \
+    "$dir/lib/ada-show-alert.sh" "$1" "$2" "${3:-0}" >/dev/null 2>&1 &
 }
 
 # -------------------------------------------------------------
@@ -189,8 +191,10 @@ __ada_from_brew_prefix() {
 # Everything the LaunchAgent reaches for, relative to the runtime root. Shared
 # by the in-place check, staging and the stale-stage check in status, so the
 # modes can't drift apart.
+# ada-notify.sh is here because `ada-mute.sh list` and ada-pause.sh source it.
 runtime_files=(ada-paseo-watch.sh alert.html lib/ada-paseo-watch.py
-               lib/ada-show-alert.sh lib/ada-snooze-daemon.py lib/ada-mute.sh)
+               lib/ada-show-alert.sh lib/ada-snooze-daemon.py lib/ada-mute.sh
+               lib/ada-pause.sh lib/ada-notify.sh)
 
 # True when $1 is a SwiftPM build of this checkout that is older than the
 # checkout's Swift sources: a `git pull` brought in helper changes (a new message
@@ -430,7 +434,7 @@ ada_status() {
 }
 
 ada_test() {
-  __ada_fire "Paseo · test · ada-paseo-watch" "1s" "${1:-0}"
+  __ada_fire "Paseo · test · ada-paseo-watch" "1s" "${1:-0}" 1
   echo "Fired a test alert."
 }
 

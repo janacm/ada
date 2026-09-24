@@ -54,13 +54,16 @@ class Ada < Formula
       exec "#{opt_libexec}/ada-install.sh" "$@"
     SH
 
-    # List or clear the sessions muted from an alert's "Mute this …" button.
-    # The formula on main is read by every stable install, including ones whose
-    # tarball predates ada-mute.sh, so only wire the wrapper when it shipped.
-    if (libexec/"lib/ada-mute.sh").exist?
-      (bin/"ada-mute").write <<~SH
+    # ada-mute lists or clears the sessions muted from an alert's "Mute this …"
+    # button; ada-pause pauses or resumes every alert (the menu bar's Pause
+    # menu). The formula on main is read by every stable install, including ones
+    # whose tarball predates these scripts, so only wire a wrapper that shipped.
+    { "ada-mute" => "lib/ada-mute.sh", "ada-pause" => "lib/ada-pause.sh" }.each do |name, script|
+      next unless (libexec/script).exist?
+
+      (bin/name).write <<~SH
         #!/bin/bash
-        exec "#{opt_libexec}/lib/ada-mute.sh" "$@"
+        exec "#{opt_libexec}/#{script}" "$@"
       SH
     end
   end

@@ -23,6 +23,7 @@ SHELL_FILES = [
     "lib/ada-claude-hook.sh",
     "lib/ada-mute.sh",
     "lib/ada-notify.sh",
+    "lib/ada-pause.sh",
     "lib/ada-show-alert.sh",
     "release.sh",
 ]

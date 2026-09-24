@@ -23,6 +23,8 @@
 #                       terminal (default "session")
 #   ADA_MUTE_BUTTON     0 hides the mute button (existing mutes still apply)
 #   ADA_MUTE_DIR / ADA_MUTE_MAX_AGE  see lib/ada-mute.sh
+#   ADA_PAUSE_FILE      see lib/ada-pause.sh; a pause drops every alert
+#   ADA_IGNORE_PAUSE    1 for an alert the user asked for (the test alerts)
 #   ADA_SNOOZED         set by the snooze daemon when re-arming an alert
 #   ADA_NATIVE_ALERT    path to ada-alert native helper
 # =============================================================
@@ -35,6 +37,27 @@ code=${3:-0}
 # Where this script lives, so the snooze daemon and the sibling alert page can
 # be found and re-invoked.
 selfdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+# The pause file, the mute markers and the alert pid file all live under
+# TMPDIR, so every process that reads or writes them has to agree on it. A hook
+# or plugin started from a stripped environment may arrive without TMPDIR, and
+# falling back to /tmp would then miss a pause the menu bar set. Terminals and
+# launchd jobs both get the per-user Darwin temp dir, so ask for that instead.
+if [[ -z "${TMPDIR:-}" ]]; then
+  TMPDIR=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null) || TMPDIR=""
+  [[ -n "$TMPDIR" ]] || TMPDIR=/tmp
+  export TMPDIR
+fi
+
+# A pause (the menu bar's Pause menu, or lib/ada-pause.sh) drops every alert,
+# whichever integration raised it, the snooze relaunch included. Test alerts
+# pass ADA_IGNORE_PAUSE=1. A missing ada-pause.sh means no pausing, never a
+# missing alert.
+if [[ "${ADA_IGNORE_PAUSE:-}" != 1 && -f "$selfdir/ada-pause.sh" ]]; then
+  # shellcheck source=lib/ada-pause.sh
+  . "$selfdir/ada-pause.sh"
+  __ada_is_paused && exit 0
+fi
 
 # A muted session drops every alert, whichever integration raised it: this
 # launcher is the one place they all pass through, the snooze relaunch included.

@@ -196,6 +196,8 @@ All settings are environment variables. Set them before `ada.sh` is sourced
 | `ADA_MUTE_BUTTON` | `1` | Set to `0` to hide the **Mute this …** button. Sessions you already muted stay muted. See [Muting a session](#muting-a-session). |
 | `ADA_MUTE_MAX_AGE` | `86400` | Seconds a mute lasts before that session alerts again. `0` keeps it until you clear it. |
 | `ADA_MUTE_DIR` | `${TMPDIR}/ada-muted` | Where the mute markers live, one empty file per muted session. |
+| `ADA_PAUSE_FILE` | `${TMPDIR}/ada-paused` | Where the [pause](#pausing-every-alert) is kept: one number, the time it ends (`0` = until resumed). |
+| `ADA_IGNORE_PAUSE` | _(empty)_ | `1` makes an alert show even while paused. The test alerts (`ada`, the installer's sample, `ada-paseo-watch.sh test`, the menu bar's **Test Alert**) set it. |
 | `ADA_SESSION_KEY` | _(set by each integration)_ | Which session an alert belongs to; the integrations set it for you. Only letters, digits, `.`, `_` and `-` are accepted, and an alert without a valid key has no mute button. |
 
 The default ignore list covers common interactive / long-lived foreground tools:
@@ -540,6 +542,25 @@ ada-mute clear             # unmute everything
 The `ada` test command in the terminal is never muted, so it still works as a
 check. Muting uses the same `python3` daemon as snoozing, so without `python3`
 the button isn't shown.
+
+## Pausing every alert
+
+Muting is per session. To silence everything for a while (a meeting, a demo),
+pause instead:
+
+```sh
+ada-pause 60               # Homebrew; from a checkout: lib/ada-pause.sh 60
+ada-pause until 1790301600 # until an epoch second
+ada-pause forever          # until you resume
+ada-pause status           # "paused until 15:30 (42m left)" or "not paused"
+ada-pause resume
+```
+
+While paused, no integration pops a window, and a snoozed alert that comes due
+is dropped too. The test alerts still show, so you can check that ada works.
+The pause is a file in `$TMPDIR`, so it lasts until it runs out, you resume,
+or macOS clears that folder (after a restart, for example); in every case
+alerts simply come back.
 
 ## Feedback
 
