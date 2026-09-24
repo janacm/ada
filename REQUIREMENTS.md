@@ -240,6 +240,9 @@ removed.
   another app later.
 - The daemon must bind only to `127.0.0.1`, publish a random token to the alert
   URL, and ignore requests without that token.
+- Binding the daemon must not wait on DNS. The launcher gives the handoff 1.8s,
+  and the stock `HTTPServer.server_bind` spends that on a reverse lookup of
+  `127.0.0.1` wherever reverse DNS is slow.
 - A snooze request must close the current alert and relaunch the same alert after
   the chosen delay.
 - Snooze delays must be positive and no longer than 24 hours.
@@ -507,6 +510,11 @@ removed.
 
 ## Change Log
 
+- 2026-09-24: The snooze daemon no longer does a reverse-DNS lookup when it
+  binds. `HTTPServer.server_bind` calls `socket.getfqdn("127.0.0.1")` only to
+  fill in a name nothing reads, and on GitHub's macOS runners that outlasted
+  the launcher's 1.8s wait for the handoff, so alerts came up without snooze,
+  click-to-focus or mute. The new `test` workflow found it on its first run.
 - 2026-09-24: Alerts can mute their session. A **Mute this conversation** (or
   session, agent, terminal) button under the snooze row silences every later
   alert for that Claude Code / Codex conversation, opencode session, Paseo agent
