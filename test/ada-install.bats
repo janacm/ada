@@ -36,6 +36,24 @@ PY
   assert_output_contains "codex"
   assert_output_contains "opencode"
   assert_output_contains "paseo"
+  assert_output_contains "menubar   Menu bar                   login item"
+}
+
+@test "the menu bar row says whether its login item is installed" {
+  run bash -c "\"$INSTALL\" --list | grep '^menubar'"
+  assert_output_contains "will add login item"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  touch "$HOME/Library/LaunchAgents/com.ada.menubar.plist"
+  run bash -c "\"$INSTALL\" --list | grep '^menubar'"
+  assert_output_contains "installed"
+}
+
+# Like Paseo, the login item is delegated wholesale to its own front door.
+@test "the menu bar row delegates to ada-menubar.sh install" {
+  run "$INSTALL" --agents menubar --dry-run --no-test
+  assert_success
+  assert_output_contains "Installing menu bar -> login item"
+  assert_output_contains "dry-run: would run $REPO_ROOT/ada-menubar.sh install"
 }
 
 @test "--help prints usage" {
@@ -378,7 +396,8 @@ JSON
 # --- the interactive selector, driven through a pty ---------------------------
 # interactive_select refuses to run without a terminal, so these go through
 # test/pty_run.py. HOME has ~/.claude and ~/.codex and the opencode stub is on
-# PATH, so four rows start selected; Paseo has no CLI, so its row is locked.
+# PATH, so five rows start selected (the menu bar can be built from this
+# checkout); Paseo has no CLI, so its row is locked.
 # --dry-run keeps every install step to a "would ..." line, which is how each
 # test reads back what the selection ended up being.
 select_keys() {
@@ -391,11 +410,12 @@ select_keys() {
   assert_success
   assert_output_contains "[-] Paseo"
   assert_output_contains "unavailable: not found"
-  assert_output_contains "Selected: Terminal commands, Claude Code, Codex, opencode"
+  assert_output_contains "Selected: Terminal commands, Claude Code, Codex, opencode, Menu bar"
   assert_output_contains "Installing terminal integration"
   assert_output_contains "Installing Claude Code integration"
   assert_output_contains "Installing Codex integration"
   assert_output_contains "Installing opencode integration"
+  assert_output_contains "Installing menu bar -> login item"
 }
 
 # macOS /bin/bash 3.2 rejects a fractional `read -t`, which used to leave the
@@ -408,11 +428,26 @@ select_keys() {
   refute_output_contains "Installing Claude Code integration"
 }
 
-@test "up from the first row wraps to the last available row, skipping Paseo" {
+@test "up from the first row wraps to the last row, the menu bar" {
   select_keys '\x1b[A' ' ' '\r'
   assert_success
-  refute_output_contains "Installing opencode integration"
+  refute_output_contains "Installing menu bar"
+  assert_output_contains "Installing opencode integration"
   assert_output_contains "Installing terminal integration"
+}
+
+@test "moving up past the menu bar skips the locked Paseo row" {
+  select_keys '\x1b[A' '\x1b[A' ' ' '\r'
+  assert_success
+  refute_output_contains "Installing opencode integration"
+  assert_output_contains "Installing menu bar -> login item"
+}
+
+@test "moving down from opencode skips the locked Paseo row" {
+  select_keys j j j j ' ' '\r'
+  assert_success
+  refute_output_contains "Installing menu bar"
+  assert_output_contains "Installing opencode integration"
 }
 
 @test "j and k move the cursor too" {

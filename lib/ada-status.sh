@@ -13,7 +13,8 @@
 #
 # Each check reads the marker the installer writes: the managed block in
 # ~/.zshrc, the hook commands in ~/.claude/settings.json and
-# ~/.codex/hooks.json, the opencode plugin shim, and the LaunchAgent plist.
+# ~/.codex/hooks.json, the opencode plugin shim, and the LaunchAgent plists of
+# the Paseo watcher and the menu bar.
 #
 #   ada-status.sh           the lines
 #   ada-status.sh --table   aligned, for people
@@ -271,6 +272,7 @@ __ada_status_all() {
   __ada_status_hooks codex Codex "$HOME/.codex" "$HOME/.codex/hooks.json"
   __ada_status_opencode
   __ada_status_paseo
+  __ada_status_job menubar "Menu bar" com.ada.menubar "not a login item"
 }
 
 __ada_status_cli() {

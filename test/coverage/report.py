@@ -18,6 +18,7 @@ import sys
 # product. ada.sh is zsh; the classifier handles the subset of syntax it uses.
 SHELL_FILES = [
     "ada-install.sh",
+    "ada-menubar.sh",
     "ada-paseo-watch.sh",
     "ada.sh",
     "lib/ada-claude-hook.sh",

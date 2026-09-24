@@ -71,9 +71,10 @@ set -u
 # version-stable .../opt/<formula>/libexec symlink instead, or the install
 # silently dies on the next upgrade. Map Cellar -> opt when the equivalent opt
 # path exists; leave every other layout untouched.
-# Deliberately duplicated in ada-install.sh and ada-paseo-watch.sh: both are
-# standalone entry points (the watcher is even copied elsewhere when staged), so
-# neither can rely on sourcing the other.
+# Deliberately duplicated in ada-install.sh, ada-paseo-watch.sh and
+# ada-menubar.sh: each is a standalone entry point that needs this before it
+# knows where its lib/ is (the last two are even copied elsewhere when staged).
+# test/ada-menubar.bats checks the three copies stay identical.
 __ada_stable_dir() {
   local d=$1 prefix rest name tail
   case "$d" in

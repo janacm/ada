@@ -32,7 +32,7 @@ PY
 @test "every line has four tab-separated fields and a known state" {
   run "$STATUS"
   assert_success
-  [ "${#lines[@]}" -eq 5 ]
+  [ "${#lines[@]}" -eq 6 ]
   local line
   for line in "${lines[@]}"; do
     assert_equal "$(awk -F'\t' '{print NF}' <<<"$line")" 4
@@ -206,12 +206,37 @@ paseo_plist() {
   assert_equal "$(row paseo)" "paseo|warn|Paseo|installed but not loaded"
 }
 
+# --- menu bar ----------------------------------------------------------------------
+
+@test "menubar: no login item is off" {
+  assert_equal "$(row menubar)" "menubar|off|Menu bar|not a login item"
+}
+
+@test "menubar: a running login item is ok, a quit one a warning" {
+  mkdir -p "$HOME/Library/LaunchAgents"
+  printf '<plist/>\n' > "$HOME/Library/LaunchAgents/com.ada.menubar.plist"
+  STUB_LAUNCHCTL_LOADED="com.ada.menubar" STUB_LAUNCHCTL_PIDS="com.ada.menubar=77" run row menubar
+  assert_equal "$output" "menubar|ok|Menu bar|running (pid 77)"
+  STUB_LAUNCHCTL_LOADED="com.ada.menubar" run row menubar
+  assert_equal "$output" "menubar|warn|Menu bar|loaded but not running"
+}
+
+# The two jobs' pids are looked up by label, not shared.
+@test "menubar and paseo report their own pids" {
+  mkdir -p "$HOME/Library/LaunchAgents"
+  printf '<plist/>\n' > "$HOME/Library/LaunchAgents/com.ada.menubar.plist"
+  printf '<plist/>\n' > "$HOME/Library/LaunchAgents/com.ada.paseo-watch.plist"
+  export STUB_LAUNCHCTL_LOADED="com.ada.paseo-watch com.ada.menubar" STUB_LAUNCHCTL_PIDS="com.ada.paseo-watch=11 com.ada.menubar=22"
+  assert_equal "$(row paseo)" "paseo|ok|Paseo|running (pid 11)"
+  assert_equal "$(row menubar)" "menubar|ok|Menu bar|running (pid 22)"
+}
+
 # --- the table ---------------------------------------------------------------------
 
 @test "--table aligns the same rows for people" {
   run "$STATUS" --table
   assert_success
-  [ "${#lines[@]}" -eq 5 ]
+  [ "${#lines[@]}" -eq 6 ]
   assert_output_contains "terminal  Terminal commands  off          no ~/.zshrc"
 }
 

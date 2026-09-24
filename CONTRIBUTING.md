@@ -100,6 +100,9 @@ use `refute_file_appears` (the launcher backgrounds the helper, so an immediate
 ## Before Opening A PR
 
 - Run `swift test` when touching Swift code.
+- After a menu bar change, rebuild (`swift build -c release`, and check it
+  succeeded) and read `.build/release/ada-menubar --print-menu`: it prints the
+  menu from your real state without starting the app.
 - Run `./run-tests.sh` when touching any shell script or the zsh hook.
 - Run `npx playwright test` when touching `alert.html`.
 - Run `./run-tests.sh --coverage` when adding behavior, and cover it.

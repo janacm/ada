@@ -122,6 +122,7 @@ integrations you want:
 - **opencode** — drops a plugin shim into opencode's plugin directory
   (`~/.config/opencode/plugin/ada.js`).
 - **Paseo** — stages and loads the LaunchAgent watcher.
+- **Menu bar** — adds the [menu bar item](#the-menu-bar-item) as a login item.
 
 It detects which targets exist, preserves existing hook config, writes timestamped
 backups before JSON edits, and can be re-run to change the selected integrations.
@@ -149,22 +150,6 @@ cd ~/.ada
 swift build -c release --product ada-alert
 echo 'source ~/.ada/ada.sh' >> ~/.zshrc
 ```
-
-Optional menu bar helper:
-
-```sh
-cd ~/.ada
-swift build -c release --product ada-menubar
-.build/release/ada-menubar &
-```
-
-`ada-menubar` is a lightweight native macOS status item. It does not replace the
-terminal, Claude/Codex, or Paseo integrations; it gives you a persistent **ADA**
-menu with **Test Alert**, **Open ADA Folder**, and **Quit ADA Menu Bar**. The
-helper works out which ada folder it belongs to (a checkout, its `.build`
-output, an `.app` bundle, or a Homebrew install) and runs
-`lib/ada-show-alert.sh` from there. Set `ADA_HOME=/path/to/ada` before launching
-it to point it at a different folder.
 
 Requires **zsh** on **macOS**. SwiftPM is used only to build the native helper;
 without a built helper the alert launcher fails closed. `python3` is used to
@@ -207,6 +192,8 @@ All settings are environment variables. Set them before `ada.sh` is sourced
 | `ADA_IGNORE_PAUSE` | _(empty)_ | `1` makes an alert show even while paused. The test alerts (`ada`, the installer's sample, `ada-paseo-watch.sh test`, the menu bar's **Test Alert**) set it. |
 | `ADA_HISTORY_FILE` | `${TMPDIR}/ada-history.tsv` | The [alert history](#alert-history), one line per alert. |
 | `ADA_HISTORY_MAX` | `50` | How many alerts the history keeps. `0` keeps none. |
+| `ADA_MENUBAR_INSTALL_DIR` | `ADA_PASEO_INSTALL_DIR`, else `~/.local/share/ada` | Where `ada-menubar.sh install` copies a checkout so the login item can run it. |
+| `ADA_STATUS_SKIP_PROTECTED` | _(empty)_ | `1` makes `--status` skip checking that wired paths under `$HOME` still exist. The menu bar sets it, because a LaunchAgent may not look inside `~/Documents`. |
 | `ADA_SESSION_KEY` | _(set by each integration)_ | Which session an alert belongs to; the integrations set it for you. Only letters, digits, `.`, `_` and `-` are accepted, and an alert without a valid key has no mute button. |
 
 The default ignore list covers common interactive / long-lived foreground tools:
@@ -558,7 +545,7 @@ the button isn't shown.
 ## Pausing every alert
 
 Muting is per session. To silence everything for a while (a meeting, a demo),
-pause instead:
+pause instead, from the [menu bar item](#the-menu-bar-item) or the command line:
 
 ```sh
 ada-pause 60               # Homebrew; from a checkout: lib/ada-pause.sh 60
@@ -578,9 +565,9 @@ alerts simply come back.
 
 ada keeps the last 50 alerts it decided on (`ADA_HISTORY_MAX`), including the
 ones a pause or a mute kept off your screen, so you can find what finished
-while you were away. Each line records when, what (the command or prompt), how
-long it ran, its exit code, the repo, and where clicking the alert would have
-taken you:
+while you were away. The menu bar's **Recent Alerts** shows them. Each line
+records when, what (the command or prompt), how long it ran, its exit code, the
+repo, and where clicking the alert would have taken you:
 
 ```sh
 lib/ada-history.sh list    # from the ada folder; tab-separated, oldest first
@@ -589,6 +576,45 @@ lib/ada-history.sh clear
 
 The labels are your commands and prompts, so the file is readable only by you
 and never leaves this Mac. `ADA_HISTORY_MAX=0` turns it off.
+
+## The menu bar item
+
+`ada-menubar` puts a bell in the menu bar (crossed out while paused). Its menu:
+
+- **Pause Alerts**: for an hour, until 08:00 tomorrow, or until you resume;
+  **Resume Alerts** while paused. The same switch as `ada-pause`.
+- **Recent Alerts**: the last 10 from the [history](#alert-history), newest
+  first, marked when a pause or mute kept one off your screen. Choosing one does
+  what clicking the alert would have done: reopens the Claude conversation, or
+  brings its terminal forward.
+- **Muted Sessions**: what you muted from an alert's **Mute this …** button;
+  choose one to unmute it, or **Unmute All**.
+- **Integrations**: the [`--status`](#from-source) report, with **Set Up
+  Integrations…**, which opens the installer in Terminal.
+- **Send Test Alert**, **Open ADA Folder**, **Quit ADA Menu Bar**.
+
+The installer's **Menu bar** row makes it a login item (a LaunchAgent), or run
+the front door yourself:
+
+```sh
+~/.ada/ada-menubar.sh install     # Homebrew: $(brew --prefix)/opt/ada/libexec/ada-menubar.sh
+~/.ada/ada-menubar.sh status
+~/.ada/ada-menubar.sh start       # after Quit, which keeps it off until your next login
+~/.ada/ada-menubar.sh uninstall
+```
+
+A LaunchAgent can't run anything from `~/Documents`, `~/Desktop` or
+`~/Downloads`, so a checkout is copied to `~/.local/share/ada` (the same copy
+the Paseo watcher uses); re-run `install` after pulling changes, and `status`
+tells you when the copy is out of date. A Homebrew install runs in place, and
+the menu bar restarts itself after `brew upgrade`. Because it runs as a
+LaunchAgent, it doesn't see variables you export in `~/.zshrc`.
+
+If the bell never appears after `install`, look for `ada-menubar` in the Login
+Items pane of **System Settings > General**, where macOS can keep a background
+item from running until you allow it. To try the
+menu bar without installing it, run `.build/release/ada-menubar &` from a
+checkout; `ada-menubar --print-menu` prints the menu as text.
 
 ## Feedback
 

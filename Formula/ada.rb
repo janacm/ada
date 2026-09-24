@@ -82,6 +82,12 @@ class Ada < Formula
       before any JSON edit and is idempotent, so re-run it any time to change
       which integrations are active.
 
+      It also offers the menu bar item (pause every alert, recent alerts,
+      muted sessions, what is wired), started at login as a LaunchAgent. To
+      remove that login item before `brew uninstall ada`:
+
+        #{opt_libexec}/ada-menubar.sh uninstall
+
       Scriptable form:
 
         ada-setup --agents terminal,claude,codex,opencode
@@ -102,5 +108,7 @@ class Ada < Formula
     # the sandbox and proves the script + its bundled deps are wired correctly.
     assert_match "terminal", shell_output("#{bin}/ada-setup --list")
     assert_path_exists bin/"ada-alert"
+    # --check prints and exits; any other argument would start the status item.
+    assert_equal "ada-menubar native helper ok", shell_output("#{bin}/ada-menubar --check").strip
   end
 end

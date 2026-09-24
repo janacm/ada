@@ -17,9 +17,10 @@ set -u
 # version-stable .../opt/<formula>/libexec symlink instead, or the install
 # silently dies on the next upgrade. Map Cellar -> opt when the equivalent opt
 # path exists; leave every other layout untouched.
-# Deliberately duplicated in ada-install.sh and ada-paseo-watch.sh: both are
-# standalone entry points (the watcher is even copied elsewhere when staged), so
-# neither can rely on sourcing the other.
+# Deliberately duplicated in ada-install.sh, ada-paseo-watch.sh and
+# ada-menubar.sh: each is a standalone entry point that needs this before it
+# knows where its lib/ is (the last two are even copied elsewhere when staged).
+# test/ada-menubar.bats checks the three copies stay identical.
 __ada_stable_dir() {
   local d=$1 prefix rest name tail
   case "$d" in
@@ -55,9 +56,9 @@ for lib in ada-status.sh ada-stage.sh; do
 done
 unset lib
 
-AGENT_IDS=(terminal claude codex opencode paseo)
-AGENT_NAMES=("Terminal commands" "Claude Code" "Codex" "opencode" "Paseo")
-AGENT_TARGETS=("~/.zshrc" "~/.claude/settings.json" "~/.codex/hooks.json" "opencode plugin dir" "LaunchAgent watcher")
+AGENT_IDS=(terminal claude codex opencode paseo menubar)
+AGENT_NAMES=("Terminal commands" "Claude Code" "Codex" "opencode" "Paseo" "Menu bar")
+AGENT_TARGETS=("~/.zshrc" "~/.claude/settings.json" "~/.codex/hooks.json" "opencode plugin dir" "LaunchAgent watcher" "login item")
 
 # Every selection array is sized from AGENT_IDS rather than written out by hand,
 # so adding an integration above can't leave a short array behind.
@@ -88,6 +89,7 @@ Integration ids:
   codex      Codex UserPromptSubmit/Stop hooks
   opencode   opencode plugin (session idle / error / permission)
   paseo      Paseo LaunchAgent watcher
+  menubar    menu bar item (pause, recent alerts, mutes), started at login
 USAGE
 }
 
@@ -178,6 +180,12 @@ agent_available() {
     codex) [[ -d "$HOME/.codex" || -f "$HOME/.codex/hooks.json" ]] ;;
     opencode) find_opencode >/dev/null 2>&1 || [[ -d "$(dirname "$(opencode_plugin_dir)")" ]] ;;
     paseo) find_paseo >/dev/null 2>&1 ;;
+    # A built helper, or the means to build one; ada-menubar.sh does the build.
+    menubar)
+      [[ -f "$dir/ada-menubar.sh" ]] || return 1
+      __ada_find_helper "$dir" ada-menubar >/dev/null && return 0
+      [[ -f "$dir/Package.swift" ]] && find_swift >/dev/null 2>&1
+      ;;
     *) return 1 ;;
   esac
 }
@@ -185,7 +193,7 @@ agent_available() {
 agent_default_selected() {
   case "$1" in
     terminal) return 0 ;;
-    claude|codex|opencode|paseo) agent_available "$1" ;;
+    claude|codex|opencode|paseo|menubar) agent_available "$1" ;;
     *) return 1 ;;
   esac
 }
@@ -212,6 +220,11 @@ agent_status() {
       ;;
     paseo)
       if find_paseo >/dev/null 2>&1; then printf 'detected'; else printf 'not found'; fi
+      ;;
+    menubar)
+      if [[ -f "$HOME/Library/LaunchAgents/com.ada.menubar.plist" ]]; then printf 'installed'
+      elif agent_available menubar; then printf 'will add login item'
+      else printf 'needs swift to build'; fi
       ;;
   esac
 }
@@ -524,6 +537,17 @@ install_paseo() {
   "$dir/ada-paseo-watch.sh" install
 }
 
+# The login item's staging and plist live in ada-menubar.sh, beside the Paseo
+# watcher's, so the installer only delegates.
+install_menubar() {
+  say "Installing menu bar -> login item"
+  if [[ "$dry_run" == 1 ]]; then
+    say "dry-run: would run $dir/ada-menubar.sh install"
+    return 0
+  fi
+  "$dir/ada-menubar.sh" install
+}
+
 run_test_alert() {
   [[ "$run_test" == 1 ]] || return 0
   say "Firing a sample alert"
@@ -606,6 +630,7 @@ for (( i=0; i<${#AGENT_IDS[@]}; i++ )); do
     codex) install_codex ;;
     opencode) install_opencode ;;
     paseo) install_paseo ;;
+    menubar) install_menubar ;;
   esac
 done
 

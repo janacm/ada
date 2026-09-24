@@ -75,8 +75,11 @@ removed.
   choosing which integrations trigger ADA.
 - The installer must offer an interactive terminal selector when run from a TTY
   and a scriptable `--agents` path for non-interactive install flows.
-- The selector must include Terminal commands, Claude Code, Codex, opencode, and
-  Paseo as independently selectable integrations.
+- The selector must include Terminal commands, Claude Code, Codex, opencode,
+  Paseo, and the Menu bar login item as independently selectable rows. The
+  Menu bar row must be available when `ada-menubar` is built or can be (a
+  `Package.swift` and swift), selected by default when available, and must
+  delegate to `ada-menubar.sh install`.
 - The selector must move with the up/down arrow keys as well as `j`/`k` under
   macOS `/bin/bash` 3.2, which accepts only whole-second `read -t` timeouts.
 - The shared alert runtime files, including the native `ada-alert` helper, must
@@ -186,8 +189,30 @@ removed.
 - The SwiftPM package must expose an optional `ada-menubar` executable product
   that runs as a native macOS menu bar status item.
 - The menu bar helper must not be an alert renderer or a replacement for the
-  terminal, Claude/Codex, or Paseo integrations; it may provide convenience
-  actions such as firing a sample alert and opening the ADA folder.
+  terminal, Claude/Codex, opencode or Paseo integrations. Its menu must offer:
+  the pause state and Pause (for 1 hour, until the next 08:00 at least an hour
+  away, until resumed) or Resume; the 10 newest history entries, marking those
+  a pause or mute dropped, where choosing one opens its click target (the click
+  URL, else the focus app's bundle id, never a `file:` URL); the muted
+  sessions, each named by its marker label, else its newest history label,
+  else its kind and a short id, with Unmute and Unmute All; the
+  `lib/ada-status.sh` report with Set Up Integrations; Send Test Alert; Open
+  ADA Folder; Quit. Its icon must show whether alerts are paused.
+- The menu bar must change state only by running the script that owns it
+  (`ada-pause.sh`, `ada-mute.sh clear`, `ada-history.sh clear`). It may read
+  the pause file, history and mute markers directly, with the same rules those
+  scripts apply, because running a script on every menu open is too slow.
+- Everything the menu bar decides must live in `ADAAlertCore` with Swift
+  Testing coverage; `ada-menubar --print-menu` must print the menu built from
+  real state, so the suite can check it against the scripts without a window.
+- Only `--check`, `--print-menu` and `--help` may run without starting the
+  app; any other argument must exit 2 rather than put a status item on screen.
+- One menu bar must run per user (an exclusive lock in `$TMPDIR`). Started by
+  launchd, it must exit 75 when the binary at its launch path is replaced (a
+  `brew upgrade`, a re-stage) so launchd restarts the new one, and exit 0 when
+  that path is gone for two checks in a row.
+- Set Up Integrations must hand the installer to Terminal as a `.command` file,
+  so the menu bar itself never runs anything under a TCC-protected folder.
 - The menu bar helper must trigger alerts through `ada-show-alert.sh` so it
   shares the same native-only rendering path and configuration as every other
   entry point.
@@ -520,6 +545,28 @@ removed.
 - `ada-paseo-watch.sh test` must fire one sample alert through the shared
   launcher.
 
+## Menu Bar LaunchAgent
+
+- `ada-menubar.sh install` must make the menu bar a login item: a LaunchAgent
+  `com.ada.menubar` whose plist runs the `ada-menubar` binary with `RunAtLoad`,
+  `KeepAlive` restarting it only after an unsuccessful exit (so Quit keeps it
+  off until the next login or `ada-menubar.sh start`), `LimitLoadToSessionType
+  Aqua`, `AbandonProcessGroup` (a Test Alert window outlives it), and the same
+  baked-in `PATH` as the Paseo watcher.
+- It must stage like the Paseo watcher, through `lib/ada-stage.sh`, into the
+  same directory (`ADA_MENUBAR_INSTALL_DIR`, else `ADA_PASEO_INSTALL_DIR`, else
+  `~/.local/share/ada`), adding the `ada-menubar` helper, which it builds when
+  missing. A Homebrew install must run in place and must fail if a runtime file
+  or either helper is missing.
+- Installing, uninstalling or restaging one job must not break the other's
+  runtime; `uninstall` removes only its own plist.
+- `status` must report running, loaded but not running, or not installed; the
+  runtime the plist names; a stage that differs from the checkout, helpers
+  included; where the stage came from (`stage-info`); and the log.
+- `start` must load an installed but unloaded job and `kickstart` it.
+- `__ada_stable_dir` must stay identical in `ada-install.sh`,
+  `ada-paseo-watch.sh` and `ada-menubar.sh`, which a test checks.
+
 ## Dependencies And Degradation
 
 - `zsh` is required for terminal command hook integration.
@@ -567,6 +614,16 @@ removed.
 
 ## Change Log
 
+- 2026-09-24: The menu bar item is a real control surface and a login item. Its
+  bell shows whether alerts are paused, and its menu pauses and resumes them,
+  lists the recent alerts (a dropped Claude turn is one click from its
+  conversation), unmutes sessions, and shows the `--status` report. The
+  installer's new Menu bar row runs `ada-menubar.sh install`, which stages it
+  beside the Paseo watcher; a Homebrew install runs in place and restarts itself
+  after `brew upgrade`. The menu's decisions live in `ADAAlertCore`, and
+  `ada-menubar --print-menu` prints the menu from real state for the tests. An
+  older build treated every argument but `--check` as "start the app"; now any
+  other argument exits 2.
 - 2026-09-24: `ada-setup --status` reports which integrations are wired and
   whether each still works, from the markers the installer writes, including
   hooks that point at a deleted checkout. The report and the finders it shares

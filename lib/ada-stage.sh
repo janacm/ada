@@ -2,7 +2,7 @@
 # =============================================================
 # ada-stage — what the LaunchAgent front doors share
 # -------------------------------------------------------------
-# ada-paseo-watch.sh (and the menu bar's front door) install a LaunchAgent, and
+# ada-paseo-watch.sh and ada-menubar.sh each install a LaunchAgent, and
 # a LaunchAgent cannot exec anything under a TCC-protected folder (~/Documents,
 # ~/Desktop, ~/Downloads, or a symlink into one), nor can anything it starts.
 # So a dev checkout is staged into one per-user directory (~/.local/share/ada)
@@ -20,10 +20,11 @@
 # failed for want of ada-notify.sh). The installer, ada.sh, the Claude hook and
 # the opencode plugin are deliberately absent: a staged installer would wire
 # integrations to the stage.
-ADA_RUNTIME_FILES=(ada-paseo-watch.sh alert.html
+ADA_RUNTIME_FILES=(ada-paseo-watch.sh ada-menubar.sh alert.html
                    lib/ada-paseo-watch.py lib/ada-show-alert.sh
                    lib/ada-snooze-daemon.py lib/ada-mute.sh lib/ada-pause.sh
-                   lib/ada-history.sh lib/ada-notify.sh lib/ada-stage.sh)
+                   lib/ada-history.sh lib/ada-notify.sh lib/ada-stage.sh
+                   lib/ada-status.sh)
 
 # True when <dir> is a Homebrew install: under $(brew --prefix)/opt, which is
 # outside every TCC root and survives upgrades, so launchd can run it in place.
