@@ -89,6 +89,18 @@ follow-up commit on `main`. `--no-formula` prints the fields instead of
 committing; `--no-push` tags locally only. Validate with `brew style
 Formula/ada.rb`, then `brew install` / `brew test janacm/ada/ada`.
 
+**Releases are automated from PR labels** (`.github/workflows/release.yml`).
+Merging a PR labelled `release:minor` (v0.4 -> v0.5) or `release:major` (v0.4 ->
+v1.0) runs the bats suite on macOS against `main` and then `./release.sh` with
+the next version; an unlabelled merge releases nothing. The label must be on the
+PR **before** the merge, because the workflow reads the close event and a re-run
+replays that same event; a forgotten label means a manual `./release.sh`. It uses
+`pull_request_target` so fork PRs still get a write token, which is only safe
+because it never checks out the PR head, only `main` after the merge. If `main`
+moves while the job runs, `release.sh` refuses (HEAD != origin/main) and
+re-running the job releases the newer `main`. `.github/workflows/test.yml` runs
+the same suite on every PR and every direct push to `main`.
+
 ## Native helper is the only renderer
 
 `ada-alert` is a SwiftPM executable that opens `alert.html` in an AppKit/WebKit

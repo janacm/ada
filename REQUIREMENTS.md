@@ -68,6 +68,13 @@ removed.
   committed formula `url` and `sha256` must match the released GitHub tarball,
   and the formula on the default branch (the tap tip) is the version users
   install.
+- Merging a PR labelled `release:minor` or `release:major` into the default
+  branch must cut the next minor or major version through `release.sh`, after
+  the bats suite passes on the merged default branch. An unlabelled merge must
+  not release. The release workflow must never check out or run the PR's head,
+  only the default branch after the merge, because it holds a write token.
+- Every PR and every direct push to the default branch must run the bats suite
+  on macOS with the native helper built, so no test skips for lack of it.
 
 ## Onboarding Installer
 
@@ -550,6 +557,9 @@ removed.
   id="c339"> hey …`. Each paste now collapses to `[pasted text]` beside typed
   text, and a paste-only prompt shows the pasted text without the injected-block
   rules. Tags are paired in one linear pass, so unclosed tags can't stall the hook.
+- 2026-09-22: Releases are automated. Merging a PR labelled `release:minor` or
+  `release:major` runs the bats suite and `release.sh` with the next version, and
+  a new `test` workflow runs the suite on every PR and push to `main`.
 - 2026-09-17: Claude Code / Codex alert labels are now derived from the prompt
   rather than printing it verbatim. `UserPromptSubmit` also fires for messages
   the agent injects, so a turn that began with a background-task notification

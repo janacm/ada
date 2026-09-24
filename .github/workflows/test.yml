@@ -1,0 +1,28 @@
+name: test
+
+# The bats suite on every PR and every direct push to main. macOS because the
+# suite drives the real launcher, which needs the Swift ada-alert helper (tests
+# that need it skip rather than fail without it, so a missing build would pass
+# silently).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  bats:
+    runs-on: macos-latest
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bats
+        run: brew install bats-core
+      - name: Build the native alert helper
+        run: swift build -c release --product ada-alert
+      - name: Run the bats suite
+        run: bats test/

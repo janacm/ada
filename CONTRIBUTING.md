@@ -119,14 +119,17 @@ lives at [`Formula/ada.rb`](Formula/ada.rb) and users install with
 the tap tip (the default branch) is what users install, the released formula
 must be committed to `main`.
 
-To cut a release:
+Releases are cut automatically: label a PR `release:minor` or `release:major`
+**before** merging it, and the `release` workflow runs the test suite and cuts
+the next version (v0.4 -> v0.5, or v0.4 -> v1.0). Unlabelled merges release
+nothing. A label added after the merge is not seen, so in that case, or to
+release by hand, run from an up-to-date `main`:
 
 ```sh
-./release.sh vX.Y.Z          # tags, pushes the tag, and prints url + sha256
+./release.sh vX.Y            # tags, pushes, and commits the formula bump to main
 ```
 
-Then paste the printed `url` and `sha256` into `Formula/ada.rb`, commit, and push
-`main`. Verify before announcing:
+Verify before announcing:
 
 ```sh
 brew style Formula/ada.rb                                   # lint the formula
