@@ -11,9 +11,9 @@ agent turn runs longer than a threshold, `ada` opens a maximized alert window sh
 command or prompt, the git repo it ran in, how long it took, and its exit status
 (green for success, red for failure). Click anywhere or press `Esc` to dismiss;
 it also auto-closes after a configurable timeout. Not ready to deal with it yet?
-Hit a
-**Snooze** button (5/10/30/60 min by default) and it'll pop the same alert back
-up later.
+Click
+**Snooze**, pick a delay (5/10/30/60 min by default) and it'll pop the same
+alert back up later.
 
 If you're still looking at the terminal that ran the command when it finishes,
 the output is right in front of you and the alert is just noise — so by default
@@ -109,8 +109,10 @@ git clone https://github.com/janacm/ada.git ~/.ada
 ~/.ada/ada-install.sh
 ```
 
-The installer builds the native renderer when needed, then shows an interactive
-selector for the integrations you want:
+The installer builds the native renderer when needed, and rebuilds it when the
+Swift sources are newer than your last build (so re-running it after a
+`git pull` picks up helper changes), then shows an interactive selector for the
+integrations you want:
 
 - **Terminal commands** — adds a managed `ada` block to `~/.zshrc`.
 - **Claude Code** — merges `UserPromptSubmit` and `Stop` hooks into
@@ -475,10 +477,17 @@ ADA_PASEO_EVENTS="finish permission"
 ## Snoozing the alert
 
 Sometimes the build's done but you're not ready to context-switch back. The
-alert shows a row of **Snooze** buttons — `5 10 30 60` minutes by default,
-configurable with `ADA_SNOOZE_MINUTES`. Click one and the window closes now and
-the *same* alert (same command, duration, exit code) pops back up after the
-delay, labelled as a snoozed reminder. You can snooze a reminder again.
+alert has a **Snooze** button under the dismiss hint; click it to reveal the
+delays, `5 10 30 60` minutes by default, configurable with `ADA_SNOOZE_MINUTES`.
+Click one and the window closes now and the *same* alert (same command,
+duration, exit code) pops back up after the delay, labelled as a snoozed
+reminder. You can snooze a reminder again.
+
+If you snooze often, click **Pin open** at the end of that row and every later
+alert shows the delays already expanded. Click it again (it reads **Pinned
+open** while on) to go back to the collapsed button. The native helper stores
+the choice in user defaults (`defaults read com.ada.alert snoozePinned`), so it
+survives reboots and upgrades; `defaults delete com.ada.alert` resets it.
 
 Need a duration that isn't on the list? Click **Custom** to reveal a minutes
 input, type any value (1–1440), and press Enter or **Set**. `Esc` while it's

@@ -156,25 +156,110 @@
     color: #a1a1aa;
   }
 
+  /* The bar is a "Snooze" toggle over a collapsed row of options. display:flex
+     would beat the [hidden] UA rule (see .badge.repo), so [hidden] is restated. */
   .snooze {
     margin-top: 2rem;
     display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.9rem;
+  }
+
+  .snooze[hidden] { display: none; }
+
+  .snooze-toggle {
+    appearance: none;
+    cursor: pointer;
+    font: inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: #a1a1aa;
+    font-size: 0.9rem;
+    font-weight: 500;
+    padding: 0.4rem 0.95rem;
+    border-radius: 999px;
+    background: rgba(39, 39, 42, 0.6);
+    border: 1px solid rgba(63, 63, 70, 0.6);
+    transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .snooze-toggle:hover,
+  .snooze.is-open .snooze-toggle {
+    color: #c7d2fe;
+    border-color: rgba(99, 102, 241, 0.45);
+    background: rgba(99, 102, 241, 0.1);
+  }
+
+  .snooze-toggle svg { width: 15px; height: 15px; }
+  .snooze-toggle .snooze-chevron { width: 13px; height: 13px; transition: transform 0.15s ease; }
+  .snooze.is-open .snooze-chevron { transform: rotate(180deg); }
+
+  .snooze-options {
+    display: none;
     align-items: center;
     justify-content: center;
     gap: 0.6rem;
     flex-wrap: wrap;
   }
 
-  .snooze-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    color: #71717a;
-    font-size: 0.9rem;
-    font-weight: 500;
+  .snooze.is-open .snooze-options {
+    display: flex;
+    animation: snooze-reveal 0.15s ease-out;
   }
 
-  .snooze-label svg { width: 15px; height: 15px; }
+  @keyframes snooze-reveal {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Pin: a quieter pill after a divider, so it reads as a setting on the row
+     rather than one more duration. */
+  .snooze-pin {
+    appearance: none;
+    cursor: pointer;
+    font: inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-left: 0.4rem;
+    padding: 0.45rem 0.9rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #71717a;
+    background: transparent;
+    border: 1px dashed rgba(82, 82, 91, 0.7);
+    position: relative;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .snooze-pin::before {
+    content: "";
+    position: absolute;
+    left: -0.75rem;
+    top: 20%;
+    height: 60%;
+    border-left: 1px solid rgba(63, 63, 70, 0.8);
+  }
+
+  .snooze-pin svg { width: 13px; height: 13px; }
+  .snooze-pin:hover { color: #d4d4d8; border-color: rgba(113, 113, 122, 0.9); }
+
+  .snooze-pin[aria-pressed="true"] {
+    color: #c7d2fe;
+    border-style: solid;
+    border-color: rgba(99, 102, 241, 0.45);
+    background: rgba(99, 102, 241, 0.1);
+  }
+
+  .snooze-toggle:focus-visible,
+  .snooze-pin:focus-visible,
+  .snooze-btn:focus-visible {
+    outline: 2px solid rgba(129, 140, 248, 0.8);
+    outline-offset: 2px;
+  }
 
   .snooze-btn {
     appearance: none;
@@ -311,6 +396,8 @@
     .icon { animation: none; }
     .container { animation: none; }
     .snooze-custom-input.invalid { animation: none; }
+    .snooze.is-open .snooze-options { animation: none; }
+    .snooze-chevron { transition: none; }
   }
 </style>
 </head>
@@ -344,10 +431,17 @@
   <p class="dismiss-hint" id="dismissHint">Click anywhere or press <kbd>Esc</kbd> to dismiss</p>
 
   <div class="snooze" id="snoozeBar" hidden>
-    <span class="snooze-label">
+    <button type="button" class="snooze-toggle" id="snoozeToggle" aria-expanded="false" aria-controls="snoozeOptions">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l2.5 2.5"/><circle cx="12" cy="13" r="8"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/></svg>
       Snooze
-    </span>
+      <svg class="snooze-chevron" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+    <div class="snooze-options" id="snoozeOptions">
+      <button type="button" class="snooze-pin" id="snoozePin" aria-pressed="false" title="Show these options on every alert">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
+        <span id="snoozePinLabel">Pin open</span>
+      </button>
+    </div>
   </div>
 </div>
 
@@ -518,8 +612,36 @@
   });
 
   // Render the snooze options the launcher passed through (ADA_SNOOZE_MINUTES).
+  // The durations sit collapsed behind a "Snooze" toggle unless the user pinned
+  // them open. The pin outlives this page: the native helper injects the stored
+  // value as window.adaPrefs before this script runs and saves changes posted to
+  // its adaSnoozePin handler. Without that bridge the pin lasts for this alert.
   if (snoozeEnabled) {
     const bar = document.getElementById('snoozeBar');
+    const toggle = document.getElementById('snoozeToggle');
+    const options = document.getElementById('snoozeOptions');
+    const pinBtn = document.getElementById('snoozePin');
+    const pinLabel = document.getElementById('snoozePinLabel');
+    let pinned = window.adaPrefs?.snoozePinned === true;
+
+    function setOpen(open) {
+      bar.classList.toggle('is-open', open);
+      toggle.setAttribute('aria-expanded', String(open));
+      if (!open) cancelCustom();
+    }
+    function renderPin() {
+      pinBtn.setAttribute('aria-pressed', String(pinned));
+      pinLabel.textContent = pinned ? 'Pinned open' : 'Pin open';
+      pinBtn.title = pinned
+        ? 'Unpin: keep these options behind the Snooze button'
+        : 'Show these options on every alert';
+    }
+    function setPinned(next) {
+      pinned = next;
+      renderPin();
+      try { window.webkit?.messageHandlers?.adaSnoozePin?.postMessage(pinned); } catch (e) {}
+    }
+
     const mins = (params.get('snoozemins') || '5,10,30,60')
       .split(',').map(n => parseInt(n, 10)).filter(n => Number.isFinite(n) && n > 0);
     for (const m of mins) {
@@ -528,7 +650,7 @@
       btn.className = 'snooze-btn';
       btn.textContent = m + 'm';
       btn.addEventListener('click', (e) => { e.stopPropagation(); snooze(m); });
-      bar.appendChild(btn);
+      options.insertBefore(btn, pinBtn);
     }
 
     // Custom duration: a pill that reveals a number input only once clicked.
@@ -589,11 +711,19 @@
 
     customWrap.appendChild(customInput);
     customWrap.appendChild(customSet);
-    bar.appendChild(customBtn);
-    bar.appendChild(customWrap);
+    options.insertBefore(customBtn, pinBtn);
+    options.insertBefore(customWrap, pinBtn);
+
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setOpen(!bar.classList.contains('is-open'));
+    });
+    pinBtn.addEventListener('click', (e) => { e.stopPropagation(); setPinned(!pinned); });
 
     // Clicks on the bar's empty space shouldn't bubble to the dismiss handler.
     bar.addEventListener('click', (e) => e.stopPropagation());
+    renderPin();
+    setOpen(pinned);
     bar.hidden = false;
   }
 

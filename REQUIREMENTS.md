@@ -84,6 +84,12 @@ removed.
   whether the launcher exists.
 - The installer must build or validate the native `ada-alert` helper before it
   installs integrations or fires a sample alert.
+- The installer and `ada-paseo-watch.sh install` must rebuild a SwiftPM
+  `.build/` helper that is older than `Package.swift` or any `Sources/**/*.swift`,
+  so re-running either after a `git pull` never keeps or stages a helper that
+  predates the checkout. A prebuilt `ada-alert` at the install root (Homebrew's)
+  must never be rebuilt. A failed rebuild must warn and continue with the older
+  helper rather than abort. `ADA_REBUILD_HELPER=0` disables the check.
 - The installer must detect whether each integration target is available before
   selecting or installing it.
 - The installer must be idempotent: re-running it must update existing managed
@@ -209,6 +215,16 @@ removed.
 
 - `ADA_SNOOZE_MINUTES` must define the snooze button options, preserving an
   explicit empty value as "hide snooze buttons".
+- The snooze options must start collapsed behind a single "Snooze" toggle that
+  reveals them on click and hides them on a second click, without dismissing the
+  alert.
+- The revealed options must include a pin toggle. While pinned, every later
+  alert (including snoozed relaunches) must open with the options already
+  expanded; unpinning restores the collapsed default. The native helper must
+  persist the pin in user defaults (suite `com.ada.alert`, key `snoozePinned`),
+  inject it into the page before the page's script runs, and accept only a
+  boolean from the page. Without the native bridge the pin may last for the
+  current alert only.
 - The snooze bar must offer a "Custom" option that reveals a minutes input only
   once clicked; submitting it must request a snooze for the entered duration,
   subject to the same positive/≤24h bound as the preset buttons.
@@ -456,6 +472,21 @@ removed.
 
 ## Change Log
 
+- 2026-09-24: `ada-install.sh` and `ada-paseo-watch.sh install` rebuild a
+  `.build/` helper older than the Swift sources. Both used any existing helper,
+  so after a `git pull` a Paseo re-stage copied the old binary next to the new
+  `alert.html`, and the snooze pin (a new `adaSnoozePin` handler) did nothing.
+  The check (`__ada_helper_stale`) is duplicated in both scripts, like
+  `__ada_stable_dir`, and the test suite sets `ADA_REBUILD_HELPER=0` so a run
+  never starts a real build in the developer's checkout.
+- 2026-09-24: The snooze delays collapse behind a **Snooze** toggle, with a
+  **Pin open** option that keeps them expanded on every alert. The pin lives in
+  user defaults (`com.ada.alert` / `snoozePinned`) because each alert is a fresh
+  `file://` page in a fresh helper process. The native helper injects it as
+  `window.adaPrefs` and saves changes from a new `adaSnoozePin` handler, and the
+  boolean-only rule for that message is in `ADAAlertCore` (`SnoozePreference`).
+  The snooze bar also stops rendering its label when snooze is disabled: its
+  `display:flex` had been overriding `[hidden]`.
 - 2026-09-23: The menu bar's **Test Alert** finds the launcher again. It looked
   for `ada-show-alert.sh` at the install root, but the launcher moved to `lib/`
   on 2026-06-18, so every documented layout showed "Missing launcher"; a SwiftPM

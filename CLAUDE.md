@@ -30,7 +30,11 @@ commands, Claude Code, Codex, and Paseo. Keep it idempotent: shell setup uses a
 managed block in `~/.zshrc`; Claude/Codex setup must merge JSON hooks without
 removing unrelated hooks; Paseo setup must delegate to `ada-paseo-watch.sh
 install` so LaunchAgent staging stays centralized. The installer must build or
-validate `ada-alert` because there is no browser fallback. Preserve the
+validate `ada-alert` because there is no browser fallback, and rebuilds a
+`.build/` helper older than the Swift sources. That staleness check
+(`__ada_helper_stale`) is duplicated in `ada-paseo-watch.sh`; change both. The
+suite sets `ADA_REBUILD_HELPER=0` because many tests run the installer straight
+from the repo and would otherwise start a real `swift build` there. Preserve the
 scriptable `--agents`, `--list`, `--dry-run`, and `--no-test` paths because
 those are the scriptable surface that Homebrew's `ada-setup` wrapper and future
 curl automation build on.
@@ -273,8 +277,9 @@ internal scripts (`ada-paseo-watch.py`, `ada-show-alert.sh`,
 layouts identical is load-bearing: the watcher resolves `ada-show-alert.sh` via
 `$dir/lib/…` / a sibling of the `.py`, so a flat stage would break every Paseo
 alert from the LaunchAgent while still working in a dev checkout (the classic
-masking failure). The installer builds `ada-alert` with SwiftPM when needed and
-fails if it cannot stage the helper. Re-run `install` after editing any of those
+masking failure). The installer builds `ada-alert` with SwiftPM when needed (missing,
+or a `.build/` copy older than `Package.swift` / `Sources/`) and fails if it
+cannot stage any helper; a failed *re*build stages the older one with a warning. Re-run `install` after editing any of those
 scripts or rebuilding the helper to re-stage (`status` prints both `runtime:` and,
 when a staged file's contents differ from the checkout's, `source:` — that is
 how you spot a stale stage). The
@@ -496,6 +501,28 @@ from the click-to-focus deep-link path above (which signals the snooze daemon to
 helper, needs no daemon, and fires only for the feedback link — clicks inside the
 note are kept off the dismiss handler with `stopPropagation`. The link currently
 points at the project's GitHub issues.
+
+## The snooze pin lives in user defaults, not the page
+
+The snooze delays sit collapsed behind a "Snooze" toggle, and the row's **Pin
+open** button keeps them expanded on every later alert. The page cannot
+remember that itself: each alert is a fresh `file://` load in a fresh
+`ada-alert` process. So the helper reads `snoozePinned` from the
+`com.ada.alert` defaults suite, injects it at document start as
+`window.adaPrefs.snoozePinned`, and stores whatever boolean the page posts to
+the `adaSnoozePin` handler. `SnoozePreference` in `ADAAlertCore` owns the key,
+the script, and the boolean-only message rule. A named suite, because an
+unbundled SwiftPM executable has no bundle id for `UserDefaults.standard`.
+
+A staged Paseo copy of `ada-alert` built before this handler existed just has
+no pin: the page treats a missing `adaPrefs` as unpinned and the post is a
+no-op. Re-running `ada-paseo-watch.sh install` fixes it: staging rebuilds a
+`.build/` helper older than the Swift sources before copying it.
+
+To check the round trip without clicking, load a probe page that posts
+`!window.adaPrefs?.snoozePinned` to `adaSnoozePin` and closes, run it twice
+through `.build/debug/ada-alert file://…`, and watch
+`defaults read com.ada.alert snoozePinned` go 1 then 0.
 
 ## Window geometry
 
