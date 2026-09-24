@@ -192,6 +192,25 @@ __ada_from_brew_prefix() {
 runtime_files=(ada-paseo-watch.sh alert.html lib/ada-paseo-watch.py
                lib/ada-show-alert.sh lib/ada-snooze-daemon.py)
 
+# True when $1 is a SwiftPM build of this checkout that is older than the
+# checkout's Swift sources: a `git pull` brought in helper changes (a new message
+# handler, say) since the last build, and copying or using the old binary would
+# silently drop them. Only a .build/ output counts; a prebuilt $dir/ada-alert
+# (Homebrew's, inside a read-only keg) or any other path is used as-is.
+# ADA_REBUILD_HELPER=0 turns the check off, which the test suite does so a run
+# from a dev checkout never kicks off a real swift build.
+# Deliberately duplicated in ada-install.sh and ada-paseo-watch.sh, like
+# __ada_stable_dir and for the same reason.
+__ada_helper_stale() {
+  local helper=$1
+  [[ "${ADA_REBUILD_HELPER:-1}" != 0 ]] || return 1
+  case "$helper" in "$dir"/.build/*) ;; *) return 1 ;; esac
+  [[ -f "$dir/Package.swift" ]] || return 1
+  [[ "$dir/Package.swift" -nt "$helper" ]] && return 0
+  [[ -d "$dir/Sources" ]] || return 1
+  [[ -n "$(find "$dir/Sources" -name '*.swift' -newer "$helper" -print -quit 2>/dev/null)" ]]
+}
+
 # The native helper a stage would copy from this checkout, if any.
 __ada_source_native_alert() {
   local f
@@ -235,15 +254,32 @@ __ada_stage_runtime() {
     fi
   done
 
-  local native_alert=""
+  # Build a missing helper, and rebuild one older than the Swift sources so the
+  # stage never freezes a binary that predates the page it ships with. A failed
+  # rebuild still stages the old helper: it renders alerts, just without the
+  # newer features.
+  local native_alert="" stale=0
   native_alert=$(__ada_source_native_alert) || native_alert=""
-  if [[ -z "$native_alert" && -f "$dir/Package.swift" ]] && command -v swift >/dev/null 2>&1; then
-    echo "Building native alert helper..."
-    if (cd "$dir" && swift build -c release --product ada-alert >/dev/null 2>&1); then
+  [[ -n "$native_alert" ]] && __ada_helper_stale "$native_alert" && stale=1
+  if [[ ( -z "$native_alert" || "$stale" == 1 ) && -f "$dir/Package.swift" ]] \
+     && command -v swift >/dev/null 2>&1; then
+    if [[ "$stale" == 1 ]]; then
+      echo "Rebuilding native alert helper (Swift sources changed since the last build)..."
+    else
+      echo "Building native alert helper..."
+    fi
+    if (cd "$dir" && swift build -c release --product ada-alert >/dev/null 2>&1) \
+       && [[ -x "$dir/.build/release/ada-alert" ]]; then
+      # SwiftPM leaves an up-to-date binary untouched; stamp it so a touched but
+      # unchanged source doesn't trigger a rebuild on every install.
+      touch "$dir/.build/release/ada-alert"
       native_alert="$dir/.build/release/ada-alert"
     else
       echo "ada-paseo-watch: native helper build failed." >&2
     fi
+  fi
+  if [[ "$stale" == 1 ]] && __ada_helper_stale "$native_alert"; then
+    echo "ada-paseo-watch: staging the older $native_alert; rebuild with: swift build -c release --product ada-alert" >&2
   fi
   if [[ -z "$native_alert" ]]; then
     echo "ada-paseo-watch: native helper ada-alert is required." >&2

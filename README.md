@@ -109,8 +109,10 @@ git clone https://github.com/janacm/ada.git ~/.ada
 ~/.ada/ada-install.sh
 ```
 
-The installer builds the native renderer when needed, then shows an interactive
-selector for the integrations you want:
+The installer builds the native renderer when needed, and rebuilds it when the
+Swift sources are newer than your last build (so re-running it after a
+`git pull` picks up helper changes), then shows an interactive selector for the
+integrations you want:
 
 - **Terminal commands** — adds a managed `ada` block to `~/.zshrc`.
 - **Claude Code** — merges `UserPromptSubmit` and `Stop` hooks into

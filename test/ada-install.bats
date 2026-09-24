@@ -569,6 +569,93 @@ SH
   assert_output_contains "did not produce an executable ada-alert"
 }
 
+# --- rebuilding a stale helper ---------------------------------------------
+# A .build/ helper older than the Swift sources predates a `git pull` and is
+# rebuilt. Dates are pinned with touch -t so "older" never depends on timing.
+
+stale_helper_checkout() {
+  full_checkout_without_helper
+  export ADA_REBUILD_HELPER=1
+  mkdir -p "$CHECKOUT/.build/release" "$CHECKOUT/Sources/ADAAlert"
+  printf '#!/bin/sh\nexit 7\n' > "$CHECKOUT/.build/release/ada-alert"
+  chmod +x "$CHECKOUT/.build/release/ada-alert"
+  touch -t 202001010000 "$CHECKOUT/Package.swift" "$CHECKOUT/.build/release/ada-alert"
+  touch -t 202101010000 "$CHECKOUT/Sources/ADAAlert/main.swift"
+}
+
+@test "a helper older than the Swift sources is rebuilt" {
+  stale_helper_checkout
+  run "$CHECKOUT/ada-install.sh" --agents terminal --no-test
+  assert_success
+  assert_output_contains "Swift sources changed since $CHECKOUT/.build/release/ada-alert was built; rebuilding"
+  assert_file_contains "$BATS_TEST_TMPDIR/swift.log" "build -c release --product ada-alert"
+  assert_file_contains "$CHECKOUT/.build/release/ada-alert" "exit 0"
+}
+
+@test "a newer Package.swift alone marks the helper stale" {
+  stale_helper_checkout
+  touch -t 201901010000 "$CHECKOUT/Sources/ADAAlert/main.swift"
+  touch -t 202101010000 "$CHECKOUT/Package.swift"
+  run "$CHECKOUT/ada-install.sh" --agents terminal --no-test
+  assert_success
+  assert_file_contains "$BATS_TEST_TMPDIR/swift.log" "build -c release"
+}
+
+@test "a helper newer than every Swift source is used without a build" {
+  stale_helper_checkout
+  touch -t 202201010000 "$CHECKOUT/.build/release/ada-alert"
+  run "$CHECKOUT/ada-install.sh" --agents terminal --no-test
+  assert_success
+  assert_output_contains "Native alert helper -> $CHECKOUT/.build/release/ada-alert"
+  [ ! -e "$BATS_TEST_TMPDIR/swift.log" ]
+}
+
+@test "the rebuild stamps the helper, so the next install does not build again" {
+  stale_helper_checkout
+  run "$CHECKOUT/ada-install.sh" --agents terminal --no-test
+  assert_success
+  rm "$BATS_TEST_TMPDIR/swift.log"
+  run "$CHECKOUT/ada-install.sh" --agents terminal --no-test
+  assert_success
+  [ ! -e "$BATS_TEST_TMPDIR/swift.log" ]
+}
+
+@test "a failed rebuild keeps the older helper and finishes the install" {
+  stale_helper_checkout
+  STUB_SWIFT=fail run "$CHECKOUT/ada-install.sh" --agents terminal --no-test
+  assert_success
+  assert_output_contains "could not rebuild ada-alert; keeping the older $CHECKOUT/.build/release/ada-alert"
+  assert_file_contains "$HOME/.zshrc" "# >>> ada >>>"
+}
+
+@test "--dry-run reports a stale rebuild instead of running it" {
+  stale_helper_checkout
+  run "$CHECKOUT/ada-install.sh" --agents terminal --dry-run --no-test
+  assert_success
+  assert_output_contains "dry-run: would rebuild $CHECKOUT/.build/release/ada-alert"
+  [ ! -e "$BATS_TEST_TMPDIR/swift.log" ]
+}
+
+@test "a prebuilt ada-alert at the install root is never rebuilt" {
+  # Homebrew's layout: the helper sits beside the scripts in a read-only keg.
+  stale_helper_checkout
+  rm -r "$CHECKOUT/.build"
+  printf '#!/bin/sh\nexit 0\n' > "$CHECKOUT/ada-alert"
+  chmod +x "$CHECKOUT/ada-alert"
+  touch -t 202001010000 "$CHECKOUT/ada-alert"
+  run "$CHECKOUT/ada-install.sh" --agents terminal --no-test
+  assert_success
+  assert_output_contains "Native alert helper -> $CHECKOUT/ada-alert"
+  [ ! -e "$BATS_TEST_TMPDIR/swift.log" ]
+}
+
+@test "ADA_REBUILD_HELPER=0 skips the staleness check" {
+  stale_helper_checkout
+  ADA_REBUILD_HELPER=0 run "$CHECKOUT/ada-install.sh" --agents terminal --no-test
+  assert_success
+  [ ! -e "$BATS_TEST_TMPDIR/swift.log" ]
+}
+
 # --- the sample alert and Paseo delegation ------------------------------------
 
 @test "without --no-test the installer fires a sample alert" {
