@@ -94,7 +94,8 @@ PY
   mkdir -p "$keg/lib" "$prefix/opt"
   cp "$REPO_ROOT/ada-install.sh" "$REPO_ROOT/ada.sh" "$REPO_ROOT/alert.html" "$keg/"
   cp "$REPO_ROOT/lib/ada-show-alert.sh" "$REPO_ROOT/lib/ada-claude-hook.sh" \
-     "$REPO_ROOT/lib/ada-notify.sh" "$REPO_ROOT/lib/ada-opencode-plugin.mjs" "$keg/lib/"
+     "$REPO_ROOT/lib/ada-notify.sh" "$REPO_ROOT/lib/ada-opencode-plugin.mjs" \
+     "$REPO_ROOT/lib/ada-status.sh" "$REPO_ROOT/lib/ada-stage.sh" "$keg/lib/"
   cp "$REPO_ROOT/ada-alert" "$keg/ada-alert" 2>/dev/null \
     || cp "$REPO_ROOT/.build/release/ada-alert" "$keg/ada-alert"
   ln -s "../Cellar/ada/9.9.9" "$prefix/opt/ada"
@@ -315,7 +316,8 @@ JSON
   mkdir -p "$fake/lib"
   cp "$REPO_ROOT/ada-install.sh" "$fake/"
   cp "$REPO_ROOT/lib/ada-show-alert.sh" "$REPO_ROOT/lib/ada-claude-hook.sh" \
-     "$REPO_ROOT/lib/ada-notify.sh" "$fake/lib/"
+     "$REPO_ROOT/lib/ada-notify.sh" "$REPO_ROOT/lib/ada-status.sh" \
+     "$REPO_ROOT/lib/ada-stage.sh" "$fake/lib/"
   # Everything present EXCEPT lib/ada-opencode-plugin.mjs, which the shim the
   # installer writes will import on every opencode start.
   run "$fake/ada-install.sh" --list
@@ -474,13 +476,31 @@ select_keys() {
 }
 
 # A checkout that is missing part of the runtime. The installer is symlinked in,
-# so it resolves its directory to the fixture, not to the repo.
+# so it resolves its directory to the fixture, not to the repo. The two libs it
+# sources come along unless the test names NO_LIBS.
 make_partial_checkout() {
   CHECKOUT="$BATS_TEST_TMPDIR/checkout"
   mkdir -p "$CHECKOUT/lib"
   ln -s "$REPO_ROOT/ada-install.sh" "$CHECKOUT/ada-install.sh"
-  local f
-  for f in "$@"; do ln -s "$REPO_ROOT/$f" "$CHECKOUT/$f"; done
+  local f libs=1
+  for f in "$@"; do
+    if [[ "$f" == NO_LIBS ]]; then libs=0; else ln -s "$REPO_ROOT/$f" "$CHECKOUT/$f"; fi
+  done
+  if (( libs )); then
+    ln -s "$REPO_ROOT/lib/ada-status.sh" "$CHECKOUT/lib/ada-status.sh"
+    ln -s "$REPO_ROOT/lib/ada-stage.sh" "$CHECKOUT/lib/ada-stage.sh"
+  fi
+}
+
+@test "a checkout missing the libs the installer sources is refused, even for --list" {
+  make_partial_checkout NO_LIBS lib/ada-show-alert.sh lib/ada-claude-hook.sh lib/ada-notify.sh
+  run "$CHECKOUT/ada-install.sh" --list
+  assert_failure
+  assert_output_contains "missing $CHECKOUT/lib/ada-status.sh"
+  ln -s "$REPO_ROOT/lib/ada-status.sh" "$CHECKOUT/lib/ada-status.sh"
+  run "$CHECKOUT/ada-install.sh" --list
+  assert_failure
+  assert_output_contains "missing $CHECKOUT/lib/ada-stage.sh"
 }
 
 @test "a checkout missing the launcher is refused" {
@@ -654,6 +674,33 @@ stale_helper_checkout() {
   ADA_REBUILD_HELPER=0 run "$CHECKOUT/ada-install.sh" --agents terminal --no-test
   assert_success
   [ ! -e "$BATS_TEST_TMPDIR/swift.log" ]
+}
+
+# --- --status: what is wired -------------------------------------------------
+
+@test "--status prints a row per integration without touching anything" {
+  run "$INSTALL" --status
+  assert_success
+  assert_output_contains "terminal  Terminal commands  off"
+  assert_output_contains "claude    Claude Code        unavailable"
+  refute_output_contains "Firing a sample alert"
+  [ ! -e "$HOME/.zshrc" ]
+}
+
+# The status check reads the markers the installer writes, so install through
+# the real installer and require status to see every one of them. This is what
+# keeps the status predicates from drifting away from the install code.
+@test "after installing each integration, --status reports it as ok" {
+  require_native_helper
+  mkdir -p "$HOME/.claude" "$HOME/.codex"
+  run "$INSTALL" --agents terminal,claude,codex,opencode --no-test
+  assert_success
+  run "$INSTALL" --status
+  assert_success
+  assert_output_contains "terminal  Terminal commands  ok           ~/.zshrc sources $REPO_ROOT/ada.sh"
+  assert_output_contains "claude    Claude Code        ok           hooks run $REPO_ROOT/lib/ada-claude-hook.sh"
+  assert_output_contains "codex     Codex              ok           hooks run $REPO_ROOT/lib/ada-claude-hook.sh"
+  assert_output_contains "opencode  opencode           ok           plugin loads $REPO_ROOT/lib/ada-opencode-plugin.mjs"
 }
 
 # --- the sample alert and Paseo delegation ------------------------------------

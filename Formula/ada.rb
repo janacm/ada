@@ -86,6 +86,7 @@ class Ada < Formula
 
         ada-setup --agents terminal,claude,codex,opencode
         ada-setup --list
+        ada-setup --status    # what is wired, and whether it still works
 
       Upgrades: `brew upgrade ada` keeps existing wiring working, because it
       points at the version-stable #{opt_libexec}. Re-run ada-setup only to pick

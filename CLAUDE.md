@@ -32,9 +32,12 @@ removing unrelated hooks; Paseo setup must delegate to `ada-paseo-watch.sh
 install` so LaunchAgent staging stays centralized. The installer must build or
 validate `ada-alert` because there is no browser fallback, and rebuilds a
 `.build/` helper older than the Swift sources. That staleness check
-(`__ada_helper_stale`) is duplicated in `ada-paseo-watch.sh`; change both. The
-suite sets `ADA_REBUILD_HELPER=0` because many tests run the installer straight
-from the repo and would otherwise start a real `swift build` there. Preserve the
+(`__ada_helper_stale`) lives in `lib/ada-stage.sh`, shared with the LaunchAgent
+staging. The installer sources that and `lib/ada-status.sh` (the python3,
+paseo and opencode finders, and the `--status` report) before anything else,
+even `--list`. The suite sets `ADA_REBUILD_HELPER=0` because many tests run the
+installer straight from the repo and would otherwise start a real `swift build`
+there. Preserve the
 scriptable `--agents`, `--list`, `--dry-run`, and `--no-test` paths because
 those are the scriptable surface that Homebrew's `ada-setup` wrapper and future
 curl automation build on.
@@ -267,13 +270,11 @@ watcher with no re-install. Staging a Homebrew install would do the opposite:
 freeze a snapshot brew could never update.
 
 Everything else (a dev checkout, `~/.ada`) **stages** the runtime it needs
-(`ada-paseo-watch.sh`, `ada-paseo-watch.py`, `ada-show-alert.sh`,
-`ada-snooze-daemon.py`, `ada-mute.sh`, `ada-pause.sh`, `ada-history.sh`, `ada-notify.sh`, `alert.html`, and `ada-alert`) into a non-TCC dir —
+(every file in `ADA_RUNTIME_FILES` in `lib/ada-stage.sh`, plus `ada-alert`) into a non-TCC dir —
 `~/.local/share/ada` (override `ADA_PASEO_INSTALL_DIR`) — and points the plist
 there. **Staging mirrors the dev-checkout layout**: the front door
 (`ada-paseo-watch.sh`), `alert.html`, and `ada-alert` sit at the top, while the
-internal scripts (`ada-paseo-watch.py`, `ada-show-alert.sh`,
-`ada-snooze-daemon.py`, `ada-mute.sh`, `ada-pause.sh`, `ada-history.sh`, `ada-notify.sh`) go under `~/.local/share/ada/lib/`. Keeping the two
+internal scripts go under `~/.local/share/ada/lib/`. Keeping the two
 layouts identical is load-bearing: the watcher resolves `ada-show-alert.sh` via
 `$dir/lib/…` / a sibling of the `.py`, so a flat stage would break every Paseo
 alert from the LaunchAgent while still working in a dev checkout (the classic
@@ -286,6 +287,22 @@ how you spot a stale stage). The
 env file lives at `~/.local/share/ada/paseo-watch.env` in **both** modes: the
 plist sets `ADA_PASEO_ENV` explicitly so config survives a `brew upgrade`, which
 replaces `libexec` wholesale.
+
+**The staging code is shared, in `lib/ada-stage.sh`.** The front door loads it
+for `install`, `uninstall` and `status` only (`run` must keep working with just
+the watcher's own files), so it is itself in `ADA_RUNTIME_FILES`: the printed
+uninstall hint runs the *staged* front door. Three rules there are easy to
+undo by accident:
+
+- **One file list for every job that stages here.** A job staged with a shorter
+  list silently loses whatever its scripts source; `ada-mute.sh list` sourcing
+  an unstaged `ada-notify.sh` was the case that surfaced this.
+- **Copy to a temp file and `mv`, never `cp` over a staged file.** A staged
+  binary may be running and a staged script mid-read by bash; a rename leaves
+  them their old inode. A test checks the inode changes.
+- **`stage-info` records the source checkout**, its rev and whether it was
+  dirty, so anything running from the stage can name the checkout without
+  reading it (it may be under `~/Documents`).
 
 **Debugging:**
 ```bash
@@ -497,7 +514,7 @@ before anything spawns when the key is muted.
   every path passes through, the snooze daemon's relaunch included, so a mute
   set while an alert is snoozed also cancels it. The frontmost-app check already
   has three copies; this one has one.
-- **`ada-mute.sh` must stay in the Paseo `runtime_files`.** The launcher treats
+- **`ada-mute.sh` must stay in `ADA_RUNTIME_FILES` (`lib/ada-stage.sh`).** The launcher treats
   a missing `ada-mute.sh` as "no muting" so an old copy can't lose alerts, and
   that tolerance means a stage without it fails silently: Paseo alerts just
   stop being mutable under the LaunchAgent while the dev checkout works.
@@ -547,7 +564,7 @@ while paused, so the snooze relaunch is dropped too.
   pause, the mute markers and the pid file all live there. launchd jobs get the
   same per-user temp dir as a terminal (checked on this machine), which is what
   lets the menu bar, the hooks and the Paseo watcher share this state.
-- **`ada-pause.sh` and `ada-notify.sh` are in the Paseo `runtime_files`.** A
+- **`ada-pause.sh` and `ada-notify.sh` are in `ADA_RUNTIME_FILES`.** A
   missing `ada-pause.sh` means no pausing, never a missing alert, so a stage
   without it would fail silently.
 - **In bats, stop a background python loop with `kill` (TERM), not `kill
@@ -574,7 +591,7 @@ Alerts. Three constraints shape where the calls sit in `ada-show-alert.sh`:
   eleven forks. Only `date` and the trim's `wc` spawn.
 
 A missing `ada-history.sh` defines a no-op `__ada_history_record`, so an old
-copy of the launcher still alerts; the file is in the Paseo `runtime_files`.
+copy of the launcher still alerts; the file is in `ADA_RUNTIME_FILES`.
 
 ## The feedback note opens links via the adaOpen bridge
 

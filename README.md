@@ -135,6 +135,13 @@ For a scriptable install, pass a comma-separated list:
 ~/.ada/ada-install.sh --list
 ```
 
+To see what is wired right now, and whether each piece still works (a hook
+pointing at a deleted checkout, a watcher that stopped):
+
+```sh
+~/.ada/ada-install.sh --status    # Homebrew: ada-setup --status
+```
+
 Manual setup still works if you only want the shell hook:
 
 ```sh

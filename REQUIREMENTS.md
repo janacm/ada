@@ -117,6 +117,15 @@ removed.
   so the LaunchAgent staging behavior stays centralized.
 - The installer must support `--list`, `--dry-run`, and `--no-test` for
   validation, documentation, and automation.
+- `--status` must report, for each integration, whether it is wired and
+  working (`ok`, `off`, `warn`, `unavailable`) from the markers the installer
+  writes: the managed `~/.zshrc` block or a `source …/ada.sh` line, both
+  Claude/Codex hooks, ada's opencode shim, and the Paseo LaunchAgent (running,
+  loaded, or neither). A wired path that no longer exists must be a warning.
+  The report must live in `lib/ada-status.sh`, which the installer sources for
+  its finders, so the menu bar can run it from a stage that has no installer.
+  With `ADA_STATUS_SKIP_PROTECTED=1` it must not check paths under `$HOME` or
+  `/Volumes`, which a LaunchAgent may not be allowed to look at.
 
 ## Terminal Command Alerts
 
@@ -475,10 +484,17 @@ removed.
 - The LaunchAgent must set `ADA_PASEO_ENV` to the env file under the per-user
   install directory in both modes, so watcher configuration survives a
   `brew upgrade` replacing the Homebrew-managed tree.
-- The staged runtime must include `ada-paseo-watch.sh`,
-  `ada-paseo-watch.py`, `ada-show-alert.sh`, `ada-snooze-daemon.py`,
+- The staged runtime must be every file in `ADA_RUNTIME_FILES`
+  (`lib/ada-stage.sh`), one list shared by every LaunchAgent that stages into
+  the same directory: today `ada-paseo-watch.sh`, `alert.html` and, under
+  `lib/`, `ada-paseo-watch.py`, `ada-show-alert.sh`, `ada-snooze-daemon.py`,
   `ada-mute.sh`, `ada-pause.sh`, `ada-history.sh`, `ada-notify.sh` (which
-  `ada-mute.sh list` and `ada-pause.sh` source), and `alert.html`. Staging must mirror the dev-checkout layout — the front door
+  `ada-mute.sh list` and `ada-pause.sh` source) and `ada-stage.sh`. The
+  installer, `ada.sh` and the hook and plugin scripts must never be staged.
+- Staging must replace each file by renaming a temp copy into place, never by
+  rewriting it, because a staged binary may be running and a staged script
+  may be mid-read. It must write `stage-info` (`source`, `rev`, `dirty`,
+  `staged_at`, `by`) beside the runtime. Staging must mirror the dev-checkout layout — the front door
   (`ada-paseo-watch.sh`) and `alert.html` at the top, the internal scripts under
   `lib/` — so every `lib/`-relative reference resolves identically whether run
   from a checkout or from the staged LaunchAgent.
@@ -551,6 +567,13 @@ removed.
 
 ## Change Log
 
+- 2026-09-24: `ada-setup --status` reports which integrations are wired and
+  whether each still works, from the markers the installer writes, including
+  hooks that point at a deleted checkout. The report and the finders it shares
+  with the installer moved to `lib/ada-status.sh`; the Paseo watcher's staging
+  moved to `lib/ada-stage.sh`, which now replaces staged files by rename and
+  records where the stage came from, so a second LaunchAgent (the menu bar) can
+  share both.
 - 2026-09-24: The launcher keeps an alert history for the menu bar's Recent
   Alerts: one line per alert, shown or dropped by a pause or a mute, with the
   click target so a dropped Claude turn is still one click away. Mute markers

@@ -53,6 +53,37 @@ setup() {
   assert_output_contains "running (pid 4242)"
 }
 
+# The menu bar and an alert may be running the staged binaries, and bash may be
+# reading a staged script, while a re-install copies over them. Replacing each
+# file by rename leaves those their old file; rewriting in place would not.
+@test "re-staging replaces every file by rename and leaves no temp files" {
+  export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
+  run "$WATCH" install
+  assert_success
+  local helper script
+  helper=$(stat -f %i "$ADA_PASEO_INSTALL_DIR/ada-alert")
+  script=$(stat -f %i "$ADA_PASEO_INSTALL_DIR/lib/ada-show-alert.sh")
+  run "$WATCH" install
+  assert_success
+  [ "$(stat -f %i "$ADA_PASEO_INSTALL_DIR/ada-alert")" != "$helper" ]
+  [ "$(stat -f %i "$ADA_PASEO_INSTALL_DIR/lib/ada-show-alert.sh")" != "$script" ]
+  [ -x "$ADA_PASEO_INSTALL_DIR/lib/ada-show-alert.sh" ]
+  run find "$ADA_PASEO_INSTALL_DIR" -name '*.??????' -o -name '*.tmp'
+  assert_equal "$output" ""
+}
+
+@test "install records where the stage came from" {
+  export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
+  run "$WATCH" install
+  assert_success
+  local info="$ADA_PASEO_INSTALL_DIR/stage-info"
+  assert_file_contains "$info" "source=$REPO_ROOT"
+  assert_file_contains "$info" "rev=$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+  assert_file_contains "$info" "by=ada-paseo-watch"
+  grep -Eq '^dirty=[01]$' "$info"
+  grep -Eq '^staged_at=[0-9]{10}$' "$info"
+}
+
 # Regression: the lib/ refactor once staged the internal scripts FLAT while the
 # watcher resolved them under lib/, so every Paseo alert from the installed
 # LaunchAgent silently failed — invisible in a dev checkout. Pin the staged
@@ -78,6 +109,8 @@ setup() {
   # The same for pausing; and `ada-mute.sh list` sources ada-notify.sh.
   [ -f "$ADA_PASEO_INSTALL_DIR/lib/ada-pause.sh" ]
   [ -f "$ADA_PASEO_INSTALL_DIR/lib/ada-history.sh" ]
+  # The staged front door's uninstall and status load it.
+  [ -f "$ADA_PASEO_INSTALL_DIR/lib/ada-stage.sh" ]
   [ -f "$ADA_PASEO_INSTALL_DIR/lib/ada-notify.sh" ]
 
   # Anchor to the code, not a restatement: load the staged module and assert the
@@ -121,7 +154,8 @@ PY
   cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/alert.html" "$libexec/"
   cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$REPO_ROOT/lib/ada-show-alert.sh" \
      "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" \
-     "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-history.sh" "$REPO_ROOT/lib/ada-notify.sh" "$libexec/lib/"
+     "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-history.sh" "$REPO_ROOT/lib/ada-notify.sh" \
+     "$REPO_ROOT/lib/ada-stage.sh" "$libexec/lib/"
   cp "$REPO_ROOT/ada-alert" "$libexec/ada-alert" 2>/dev/null \
     || cp "$REPO_ROOT/.build/release/ada-alert" "$libexec/ada-alert"
 
@@ -151,7 +185,8 @@ PY
   cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/alert.html" "$libexec/"
   cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$REPO_ROOT/lib/ada-show-alert.sh" \
      "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" \
-     "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-history.sh" "$REPO_ROOT/lib/ada-notify.sh" "$libexec/lib/"
+     "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-history.sh" "$REPO_ROOT/lib/ada-notify.sh" \
+     "$REPO_ROOT/lib/ada-stage.sh" "$libexec/lib/"
 
   export HOMEBREW_PREFIX="$BATS_TEST_TMPDIR/brew"
   export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
@@ -302,7 +337,8 @@ make_watch_checkout() {
   cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/alert.html" "$CHECKOUT/"
   cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$REPO_ROOT/lib/ada-show-alert.sh" \
      "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" \
-     "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-history.sh" "$REPO_ROOT/lib/ada-notify.sh" "$CHECKOUT/lib/"
+     "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-history.sh" "$REPO_ROOT/lib/ada-notify.sh" \
+     "$REPO_ROOT/lib/ada-stage.sh" "$CHECKOUT/lib/"
   export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
   unset ADA_NATIVE_ALERT
 }
@@ -392,6 +428,7 @@ stale_watch_checkout() {
   local libexec="$prefix/opt/ada/libexec"
   mkdir -p "$libexec/lib"
   cp "$REPO_ROOT/ada-paseo-watch.sh" "$libexec/"
+  cp "$REPO_ROOT/lib/ada-stage.sh" "$libexec/lib/"
   export HOMEBREW_PREFIX="$prefix"
   export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
   unset ADA_NATIVE_ALERT
@@ -401,6 +438,20 @@ stale_watch_checkout() {
   assert_output_contains "native helper ada-alert is required"
 }
 
+@test "install and status say so when lib/ada-stage.sh is missing" {
+  local root="$BATS_TEST_TMPDIR/bare"
+  mkdir -p "$root/lib"
+  cp "$REPO_ROOT/ada-paseo-watch.sh" "$root/"
+  export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
+  run "$root/ada-paseo-watch.sh" install
+  assert_failure
+  assert_output_contains "missing $root/lib/ada-stage.sh"
+  [ ! -f "$HOME/Library/LaunchAgents/com.ada.paseo-watch.plist" ]
+  run "$root/ada-paseo-watch.sh" status
+  assert_failure
+  assert_output_contains "missing $root/lib/ada-stage.sh"
+}
+
 # Same Cellar -> opt rule as the installer: whatever the watcher prints for you
 # to run later must survive `brew upgrade`.
 @test "run from a Cellar keg, the watcher reports its stable opt path" {
@@ -408,6 +459,7 @@ stale_watch_checkout() {
   local keg="$prefix/Cellar/ada/9.9.9/libexec"
   mkdir -p "$keg/lib" "$prefix/opt"
   cp "$REPO_ROOT/ada-paseo-watch.sh" "$keg/"
+  cp "$REPO_ROOT/lib/ada-stage.sh" "$keg/lib/"
   ln -s "../Cellar/ada/9.9.9" "$prefix/opt/ada"
   run "$keg/ada-paseo-watch.sh" status
   assert_success

@@ -175,132 +175,16 @@ ada_run() {
 # -------------------------------------------------------------
 # install / uninstall / status — launchd LaunchAgent management
 # -------------------------------------------------------------
-# True when we are running from a Homebrew install: outside every TCC-protected
-# root AND behind the version-stable .../opt/ada/libexec symlink, so launchd can
-# exec us directly. Staging a Homebrew install would freeze a snapshot that
-# `brew upgrade` could never refresh, which is the opposite of what we want.
-__ada_from_brew_prefix() {
-  local prefix=${HOMEBREW_PREFIX:-}
-  [[ -n "$prefix" ]] || prefix=$(brew --prefix 2>/dev/null) || return 1
-  [[ -n "$prefix" ]] || return 1
-  [[ "$dir" == "$prefix/opt/"* ]]
-}
-
-# Homebrew keeps the whole repo tree intact in libexec, so there is nothing to
-# copy — just confirm the pieces the LaunchAgent will reach for are all there.
-# Everything the LaunchAgent reaches for, relative to the runtime root. Shared
-# by the in-place check, staging and the stale-stage check in status, so the
-# modes can't drift apart.
-# ada-notify.sh is here because `ada-mute.sh list` and ada-pause.sh source it.
-runtime_files=(ada-paseo-watch.sh alert.html lib/ada-paseo-watch.py
-               lib/ada-show-alert.sh lib/ada-snooze-daemon.py lib/ada-mute.sh
-               lib/ada-pause.sh lib/ada-history.sh lib/ada-notify.sh)
-
-# True when $1 is a SwiftPM build of this checkout that is older than the
-# checkout's Swift sources: a `git pull` brought in helper changes (a new message
-# handler, say) since the last build, and copying or using the old binary would
-# silently drop them. Only a .build/ output counts; a prebuilt $dir/ada-alert
-# (Homebrew's, inside a read-only keg) or any other path is used as-is.
-# ADA_REBUILD_HELPER=0 turns the check off, which the test suite does so a run
-# from a dev checkout never kicks off a real swift build.
-# Deliberately duplicated in ada-install.sh and ada-paseo-watch.sh, like
-# __ada_stable_dir and for the same reason.
-__ada_helper_stale() {
-  local helper=$1
-  [[ "${ADA_REBUILD_HELPER:-1}" != 0 ]] || return 1
-  case "$helper" in "$dir"/.build/*) ;; *) return 1 ;; esac
-  [[ -f "$dir/Package.swift" ]] || return 1
-  [[ "$dir/Package.swift" -nt "$helper" ]] && return 0
-  [[ -d "$dir/Sources" ]] || return 1
-  [[ -n "$(find "$dir/Sources" -name '*.swift' -newer "$helper" -print -quit 2>/dev/null)" ]]
-}
-
-# The native helper a stage would copy from this checkout, if any.
-__ada_source_native_alert() {
-  local f
-  for f in "${ADA_NATIVE_ALERT:-}" "$dir/ada-alert" \
-           "$dir/.build/release/ada-alert" "$dir/.build/debug/ada-alert"; do
-    [[ -n "$f" && -x "$f" ]] && { printf '%s' "$f"; return 0; }
-  done
-  return 1
-}
-
-__ada_check_in_place_runtime() {
-  local f missing=0
-  for f in "${runtime_files[@]}"; do
-    [[ -f "$dir/$f" ]] || { echo "ada-paseo-watch: missing $dir/$f" >&2; missing=1; }
-  done
-  if [[ ! -x "${ADA_NATIVE_ALERT:-$dir/ada-alert}" ]]; then
-    echo "ada-paseo-watch: native helper ada-alert is required (looked for $dir/ada-alert)." >&2
-    missing=1
-  fi
-  (( missing == 0 ))
-}
-
-__ada_stage_runtime() {
-  # Stage the runtime into a non-TCC location. A LaunchAgent runs WITHOUT your
-  # Full Disk Access grants, so it cannot exec scripts from TCC-protected folders
-  # — ~/Documents, ~/Desktop, ~/Downloads, or a symlink into them (note ~/.ada is
-  # often a symlink to ~/Documents/GitHub/ada). launchd would fail with
-  # "Operation not permitted" (exit 126). Copying the handful of files it needs
-  # into ~/.local/share/ada sidesteps that for good.
-  # Mirror the dev-checkout layout into the staging dir: the front door and
-  # alert.html at the top, the internal scripts under lib/. Keeping the two
-  # layouts identical means every "$dir/lib/..." reference resolves the same way
-  # whether we run from a checkout or from the staged LaunchAgent — no flat-vs-lib
-  # special-casing, which is exactly the kind of mismatch that used to silently
-  # break the staged watcher.
-  mkdir -p "$install_dir/lib" "$HOME/Library/LaunchAgents"
-  local f
-  for f in "${runtime_files[@]}"; do
-    if [[ -f "$dir/$f" ]] && ! [[ "$dir/$f" -ef "$install_dir/$f" ]]; then
-      cp "$dir/$f" "$install_dir/$f"
-    fi
-  done
-
-  # Build a missing helper, and rebuild one older than the Swift sources so the
-  # stage never freezes a binary that predates the page it ships with. A failed
-  # rebuild still stages the old helper: it renders alerts, just without the
-  # newer features.
-  local native_alert="" stale=0
-  native_alert=$(__ada_source_native_alert) || native_alert=""
-  [[ -n "$native_alert" ]] && __ada_helper_stale "$native_alert" && stale=1
-  if [[ ( -z "$native_alert" || "$stale" == 1 ) && -f "$dir/Package.swift" ]] \
-     && command -v swift >/dev/null 2>&1; then
-    if [[ "$stale" == 1 ]]; then
-      echo "Rebuilding native alert helper (Swift sources changed since the last build)..."
-    else
-      echo "Building native alert helper..."
-    fi
-    if (cd "$dir" && swift build -c release --product ada-alert >/dev/null 2>&1) \
-       && [[ -x "$dir/.build/release/ada-alert" ]]; then
-      # SwiftPM leaves an up-to-date binary untouched; stamp it so a touched but
-      # unchanged source doesn't trigger a rebuild on every install.
-      touch "$dir/.build/release/ada-alert"
-      native_alert="$dir/.build/release/ada-alert"
-    else
-      echo "ada-paseo-watch: native helper build failed." >&2
-    fi
-  fi
-  if [[ "$stale" == 1 ]] && __ada_helper_stale "$native_alert"; then
-    echo "ada-paseo-watch: staging the older $native_alert; rebuild with: swift build -c release --product ada-alert" >&2
-  fi
-  if [[ -z "$native_alert" ]]; then
-    echo "ada-paseo-watch: native helper ada-alert is required." >&2
-    echo "  Build it with: swift build -c release --product ada-alert" >&2
+# Staging, the Homebrew check and the launchd queries are shared with the menu
+# bar's front door in lib/ada-stage.sh. Only install, uninstall and status load
+# it: `run`, which the LaunchAgent executes, must not depend on anything more.
+__ada_load_stage_lib() {
+  if [[ ! -f "$dir/lib/ada-stage.sh" ]]; then
+    echo "ada-paseo-watch: missing $dir/lib/ada-stage.sh (run this from a full ada install)" >&2
     return 1
   fi
-  if [[ -n "$native_alert" ]] && ! [[ "$native_alert" -ef "$install_dir/ada-alert" ]]; then
-    cp "$native_alert" "$install_dir/ada-alert"
-  fi
-
-  chmod +x "$install_dir/ada-paseo-watch.sh" "$install_dir/lib/ada-paseo-watch.py" \
-           "$install_dir/lib/ada-show-alert.sh" "$install_dir/ada-alert" 2>/dev/null
-  if [[ ! -f "$install_dir/lib/ada-paseo-watch.py" || ! -f "$install_dir/lib/ada-show-alert.sh" ]]; then
-    echo "ada-paseo-watch: couldn't stage the runtime into $install_dir" >&2
-    echo "  (run install from a full ada checkout)" >&2
-    return 1
-  fi
+  # shellcheck source=lib/ada-stage.sh
+  . "$dir/lib/ada-stage.sh"
 }
 
 ada_install() {
@@ -312,14 +196,20 @@ ada_install() {
   # Homebrew install already sits in a non-TCC, version-stable location, so it
   # runs in place and picks up `brew upgrade` automatically.
   local script
+  __ada_load_stage_lib || return 1
   mkdir -p "$install_dir" "$HOME/Library/LaunchAgents"
-  if __ada_from_brew_prefix; then
-    __ada_check_in_place_runtime || return 1
+  if __ada_from_brew_prefix "$dir"; then
+    __ada_check_in_place ada-paseo-watch "$dir" ada-alert || return 1
     script="$dir/ada-paseo-watch.sh"
     echo "Homebrew install detected: running the watcher in place from $dir"
     echo "  (no staging, so 'brew upgrade ada' updates the watcher too)"
   else
-    __ada_stage_runtime || return 1
+    __ada_stage_runtime ada-paseo-watch "$dir" "$install_dir" ada-alert || return 1
+    if [[ ! -f "$install_dir/lib/ada-paseo-watch.py" || ! -f "$install_dir/lib/ada-show-alert.sh" ]]; then
+      echo "ada-paseo-watch: couldn't stage the runtime into $install_dir" >&2
+      echo "  (run install from a full ada checkout)" >&2
+      return 1
+    fi
     script="$install_dir/ada-paseo-watch.sh"
   fi
   # Bake in a PATH that finds paseo (~/.local/bin) plus python3/lsappinfo,
@@ -380,10 +270,10 @@ ada_uninstall() {
 
 ada_status() {
   local pid loaded=0
-  launchctl list 2>/dev/null | grep -q "$label_prefix" && loaded=1
+  __ada_load_stage_lib || return 1
+  __ada_launchd_loaded "$label_prefix" && loaded=1
   # The real health signal is a live poll loop, not just a registered job.
-  pid=$(launchctl print "gui/$(id -u)/${label_prefix}" 2>/dev/null \
-        | sed -n 's/^[[:space:]]*pid = \([0-9][0-9]*\).*/\1/p' | head -1)
+  pid=$(__ada_launchd_pid "$label_prefix")
   # Read the runtime back out of the plist rather than assuming: it is the staged
   # dir for a checkout and Homebrew's libexec for a brew install.
   local runtime="" runtime_dir=""
@@ -406,19 +296,9 @@ ada_status() {
     echo "   runtime: $runtime_dir"
     # A staged runtime always lives somewhere other than $dir, so the paths
     # differing says nothing; a staged file differing from its source does.
-    if [[ "$runtime_dir" != "$dir" ]]; then
-      local f stale=0
-      for f in "${runtime_files[@]}"; do
-        [[ -f "$dir/$f" ]] && ! cmp -s "$dir/$f" "$runtime_dir/$f" && stale=1
-      done
-      # The helper is staged separately, so a rebuild after install counts too.
-      local helper
-      if helper=$(__ada_source_native_alert) && ! cmp -s "$helper" "$runtime_dir/ada-alert"; then
-        stale=1
-      fi
-      if (( stale )); then
-        echo "   source:  $dir differs from the staged copy (re-run install)"
-      fi
+    # The helper counts too, so a rebuild after install shows up.
+    if [[ "$runtime_dir" != "$dir" ]] && __ada_stage_stale "$dir" "$runtime_dir" ada-alert; then
+      echo "   source:  $dir differs from the staged copy (re-run install)"
     fi
   else
     echo "   runtime: (not installed)"

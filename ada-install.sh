@@ -41,6 +41,20 @@ __ada_stable_dir() {
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 dir=$(__ada_stable_dir "$dir")
 
+# The finders for python3, paseo and opencode, and the integration report behind
+# --status, live in lib/ada-status.sh so the menu bar can run the same report
+# from its stage. The helper staleness check lives in lib/ada-stage.sh with the
+# LaunchAgent staging that also uses it.
+for lib in ada-status.sh ada-stage.sh; do
+  if [[ ! -f "$dir/lib/$lib" ]]; then
+    printf 'ada-install: missing %s\n' "$dir/lib/$lib" >&2
+    exit 1
+  fi
+  # shellcheck source=/dev/null
+  . "$dir/lib/$lib"
+done
+unset lib
+
 AGENT_IDS=(terminal claude codex opencode paseo)
 AGENT_NAMES=("Terminal commands" "Claude Code" "Codex" "opencode" "Paseo")
 AGENT_TARGETS=("~/.zshrc" "~/.claude/settings.json" "~/.codex/hooks.json" "opencode plugin dir" "LaunchAgent watcher")
@@ -66,6 +80,7 @@ Usage:
   ada-install.sh --dry-run               # print actions without writing
   ada-install.sh --no-test               # skip final sample alert
   ada-install.sh --list                  # show known integrations
+  ada-install.sh --status                # which integrations are wired, and healthy
 
 Integration ids:
   terminal   zsh long-command alerts
@@ -78,63 +93,6 @@ USAGE
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'ada-install: %s\n' "$*" >&2; exit 1; }
-
-find_python() {
-  local p
-  p=$(command -v python3 2>/dev/null) && { printf '%s' "$p"; return 0; }
-  for p in /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
-    [[ -x "$p" ]] && { printf '%s' "$p"; return 0; }
-  done
-  return 1
-}
-
-find_paseo() {
-  local p
-  p=$(command -v paseo 2>/dev/null) && { printf '%s' "$p"; return 0; }
-  for p in "$HOME/.local/bin/paseo" \
-           "/Applications/Paseo.app/Contents/Resources/bin/paseo"; do
-    [[ -x "$p" ]] && { printf '%s' "$p"; return 0; }
-  done
-  return 1
-}
-
-# ADA_OPENCODE_FALLBACK_PATHS overrides the absolute fallbacks (the test suite
-# empties it to observe the no-CLI branch on a machine that has opencode).
-find_opencode() {
-  local p
-  p=$(command -v opencode 2>/dev/null) && { printf '%s' "$p"; return 0; }
-  for p in ${ADA_OPENCODE_FALLBACK_PATHS-"$HOME/.opencode/bin/opencode" /opt/homebrew/bin/opencode /usr/local/bin/opencode}; do
-    [[ -x "$p" ]] && { printf '%s' "$p"; return 0; }
-  done
-  return 1
-}
-
-# Where opencode scans for global plugins. Ask opencode itself first — it is the
-# only authority on its own config root, which moves with XDG_CONFIG_HOME — and
-# fall back to the XDG default when the binary isn't there to ask.
-# ADA_OPENCODE_PLUGIN_DIR overrides both (used by the test suite).
-# Memoized because the interactive selector calls agent_status for every row on
-# every keypress, and asking opencode costs a process spawn. The config root
-# cannot change while the installer runs.
-# Callers read it via $(...), a subshell, so the memo is filled by
-# resolve_opencode_plugin_dir in the parent shell rather than in here.
-__ada_opencode_plugin_dir=""
-resolve_opencode_plugin_dir() {
-  local oc config=""
-  if [[ -n "${ADA_OPENCODE_PLUGIN_DIR:-}" ]]; then
-    __ada_opencode_plugin_dir=$ADA_OPENCODE_PLUGIN_DIR
-    return 0
-  fi
-  if oc=$(find_opencode); then
-    config=$("$oc" debug paths 2>/dev/null | sed -n 's/^config[[:space:]][[:space:]]*//p' | head -1)
-  fi
-  [[ -n "$config" ]] || config="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
-  __ada_opencode_plugin_dir="$config/plugin"
-}
-opencode_plugin_dir() {
-  [[ -n "$__ada_opencode_plugin_dir" ]] || resolve_opencode_plugin_dir
-  printf '%s' "$__ada_opencode_plugin_dir"
-}
 
 find_swift() {
   local p
@@ -153,25 +111,6 @@ find_native_alert() {
     [[ -x "$p" ]] && { printf '%s' "$p"; return 0; }
   done
   return 1
-}
-
-# True when $1 is a SwiftPM build of this checkout that is older than the
-# checkout's Swift sources: a `git pull` brought in helper changes (a new message
-# handler, say) since the last build, and copying or using the old binary would
-# silently drop them. Only a .build/ output counts; a prebuilt $dir/ada-alert
-# (Homebrew's, inside a read-only keg) or any other path is used as-is.
-# ADA_REBUILD_HELPER=0 turns the check off, which the test suite does so a run
-# from a dev checkout never kicks off a real swift build.
-# Deliberately duplicated in ada-install.sh and ada-paseo-watch.sh, like
-# __ada_stable_dir and for the same reason.
-__ada_helper_stale() {
-  local helper=$1
-  [[ "${ADA_REBUILD_HELPER:-1}" != 0 ]] || return 1
-  case "$helper" in "$dir"/.build/*) ;; *) return 1 ;; esac
-  [[ -f "$dir/Package.swift" ]] || return 1
-  [[ "$dir/Package.swift" -nt "$helper" ]] && return 0
-  [[ -d "$dir/Sources" ]] || return 1
-  [[ -n "$(find "$dir/Sources" -name '*.swift' -newer "$helper" -print -quit 2>/dev/null)" ]]
 }
 
 # A helper that exists but predates the Swift sources is rebuilt. Unlike a
@@ -200,7 +139,7 @@ rebuild_stale_native_alert() {
 ensure_native_alert() {
   local helper swift_bin
   if helper=$(find_native_alert); then
-    if __ada_helper_stale "$helper"; then
+    if __ada_helper_stale "$dir" "$helper"; then
       rebuild_stale_native_alert "$helper"
     else
       say "Native alert helper -> $helper"
@@ -620,6 +559,10 @@ while [[ $# -gt 0 ]]; do
     --list)
       print_list
       exit 0
+      ;;
+    --status)
+      __ada_status_cli --table
+      exit $?
       ;;
     -h|--help)
       usage
