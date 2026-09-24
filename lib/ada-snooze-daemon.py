@@ -180,10 +180,14 @@ def main():
         trace("mute %s" % mute_file)
         try:
             os.makedirs(os.path.dirname(mute_file), exist_ok=True)
-            with open(mute_file, "a"):
-                pass
-            # Re-muting an already muted session restarts its expiry clock.
-            os.utime(mute_file, None)
+            # O_NOFOLLOW: ADA_MUTE_DIR is user-configurable, so a symlink by
+            # the marker's name must not be followed to touch its target.
+            fd = os.open(mute_file, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+            try:
+                # Re-muting an already muted session restarts its expiry clock.
+                os.utime(fd, None)
+            finally:
+                os.close(fd)
         except OSError:
             pass
         return

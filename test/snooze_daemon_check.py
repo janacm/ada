@@ -235,6 +235,17 @@ handoff = os.path.join(TMP, "h10")
 mod, _ = load(argv(handoff), env={"ADA_MUTE_FILE": os.path.join(blocker, "k")})
 status = drive(mod, handoff, "GET", lambda tok: "/%s/mute" % tok)
 check("an unwritable marker path does not raise", status == 200, status)
+target = os.path.join(TMP, "link-target")
+open(target, "w").close()
+os.utime(target, (1, 1))
+link = os.path.join(TMP, "muted", "nested", "link-1")
+os.symlink(target, link)
+handoff = os.path.join(TMP, "h11")
+mod, _ = load(argv(handoff), env={"ADA_MUTE_FILE": link})
+status = drive(mod, handoff, "GET", lambda tok: "/%s/mute" % tok)
+check("mute does not follow a symlink named like the marker",
+      status == 200 and os.stat(target).st_mtime < 1000 and os.path.islink(link),
+      os.stat(target).st_mtime)
 os.environ.pop("ADA_MUTE_FILE", None)
 
 # --- failure paths in main() ---------------------------------------------------------------

@@ -174,3 +174,28 @@ age_marker() {
   [ -L "$ADA_MUTE_DIR/link-1" ]
   [ -e "$BATS_TEST_TMPDIR/target" ]
 }
+
+@test "clear, add and the mute check refuse a symlink named like a key" {
+  mkdir -p "$ADA_MUTE_DIR"
+  : > "$BATS_TEST_TMPDIR/target"
+  touch -t 200001010000 "$BATS_TEST_TMPDIR/target"
+  ln -s "$BATS_TEST_TMPDIR/target" "$ADA_MUTE_DIR/link-1"
+
+  run "$MUTE" clear link-1
+  assert_failure
+  assert_output_contains "not a mute marker"
+  [ -L "$ADA_MUTE_DIR/link-1" ]
+
+  run "$MUTE" add link-1
+  assert_failure
+  [ "$(/usr/bin/stat -f %m "$BATS_TEST_TMPDIR/target")" -lt 1000000000 ]
+
+  . "$MUTE"
+  run __ada_is_muted link-1; assert_failure
+}
+
+@test "clearing a key that was never muted succeeds quietly" {
+  run "$MUTE" clear never-1
+  assert_success
+  assert_output_contains "unmuted never-1"
+}

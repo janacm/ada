@@ -49,11 +49,20 @@ __ada_mute_file() {
   printf '%s/%s' "$(__ada_mute_dir)" "$1"
 }
 
+# True when the key's marker exists as a plain file, not a symlink.
+# ADA_MUTE_DIR is user-configurable, so every read, write and delete goes
+# through this: nothing else that happens to live there is ever touched.
+__ada_mute_is_marker() {
+  local file
+  file=$(__ada_mute_file "${1:-}") || return 1
+  [[ -f "$file" && ! -L "$file" ]]
+}
+
 # Seconds since the key was muted, or failure when it isn't muted at all.
 __ada_mute_age() {
   local file mtime
-  file=$(__ada_mute_file "${1:-}") || return 1
-  [[ -f "$file" ]] || return 1
+  __ada_mute_is_marker "${1:-}" || return 1
+  file=$(__ada_mute_file "$1")
   mtime=$(stat -f %m "$file" 2>/dev/null) || return 1
   printf '%s' $(( $(date +%s) - mtime ))
 }
@@ -67,16 +76,14 @@ __ada_is_muted() {
   (( max == 0 || age <= max ))
 }
 
-# The marker files in the mute dir: direct children whose names pass the key
-# rule, and not symlinks. ADA_MUTE_DIR is user-configurable, so pruning and
-# `clear` must never touch anything else that happens to live there.
+# Every marker key in the mute dir (direct children only; see above).
 __ada_mute_markers() {
   local dir file key
   dir=$(__ada_mute_dir)
   [[ -d "$dir" ]] || return 0
   for file in "$dir"/*; do
     key=${file##*/}
-    [[ -f "$file" && ! -L "$file" ]] && __ada_mute_key_ok "$key" && printf '%s\n' "$key"
+    __ada_mute_is_marker "$key" && printf '%s\n' "$key"
   done
   return 0
 }
@@ -122,13 +129,22 @@ __ada_mute_cli() {
       fi
       for key in "$@"; do
         file=$(__ada_mute_file "$key") || { echo "ada-mute: invalid key: $key" >&2; return 1; }
-        rm -f "$file"
+        if __ada_mute_is_marker "$key"; then
+          rm -f "$file"
+        elif [[ -e "$file" || -L "$file" ]]; then
+          echo "ada-mute: $file is not a mute marker; left alone" >&2
+          return 1
+        fi
         echo "unmuted $key"
       done
       ;;
     add)
       key=${1:-}
       file=$(__ada_mute_file "$key") || { echo "ada-mute: invalid key: $key" >&2; return 1; }
+      if [[ ( -e "$file" || -L "$file" ) ]] && ! __ada_mute_is_marker "$key"; then
+        echo "ada-mute: $file is not a mute marker; left alone" >&2
+        return 1
+      fi
       mkdir -p "$dir" && touch "$file" || return 1
       max=$(__ada_mute_max_age)
       if (( max == 0 )); then
