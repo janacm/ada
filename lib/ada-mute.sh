@@ -67,14 +67,27 @@ __ada_is_muted() {
   (( max == 0 || age <= max ))
 }
 
-# Delete expired markers so the directory can't grow without bound. find's
-# -mmin works in whole minutes, so round up: a marker is never pruned early.
-__ada_mute_prune() {
-  local dir max
+# The marker files in the mute dir: direct children whose names pass the key
+# rule, and not symlinks. ADA_MUTE_DIR is user-configurable, so pruning and
+# `clear` must never touch anything else that happens to live there.
+__ada_mute_markers() {
+  local dir file key
   dir=$(__ada_mute_dir)
-  max=$(__ada_mute_max_age)
-  [[ -d "$dir" ]] && (( max > 0 )) || return 0
-  find "$dir" -type f -mmin +$(( (max + 59) / 60 )) -delete 2>/dev/null
+  [[ -d "$dir" ]] || return 0
+  for file in "$dir"/*; do
+    key=${file##*/}
+    [[ -f "$file" && ! -L "$file" ]] && __ada_mute_key_ok "$key" && printf '%s\n' "$key"
+  done
+  return 0
+}
+
+# Delete expired markers so the directory can't grow without bound.
+__ada_mute_prune() {
+  local key
+  (( $(__ada_mute_max_age) > 0 )) || return 0
+  while IFS= read -r key; do
+    __ada_is_muted "$key" || rm -f "$(__ada_mute_file "$key")"
+  done < <(__ada_mute_markers)
   return 0
 }
 
@@ -91,19 +104,19 @@ __ada_mute_cli() {
       # shellcheck source=lib/ada-notify.sh
       . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ada-notify.sh"
       local found=0
-      for file in "$dir"/*; do
-        [[ -f "$file" ]] || continue
-        key=${file##*/}
+      while IFS= read -r key; do
         __ada_is_muted "$key" || continue
         age=$(__ada_mute_age "$key")
         printf '%s\tmuted %s ago\n' "$key" "$(__ada_format_duration "$age")"
         found=1
-      done
+      done < <(__ada_mute_markers)
       (( found )) || echo "no muted sessions"
       ;;
     clear)
       if (( $# == 0 )); then
-        rm -f "$dir"/* 2>/dev/null
+        while IFS= read -r key; do
+          rm -f "$dir/$key"
+        done < <(__ada_mute_markers)
         echo "unmuted every session"
         return 0
       fi

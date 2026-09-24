@@ -141,3 +141,36 @@ age_marker() {
   . "$MUTE"
   assert_equal "$(__ada_mute_max_age)" "86400"
 }
+
+# ADA_MUTE_DIR is user-configurable. Pointed at a directory with other content,
+# prune and clear must touch only direct marker files, never nested files,
+# names that fail the key rule, or symlinks.
+@test "prune and clear leave anything that isn't a marker alone" {
+  mkdir -p "$ADA_MUTE_DIR/nested"
+  : > "$ADA_MUTE_DIR/nested/old-config"
+  : > "$ADA_MUTE_DIR/.hidden"
+  : > "$ADA_MUTE_DIR/has space"
+  : > "$BATS_TEST_TMPDIR/target"
+  ln -s "$BATS_TEST_TMPDIR/target" "$ADA_MUTE_DIR/link-1"
+  "$MUTE" add old-1 >/dev/null
+  for f in nested/old-config .hidden "has space" old-1; do age_marker "$f" 90000; done
+  touch -h -t 200001010000 "$ADA_MUTE_DIR/link-1"
+
+  . "$MUTE"
+  __ada_mute_prune
+  [ ! -e "$ADA_MUTE_DIR/old-1" ]
+  [ -e "$ADA_MUTE_DIR/nested/old-config" ]
+  [ -e "$ADA_MUTE_DIR/.hidden" ]
+  [ -e "$ADA_MUTE_DIR/has space" ]
+  [ -L "$ADA_MUTE_DIR/link-1" ]
+
+  "$MUTE" add new-1 >/dev/null
+  run "$MUTE" clear
+  assert_success
+  [ ! -e "$ADA_MUTE_DIR/new-1" ]
+  [ -e "$ADA_MUTE_DIR/nested/old-config" ]
+  [ -e "$ADA_MUTE_DIR/.hidden" ]
+  [ -e "$ADA_MUTE_DIR/has space" ]
+  [ -L "$ADA_MUTE_DIR/link-1" ]
+  [ -e "$BATS_TEST_TMPDIR/target" ]
+}

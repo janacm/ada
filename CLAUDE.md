@@ -504,6 +504,11 @@ before anything spawns when the key is muted.
 - **Keys are file names.** `__ada_mute_key_ok` allows `[A-Za-z0-9._-]` with an
   alphanumeric first character. An invalid key gets no button, not a sanitized
   name, so two sessions can never collide on a rewritten key.
+- **Prune and `clear` touch only marker files.** `ADA_MUTE_DIR` is
+  user-configurable, so `__ada_mute_markers` lists only direct children whose
+  names pass the key rule and that are not symlinks. A recursive `find -delete`
+  there would erase unrelated old files on every alert if someone pointed it at
+  a real directory.
 
 ## The feedback note opens links via the adaOpen bridge
 
