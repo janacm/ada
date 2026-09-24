@@ -55,10 +55,14 @@ class Ada < Formula
     SH
 
     # List or clear the sessions muted from an alert's "Mute this …" button.
-    (bin/"ada-mute").write <<~SH
-      #!/bin/bash
-      exec "#{opt_libexec}/lib/ada-mute.sh" "$@"
-    SH
+    # The formula on main is read by every stable install, including ones whose
+    # tarball predates ada-mute.sh, so only wire the wrapper when it shipped.
+    if (libexec/"lib/ada-mute.sh").exist?
+      (bin/"ada-mute").write <<~SH
+        #!/bin/bash
+        exec "#{opt_libexec}/lib/ada-mute.sh" "$@"
+      SH
+    end
   end
 
   def caveats

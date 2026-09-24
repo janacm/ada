@@ -523,7 +523,7 @@ A mute lasts 24 hours (`ADA_MUTE_MAX_AGE`), then the session alerts again. To
 look at or undo mutes before then:
 
 ```sh
-ada-mute list              # Homebrew; from a checkout: lib/ada-mute.sh list
+ada-mute list              # Homebrew (releases after v0.4); from a checkout: lib/ada-mute.sh list
 ada-mute clear claude-…    # unmute one session
 ada-mute clear             # unmute everything
 ```

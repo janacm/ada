@@ -43,8 +43,10 @@ zmodload zsh/datetime 2>/dev/null
 
 # This shell's identity for the alert's "Mute this terminal" button. The pid
 # alone could be reused by a later shell and inherit its mute; the pid plus the
-# time this file was sourced can't. See lib/ada-mute.sh.
-typeset -g _ADA_SESSION_KEY="zsh-$$-${EPOCHSECONDS:-0}"
+# time this file was first sourced can't. Re-sourcing (`source ~/.zshrc`) keeps
+# the key, or a muted terminal would start alerting again. See lib/ada-mute.sh.
+[[ "${_ADA_SESSION_KEY:-}" == "zsh-$$-"* ]] \
+  || typeset -g _ADA_SESSION_KEY="zsh-$$-${EPOCHSECONDS:-0}"
 
 __ada_is_ignored() {
   local cmd="${1%% *}"

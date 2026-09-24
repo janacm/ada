@@ -216,3 +216,25 @@ skip_active() {
   wait_for_file "$ADA_PROBE_OUT" || { echo "manual trigger never fired"; false; }
   assert_file_contains "$ADA_PROBE_OUT" "cmd=still%20here"
 }
+
+@test "re-sourcing ada.sh keeps this shell's session key, so a mute survives" {
+  run zsh -c "
+    source '$REPO_ROOT/ada.sh' >/dev/null 2>&1
+    first=\$_ADA_SESSION_KEY
+    sleep 1.1
+    source '$REPO_ROOT/ada.sh' >/dev/null 2>&1
+    [[ \$first == \$_ADA_SESSION_KEY ]] && print SAME || print \"CHANGED \$first \$_ADA_SESSION_KEY\"
+  "
+  assert_success
+  assert_equal "$output" "SAME"
+}
+
+@test "a key inherited from another shell's pid is replaced" {
+  run zsh -c "
+    _ADA_SESSION_KEY=zsh-1-1
+    source '$REPO_ROOT/ada.sh' >/dev/null 2>&1
+    print -r -- \$_ADA_SESSION_KEY
+  "
+  assert_success
+  [[ "$output" =~ ^zsh-[0-9]+-[0-9]+$ && "$output" != "zsh-1-1" ]] || { echo "got: $output"; false; }
+}
