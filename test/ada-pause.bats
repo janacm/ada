@@ -197,6 +197,15 @@ teardown() {
 
 timer_running() { /usr/bin/pgrep -f "ada-snooze-daemon.py --pause-timer .*$BATS_TEST_TMPDIR" >/dev/null; }
 
+# Wait up to 10s for the timer to show up. It is a detached python3 behind the
+# /usr/bin/python3 shim, and on a busy CI runner that start took over the 2s
+# these tests first allowed. The loop returns as soon as the timer is there.
+wait_for_timer() {
+  local t=200
+  until timer_running || (( t-- == 0 )); do sleep 0.05; done
+  timer_running
+}
+
 @test "a timed pause starts a detached timer, and forever starts none" {
   command -v python3 >/dev/null 2>&1 || skip "python3 required"
   export ADA_PAUSE_TIMER=1
@@ -206,8 +215,7 @@ timer_running() { /usr/bin/pgrep -f "ada-snooze-daemon.py --pause-timer .*$BATS_
   run timer_running; assert_failure
   run "$PAUSE" 30
   assert_success
-  local t=40; until timer_running || (( t-- == 0 )); do sleep 0.05; done
-  timer_running || { echo "no timer for a 30-minute pause"; false; }
+  wait_for_timer || { echo "no timer for a 30-minute pause"; false; }
   run "$PAUSE" resume
   assert_success
 }
@@ -217,8 +225,7 @@ timer_running() { /usr/bin/pgrep -f "ada-snooze-daemon.py --pause-timer .*$BATS_
   export ADA_PAUSE_TIMER=1
   run "$PAUSE" until $(( $(/bin/date +%s) + 3600 ))
   assert_success
-  local t=40; until timer_running || (( t-- == 0 )); do sleep 0.05; done
-  timer_running || { echo "no timer for until"; false; }
+  wait_for_timer || { echo "no timer for until"; false; }
 }
 
 @test "ADA_PAUSE_TIMER=0 starts no timer" {
