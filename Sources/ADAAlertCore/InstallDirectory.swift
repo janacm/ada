@@ -1,10 +1,19 @@
 import Foundation
 
 /// The ada install the menu bar helper drives: the directory that holds
-/// `lib/ada-show-alert.sh`, which "Test Alert" runs and "Open ADA Folder" opens.
+/// `lib/ada-show-alert.sh`, which "Test Alert" runs and "Open ADA Folder" opens,
+/// and the scripts behind the rest of the menu.
 public enum InstallDirectory {
     /// The shared launcher, relative to the install directory.
     public static let launcherPath = "lib/ada-show-alert.sh"
+    /// Pause and resume every alert.
+    public static let pauseScriptPath = "lib/ada-pause.sh"
+    /// Unmute a session.
+    public static let muteScriptPath = "lib/ada-mute.sh"
+    /// Clear the alert history.
+    public static let historyScriptPath = "lib/ada-history.sh"
+    /// Which integrations are wired.
+    public static let statusScriptPath = "lib/ada-status.sh"
 
     /// `ADA_HOME` when it is set; otherwise the install the executable lives in.
     ///
@@ -61,7 +70,12 @@ public enum InstallDirectory {
 
     /// The launcher inside `directory`, or nil when it is missing or not executable.
     public static func launcher(in directory: URL, fileManager: FileManager = .default) -> URL? {
-        let url = directory.appendingPathComponent(launcherPath)
+        script(launcherPath, in: directory, fileManager: fileManager)
+    }
+
+    /// `relativePath` inside `directory`, or nil when it is missing or not executable.
+    public static func script(_ relativePath: String, in directory: URL, fileManager: FileManager = .default) -> URL? {
+        let url = directory.appendingPathComponent(relativePath)
         return fileManager.isExecutableFile(atPath: url.path) ? url : nil
     }
 }

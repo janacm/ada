@@ -26,15 +26,19 @@ changes, even if the implementation diff is small.
 
 `ada-install.sh` is the coworker-facing onboarding entry point. It presents a
 terminal selector for the integrations that should trigger ADA: Terminal
-commands, Claude Code, Codex, and Paseo. Keep it idempotent: shell setup uses a
-managed block in `~/.zshrc`; Claude/Codex setup must merge JSON hooks without
-removing unrelated hooks; Paseo setup must delegate to `ada-paseo-watch.sh
-install` so LaunchAgent staging stays centralized. The installer must build or
+commands, Claude Code, Codex, opencode, Paseo, and the Menu bar login item.
+Keep it idempotent: shell setup uses a managed block in `~/.zshrc`;
+Claude/Codex setup must merge JSON hooks without removing unrelated hooks;
+Paseo and the menu bar must delegate to `ada-paseo-watch.sh install` and
+`ada-menubar.sh install` so LaunchAgent staging stays centralized. The installer must build or
 validate `ada-alert` because there is no browser fallback, and rebuilds a
 `.build/` helper older than the Swift sources. That staleness check
-(`__ada_helper_stale`) is duplicated in `ada-paseo-watch.sh`; change both. The
-suite sets `ADA_REBUILD_HELPER=0` because many tests run the installer straight
-from the repo and would otherwise start a real `swift build` there. Preserve the
+(`__ada_helper_stale`) lives in `lib/ada-stage.sh`, shared with the LaunchAgent
+staging. The installer sources that and `lib/ada-status.sh` (the python3,
+paseo and opencode finders, and the `--status` report) before anything else,
+even `--list`. The suite sets `ADA_REBUILD_HELPER=0` because many tests run the
+installer straight from the repo and would otherwise start a real `swift build`
+there. Preserve the
 scriptable `--agents`, `--list`, `--dry-run`, and `--no-test` paths because
 those are the scriptable surface that Homebrew's `ada-setup` wrapper and future
 curl automation build on.
@@ -311,13 +315,11 @@ watcher with no re-install. Staging a Homebrew install would do the opposite:
 freeze a snapshot brew could never update.
 
 Everything else (a dev checkout, `~/.ada`) **stages** the runtime it needs
-(`ada-paseo-watch.sh`, `ada-paseo-watch.py`, `ada-show-alert.sh`,
-`ada-snooze-daemon.py`, `ada-mute.sh`, `alert.html`, and `ada-alert`) into a non-TCC dir —
+(every file in `ADA_RUNTIME_FILES` in `lib/ada-stage.sh`, plus `ada-alert`) into a non-TCC dir —
 `~/.local/share/ada` (override `ADA_PASEO_INSTALL_DIR`) — and points the plist
 there. **Staging mirrors the dev-checkout layout**: the front door
 (`ada-paseo-watch.sh`), `alert.html`, and `ada-alert` sit at the top, while the
-internal scripts (`ada-paseo-watch.py`, `ada-show-alert.sh`,
-`ada-snooze-daemon.py`, `ada-mute.sh`) go under `~/.local/share/ada/lib/`. Keeping the two
+internal scripts go under `~/.local/share/ada/lib/`. Keeping the two
 layouts identical is load-bearing: the watcher resolves `ada-show-alert.sh` via
 `$dir/lib/…` / a sibling of the `.py`, so a flat stage would break every Paseo
 alert from the LaunchAgent while still working in a dev checkout (the classic
@@ -330,6 +332,22 @@ how you spot a stale stage). The
 env file lives at `~/.local/share/ada/paseo-watch.env` in **both** modes: the
 plist sets `ADA_PASEO_ENV` explicitly so config survives a `brew upgrade`, which
 replaces `libexec` wholesale.
+
+**The staging code is shared, in `lib/ada-stage.sh`.** The front door loads it
+for `install`, `uninstall` and `status` only (`run` must keep working with just
+the watcher's own files), so it is itself in `ADA_RUNTIME_FILES`: the printed
+uninstall hint runs the *staged* front door. Three rules there are easy to
+undo by accident:
+
+- **One file list for every job that stages here.** A job staged with a shorter
+  list silently loses whatever its scripts source; `ada-mute.sh list` sourcing
+  an unstaged `ada-notify.sh` was the case that surfaced this.
+- **Copy to a temp file and `mv`, never `cp` over a staged file.** A staged
+  binary may be running and a staged script mid-read by bash; a rename leaves
+  them their old inode. A test checks the inode changes.
+- **`stage-info` records the source checkout**, its rev and whether it was
+  dirty, so anything running from the stage can name the checkout without
+  reading it (it may be under `~/Documents`).
 
 **Debugging:**
 ```bash
@@ -420,9 +438,10 @@ macOS, and each piece has a trap:
   and llvm-cov merges the profiles.
 - **The AppKit delegates in the two `main.swift` files are not unit-tested.**
   They only run inside a window session, and most of what stays uncovered is
-  there. Keep decisions out of them: the `adaOpen` scheme rule (`ExternalLink`)
-  and the menu bar's install lookup (`InstallDirectory`) live in `ADAAlertCore`,
-  where Swift Testing covers them.
+  there. Keep decisions out of them: the `adaOpen` scheme rule (`ExternalLink`),
+  the menu bar's install lookup (`InstallDirectory`) and everything its menu
+  decides (`MenuModel` and the readers below) live in `ADAAlertCore`, where
+  Swift Testing covers them.
 
 ## UserPromptSubmit is not only what the user typed
 
@@ -541,7 +560,7 @@ before anything spawns when the key is muted.
   every path passes through, the snooze daemon's relaunch included, so a mute
   set while an alert is snoozed also cancels it. The frontmost-app check already
   has three copies; this one has one.
-- **`ada-mute.sh` must stay in the Paseo `runtime_files`.** The launcher treats
+- **`ada-mute.sh` must stay in `ADA_RUNTIME_FILES` (`lib/ada-stage.sh`).** The launcher treats
   a missing `ada-mute.sh` as "no muting" so an old copy can't lose alerts, and
   that tolerance means a stage without it fails silently: Paseo alerts just
   stop being mutable under the LaunchAgent while the dev checkout works.
@@ -560,6 +579,117 @@ before anything spawns when the key is muted.
   uses `O_NOFOLLOW` for the same reason. A recursive `find -delete` there would
   erase unrelated old files on every alert if someone pointed it at a real
   directory.
+- **A marker's first line is the label of the alert it was muted from.** The
+  daemon writes it (`O_TRUNC`, mode 600) and `ada-mute list` and the menu bar
+  show it. The launcher still reads only the name and the mtime, so an empty
+  marker from an older daemon or `add` without a label mutes just the same.
+
+## Pausing is enforced in the launcher only
+
+`lib/ada-pause.sh` is the global switch (the menu bar's Pause menu, and
+`ada-pause` under Homebrew). The state is one file, `$TMPDIR/ada-paused`
+(`ADA_PAUSE_FILE`), holding the epoch second the pause ends or `0` for until
+resumed. `lib/ada-show-alert.sh` sources it just before the mute block and exits
+while paused, so the snooze relaunch is dropped too.
+
+- **The launcher never deletes the pause file**, even an expired one. The CLI
+  writes through a temp file and `mv`; a launcher `rm` landing between that
+  rename and its own read would erase a pause set a moment earlier. `status`
+  and `resume` clean up.
+- **Anything at that path that isn't a pause file is left alone** and pauses
+  nothing: a symlink, a directory, a file that isn't a number. The path is
+  user-configurable, so the CLI refuses to overwrite or delete it, same as the
+  mute markers.
+- **Test alerts pass `ADA_IGNORE_PAUSE=1`**: `ada()` in `ada.sh` (a fifth
+  argument to `__ada_show_alert`, set on the launcher's command line only),
+  `run_test_alert` in the installer, `ada-paseo-watch.sh test` (a fourth
+  argument to `__ada_fire`), and the menu bar's Test Alert. A snoozed test
+  alert keeps the flag through the daemon's environment.
+- **`TMPDIR` is normalized first.** A launcher started without `TMPDIR` asks
+  `getconf DARWIN_USER_TEMP_DIR` before falling back to `/tmp`, because the
+  pause, the mute markers and the pid file all live there. launchd jobs get the
+  same per-user temp dir as a terminal (checked on this machine), which is what
+  lets the menu bar, the hooks and the Paseo watcher share this state.
+- **`ada-pause.sh` and `ada-notify.sh` are in `ADA_RUNTIME_FILES`.** A
+  missing `ada-pause.sh` means no pausing, never a missing alert, so a stage
+  without it would fail silently.
+- **In bats, stop a background python loop with `kill` (TERM), not `kill
+  -INT`.** Non-interactive bash starts background jobs with SIGINT ignored and
+  Python keeps that, so `wait` never returns. The Ctrl-C loop test re-arms
+  SIGINT itself for exactly this reason.
+
+## The alert history is written by the launcher only
+
+`lib/ada-history.sh` appends one tab-separated line per alert the launcher
+decides on (`shown`, `paused`, `muted`) to `$TMPDIR/ada-history.tsv`; the
+format is in its header, version first. The menu bar reads it for Recent
+Alerts. Three constraints shape where the calls sit in `ada-show-alert.sh`:
+
+- **The session and click-target assignments come before the pause and mute
+  checks**, so a dropped alert's line still carries `ADA_CLICK_URL` and the
+  focus app. That is the point of recording dropped alerts at all.
+- **A dropped alert does not resolve the repo.** `git rev-parse` runs only once
+  the alert is known to show; a dropped line records `ADA_REPO` only when it was
+  inherited (a snooze relaunch). REQUIREMENTS keeps the mute decision ahead of
+  that spawn.
+- **Building a line costs no subshells.** `__ada_history_add` appends to a
+  variable instead of printing, because eleven `$(…)` fields per alert were
+  eleven forks. Only `date` and the trim's `wc` spawn.
+
+A missing `ada-history.sh` defines a no-op `__ada_history_record`, so an old
+copy of the launcher still alerts; the file is in `ADA_RUNTIME_FILES`.
+
+## The menu bar item: a thin renderer, run as a login item
+
+`Sources/ADAMenuBar/main.swift` renders `MenuModel.build(MenuInput)` from
+`ADAAlertCore` into an `NSMenu` each time the menu opens, and runs the owning
+script for every action: `lib/ada-pause.sh`, `lib/ada-mute.sh clear`,
+`lib/ada-history.sh clear`. **Bash owns every write; Swift only reads.** It
+reads the pause file (`PauseState`), the history (`AlertHistory`) and the mute
+markers (`MuteList`) directly, applying the scripts' own rules, because
+spawning `ada-mute.sh list` on every open measured about 41 ms with nothing
+muted and grows per marker. The integration report is the one slow read (about
+0.5 s, mostly `opencode debug paths`), so it runs in the background, is cached
+for a minute, and updates the open Integrations submenu in place.
+`ada-menubar --print-menu` prints the same model from real state, which is how
+`test/ada-alert.bats` checks the Swift readers against the scripts.
+
+- **An old binary starts the app for any argument but `--check`.** That put a
+  stray status item on screen during development when a failed `swift build`
+  was piped through `tail` (whose exit status hid the failure) and the next
+  command ran the stale binary. Now unknown arguments exit 2, and the
+  `--print-menu` tests grep the binary for the flag before running it.
+- **The LaunchAgent can't touch `~/Documents`, and neither can its children.**
+  Everything it runs comes from its install dir (the shared stage, or
+  Homebrew's `opt`). The status report runs with `ADA_STATUS_SKIP_PROTECTED=1`
+  so it doesn't stat paths under `$HOME`, `stage-info` names the checkout
+  without reading it, and Set Up Integrations writes `$TMPDIR/ada-setup.command`
+  and opens it, so Terminal runs the installer with its own folder access.
+- **Quit must stay quit.** `KeepAlive` is `{SuccessfulExit: false}`: Quit exits
+  0 and stays off until the next login or `ada-menubar.sh start`; a crash
+  restarts it. `AbandonProcessGroup` keeps a Test Alert window alive when the
+  menu bar exits.
+- **Relaunch after an upgrade.** Started by launchd (`XPC_SERVICE_NAME ==
+  com.ada.menubar`), the 30 s tick stats the binary at its launch path. A new
+  inode (a `brew upgrade` swapped the opt link, or a re-stage renamed a new
+  copy in) means exit 75, which KeepAlive restarts; missing for two ticks in a
+  row means exit 0 (uninstalled). One missing tick is tolerated for the moment
+  an upgrade swaps the link. `RelaunchWatcher` holds the rule.
+- **One per user.** An exclusive `flock` on `$TMPDIR/ada-menubar.lock`; a
+  second copy (a login item plus a manual `.build/release/ada-menubar &`) logs
+  "another ADA menu bar is already running" and exits 0. If the manual one won,
+  the login item shows as loaded but not running until the next login.
+- **`TMPDIR` rule.** `StatePaths` uses `TMPDIR`, else
+  `confstr(_CS_DARWIN_USER_TEMP_DIR)`, else `/tmp`, the launcher's rule, and
+  hands the same `TMPDIR` to every script it runs. The scripts start in
+  `TMPDIR`, because launchd starts jobs in `/`.
+
+Debugging:
+```bash
+.build/release/ada-menubar --print-menu            # the menu, from real state
+~/.ada/ada-menubar.sh status                         # job, plist, stage, log
+launchctl print gui/$(id -u)/com.ada.menubar | grep -iE 'state =|pid =|last exit'
+```
 
 ## The feedback note opens links via the adaOpen bridge
 

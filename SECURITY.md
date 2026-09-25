@@ -28,6 +28,9 @@ GitHub profile and include:
   require elevated privileges.
 - Debug logging must remain opt-in and should avoid capturing more prompt or
   command data than needed.
+- Alert labels kept on disk (the alert history and mute markers, which hold
+  prompts and commands) must stay in the per-user temp dir, be created mode
+  600, never be written through a symlink, and never leave the machine.
 
 ## Supported Versions
 

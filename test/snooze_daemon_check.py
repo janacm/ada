@@ -212,13 +212,34 @@ check("a mute request is accepted", status == 200, status)
 check("mute writes the marker, creating its directory", os.path.isfile(marker))
 check("mute neither relaunches nor focuses anything",
       opened == [] and not os.path.exists(out), opened)
+check("the marker holds the alert's label", open(marker).read() == "make build\n",
+      repr(open(marker).read()))
+check("the marker is private", stat.S_IMODE(os.stat(marker).st_mode) == 0o600,
+      oct(os.stat(marker).st_mode))
 
+with open(marker, "w") as f:
+    f.write("a much longer stale label\n")
+os.chmod(marker, 0o644)
 os.utime(marker, (1, 1))
 handoff = os.path.join(TMP, "h8")
 mod, _ = load(argv(handoff), env={"ADA_MUTE_FILE": marker})
 drive(mod, handoff, "GET", lambda tok: "/%s/mute" % tok)
 check("muting again restarts the expiry clock", os.stat(marker).st_mtime > 1000,
       os.stat(marker).st_mtime)
+check("muting again rewrites the label instead of appending",
+      open(marker).read() == "make build\n", repr(open(marker).read()))
+check("muting again makes an older marker private",
+      stat.S_IMODE(os.stat(marker).st_mode) == 0o600, oct(os.stat(marker).st_mode))
+
+handoff = os.path.join(TMP, "h8b")
+args = argv(handoff)
+args[3] = "first line\nsecond\tline " + "x" * 300
+mod, _ = load(args, env={"ADA_MUTE_FILE": marker})
+drive(mod, handoff, "GET", lambda tok: "/%s/mute" % tok)
+label = open(marker).read()
+check("a multi-line label becomes one line of at most 200 characters",
+      label.startswith("first line second line x") and label.count("\n") == 1
+      and len(label) == 201, repr(label[:60]) + " len=%d" % len(label))
 
 handoff = os.path.join(TMP, "h9")
 log = os.path.join(TMP, "mute-ignored.log")

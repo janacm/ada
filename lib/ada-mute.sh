@@ -18,9 +18,15 @@
 # a dot or dash) is refused and that alert simply has no mute button.
 #
 # Sourced by ada-show-alert.sh for the helpers below. Executed, it is the CLI:
-#   ada-mute.sh list            muted keys and how long ago they were muted
-#   ada-mute.sh clear [key...]  unmute the given keys, or every key
-#   ada-mute.sh add <key>       mute a key by hand
+#   ada-mute.sh list              muted keys, how long ago, and what was muted
+#   ada-mute.sh clear [key...]    unmute the given keys, or every key
+#   ada-mute.sh add <key> [label] mute a key by hand
+#
+# A marker is a file named after the key. Its mtime is when the mute was set,
+# and its first line, when there is one, is the label of the alert it was muted
+# from (one line, at most 200 characters). The launcher only looks at the name
+# and the mtime; the label is for `list` and the menu bar, which reads this
+# directory directly.
 #
 # Environment:
 #   ADA_MUTE_DIR      where markers live      (default $TMPDIR/ada-muted)
@@ -101,7 +107,7 @@ __ada_mute_prune() {
 __ada_mute_cli() {
   local action=${1:-list}
   shift 2>/dev/null
-  local dir key file age max
+  local dir key file age max label tmp
   dir=$(__ada_mute_dir)
 
   case "$action" in
@@ -114,7 +120,13 @@ __ada_mute_cli() {
       while IFS= read -r key; do
         __ada_is_muted "$key" || continue
         age=$(__ada_mute_age "$key")
-        printf '%s\tmuted %s ago\n' "$key" "$(__ada_format_duration "$age")"
+        label=""
+        IFS= read -r label < "$dir/$key" 2>/dev/null || true
+        if [[ -n "$label" ]]; then
+          printf '%s\tmuted %s ago\t%s\n' "$key" "$(__ada_format_duration "$age")" "$label"
+        else
+          printf '%s\tmuted %s ago\n' "$key" "$(__ada_format_duration "$age")"
+        fi
         found=1
       done < <(__ada_mute_markers)
       (( found )) || echo "no muted sessions"
@@ -145,7 +157,22 @@ __ada_mute_cli() {
         echo "ada-mute: $file is not a mute marker; left alone" >&2
         return 1
       fi
-      mkdir -p "$dir" && touch "$file" || return 1
+      label=${2:-}
+      mkdir -p "$dir" || return 1
+      if [[ -n "$label" ]]; then
+        label=${label//$'\t'/ }; label=${label//$'\r'/ }; label=${label//$'\n'/ }
+        # The label is a prompt, so it goes into a new mode-600 file renamed
+        # over the marker: writing into an existing marker would keep whatever
+        # mode it had (0644 from an older daemon or a plain add). The dot keeps
+        # the temp name from ever passing as a key.
+        tmp=$(mktemp "$dir/.label.XXXXXX") || return 1
+        if ! { printf '%s\n' "${label:0:200}" > "$tmp" && mv -f "$tmp" "$file"; }; then
+          rm -f "$tmp"
+          return 1
+        fi
+      else
+        touch "$file" || return 1
+      fi
       max=$(__ada_mute_max_age)
       if (( max == 0 )); then
         echo "muted $key until cleared"
@@ -154,7 +181,7 @@ __ada_mute_cli() {
       fi
       ;;
     -h|--help|help)
-      sed -n '20,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '20,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       ;;
     *)
       echo "ada-mute: unknown command: $action (try list, clear, add)" >&2

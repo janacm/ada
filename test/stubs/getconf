@@ -1,0 +1,11 @@
+#!/bin/bash
+# Test double for `getconf`. The launcher asks `getconf DARWIN_USER_TEMP_DIR`
+# for the per-user temp dir when TMPDIR is unset; STUB_GETCONF_TMPDIR answers
+# that question (or makes it fail when set to "fail"). Everything else goes to
+# the real getconf.
+if [ "${1:-}" = DARWIN_USER_TEMP_DIR ] && [ -n "${STUB_GETCONF_TMPDIR:-}" ]; then
+  [ "$STUB_GETCONF_TMPDIR" = fail ] && exit 1
+  printf '%s\n' "$STUB_GETCONF_TMPDIR"
+  exit 0
+fi
+exec /usr/bin/getconf "$@"

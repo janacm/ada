@@ -30,6 +30,13 @@ setup() {
   wait_for_file "$ADA_PROBE_OUT" || { echo "sample alert never fired"; false; }
 }
 
+@test "test subcommand fires even while alerts are paused" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  run "$WATCH" test
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "sample alert never fired"; false; }
+}
+
 @test "status reports not-loaded when launchctl has no job" {
   use_stubs
   export HOME="$BATS_TEST_TMPDIR/home"; mkdir -p "$HOME"
@@ -44,6 +51,37 @@ setup() {
   run "$WATCH" status
   assert_success
   assert_output_contains "running (pid 4242)"
+}
+
+# The menu bar and an alert may be running the staged binaries, and bash may be
+# reading a staged script, while a re-install copies over them. Replacing each
+# file by rename leaves those their old file; rewriting in place would not.
+@test "re-staging replaces every file by rename and leaves no temp files" {
+  export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
+  run "$WATCH" install
+  assert_success
+  local helper script
+  helper=$(stat -f %i "$ADA_PASEO_INSTALL_DIR/ada-alert")
+  script=$(stat -f %i "$ADA_PASEO_INSTALL_DIR/lib/ada-show-alert.sh")
+  run "$WATCH" install
+  assert_success
+  [ "$(stat -f %i "$ADA_PASEO_INSTALL_DIR/ada-alert")" != "$helper" ]
+  [ "$(stat -f %i "$ADA_PASEO_INSTALL_DIR/lib/ada-show-alert.sh")" != "$script" ]
+  [ -x "$ADA_PASEO_INSTALL_DIR/lib/ada-show-alert.sh" ]
+  run find "$ADA_PASEO_INSTALL_DIR" -name '*.??????' -o -name '*.tmp'
+  assert_equal "$output" ""
+}
+
+@test "install records where the stage came from" {
+  export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
+  run "$WATCH" install
+  assert_success
+  local info="$ADA_PASEO_INSTALL_DIR/stage-info"
+  assert_file_contains "$info" "source=$REPO_ROOT"
+  assert_file_contains "$info" "rev=$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+  assert_file_contains "$info" "by=ada-paseo-watch"
+  grep -Eq '^dirty=[01]$' "$info"
+  grep -Eq '^staged_at=[0-9]{10}$' "$info"
 }
 
 # Regression: the lib/ refactor once staged the internal scripts FLAT while the
@@ -68,6 +106,12 @@ setup() {
   # Sourced by the staged launcher; without it the LaunchAgent's alerts would
   # silently lose muting while a dev checkout kept it.
   [ -f "$ADA_PASEO_INSTALL_DIR/lib/ada-mute.sh" ]
+  # The same for pausing; and `ada-mute.sh list` sources ada-notify.sh.
+  [ -f "$ADA_PASEO_INSTALL_DIR/lib/ada-pause.sh" ]
+  [ -f "$ADA_PASEO_INSTALL_DIR/lib/ada-history.sh" ]
+  # The staged front door's uninstall and status load it.
+  [ -f "$ADA_PASEO_INSTALL_DIR/lib/ada-stage.sh" ]
+  [ -f "$ADA_PASEO_INSTALL_DIR/lib/ada-notify.sh" ]
 
   # Anchor to the code, not a restatement: load the staged module and assert the
   # launcher it would exec actually exists on disk.
@@ -107,9 +151,11 @@ PY
   local prefix="$BATS_TEST_TMPDIR/brew"
   local libexec="$prefix/opt/ada/libexec"
   mkdir -p "$libexec/lib" "$HOME/Library/LaunchAgents"
-  cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/alert.html" "$libexec/"
+  cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/ada-menubar.sh" "$REPO_ROOT/alert.html" "$libexec/"
   cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$REPO_ROOT/lib/ada-show-alert.sh" \
-     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" "$libexec/lib/"
+     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" \
+     "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-history.sh" "$REPO_ROOT/lib/ada-notify.sh" \
+     "$REPO_ROOT/lib/ada-stage.sh" "$REPO_ROOT/lib/ada-status.sh" "$libexec/lib/"
   cp "$REPO_ROOT/ada-alert" "$libexec/ada-alert" 2>/dev/null \
     || cp "$REPO_ROOT/.build/release/ada-alert" "$libexec/ada-alert"
 
@@ -136,9 +182,11 @@ PY
 @test "a manual run reads the env file from the install dir, not its own dir" {
   local libexec="$BATS_TEST_TMPDIR/brew/opt/ada/libexec"
   mkdir -p "$libexec/lib"
-  cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/alert.html" "$libexec/"
+  cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/ada-menubar.sh" "$REPO_ROOT/alert.html" "$libexec/"
   cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$REPO_ROOT/lib/ada-show-alert.sh" \
-     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" "$libexec/lib/"
+     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" \
+     "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-history.sh" "$REPO_ROOT/lib/ada-notify.sh" \
+     "$REPO_ROOT/lib/ada-stage.sh" "$REPO_ROOT/lib/ada-status.sh" "$libexec/lib/"
 
   export HOMEBREW_PREFIX="$BATS_TEST_TMPDIR/brew"
   export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
@@ -286,9 +334,11 @@ PY
 make_watch_checkout() {
   CHECKOUT="$BATS_TEST_TMPDIR/checkout"
   mkdir -p "$CHECKOUT/lib"
-  cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/alert.html" "$CHECKOUT/"
+  cp "$REPO_ROOT/ada-paseo-watch.sh" "$REPO_ROOT/ada-menubar.sh" "$REPO_ROOT/alert.html" "$CHECKOUT/"
   cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$REPO_ROOT/lib/ada-show-alert.sh" \
-     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" "$CHECKOUT/lib/"
+     "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" \
+     "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-history.sh" "$REPO_ROOT/lib/ada-notify.sh" \
+     "$REPO_ROOT/lib/ada-stage.sh" "$REPO_ROOT/lib/ada-status.sh" "$CHECKOUT/lib/"
   export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
   unset ADA_NATIVE_ALERT
 }
@@ -378,6 +428,7 @@ stale_watch_checkout() {
   local libexec="$prefix/opt/ada/libexec"
   mkdir -p "$libexec/lib"
   cp "$REPO_ROOT/ada-paseo-watch.sh" "$libexec/"
+  cp "$REPO_ROOT/lib/ada-stage.sh" "$libexec/lib/"
   export HOMEBREW_PREFIX="$prefix"
   export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
   unset ADA_NATIVE_ALERT
@@ -387,6 +438,20 @@ stale_watch_checkout() {
   assert_output_contains "native helper ada-alert is required"
 }
 
+@test "install and status say so when lib/ada-stage.sh is missing" {
+  local root="$BATS_TEST_TMPDIR/bare"
+  mkdir -p "$root/lib"
+  cp "$REPO_ROOT/ada-paseo-watch.sh" "$root/"
+  export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
+  run "$root/ada-paseo-watch.sh" install
+  assert_failure
+  assert_output_contains "missing $root/lib/ada-stage.sh"
+  [ ! -f "$HOME/Library/LaunchAgents/com.ada.paseo-watch.plist" ]
+  run "$root/ada-paseo-watch.sh" status
+  assert_failure
+  assert_output_contains "missing $root/lib/ada-stage.sh"
+}
+
 # Same Cellar -> opt rule as the installer: whatever the watcher prints for you
 # to run later must survive `brew upgrade`.
 @test "run from a Cellar keg, the watcher reports its stable opt path" {
@@ -394,6 +459,7 @@ stale_watch_checkout() {
   local keg="$prefix/Cellar/ada/9.9.9/libexec"
   mkdir -p "$keg/lib" "$prefix/opt"
   cp "$REPO_ROOT/ada-paseo-watch.sh" "$keg/"
+  cp "$REPO_ROOT/lib/ada-stage.sh" "$keg/lib/"
   ln -s "../Cellar/ada/9.9.9" "$prefix/opt/ada"
   run "$keg/ada-paseo-watch.sh" status
   assert_success
@@ -475,4 +541,36 @@ SH
   assert_equal "$(echo $output)" "1"
   assert_file_contains "$ADA_PROBE_OUT" "loud"
   refute_file_contains "$ADA_PROBE_OUT" "muted"
+}
+
+# A pause silences the watcher through the same real chain. The poll counter is
+# the positive control: the loop really saw both agents finish.
+@test "the watcher loop drops every alert while paused" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat > "$BATS_TEST_TMPDIR/bin/paseo" <<'SH'
+#!/bin/bash
+state="$BATS_TEST_TMPDIR/paseo-polls"
+case "$1" in
+  ls)
+    n=$(cat "$state" 2>/dev/null || echo 0); echo $((n + 1)) > "$state"
+    if (( n == 0 )); then s=running; else s=idle; fi
+    printf '[{"id":"a1","name":"one","status":"%s"},{"id":"a2","name":"two","status":"%s"}]\n' "$s" "$s" ;;
+  permit) echo '[]' ;;
+esac
+SH
+  chmod +x "$BATS_TEST_TMPDIR/bin/paseo"
+  export PASEO_BIN="$BATS_TEST_TMPDIR/bin/paseo" ADA_PASEO_POLL=1 ADA_PASEO_THRESHOLD=0
+  python3 "$REPO_ROOT/lib/ada-paseo-watch.py" > "$BATS_TEST_TMPDIR/loop.out" 2>&1 &
+  local pid=$! tries=100
+  while (( tries-- > 0 )) && (( $(cat "$BATS_TEST_TMPDIR/paseo-polls" 2>/dev/null || echo 0) < 3 )); do
+    sleep 0.1
+  done
+  sleep 0.5
+  # TERM, not INT: bash starts background jobs with SIGINT ignored.
+  kill "$pid"; wait "$pid" 2>/dev/null || true
+  (( $(cat "$BATS_TEST_TMPDIR/paseo-polls") >= 3 )) || { cat "$BATS_TEST_TMPDIR/loop.out"; echo "the loop never polled"; false; }
+  [ ! -e "$ADA_PROBE_OUT" ] || { echo "an alert fired while paused:"; cat "$ADA_PROBE_OUT"; false; }
+  refute_file_contains "$BATS_TEST_TMPDIR/loop.out" "Traceback"
 }

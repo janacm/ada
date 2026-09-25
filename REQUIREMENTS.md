@@ -46,6 +46,11 @@ removed.
 - The formula must not run the onboarding installer automatically. It must
   expose the installer as an `ada-setup` wrapper and direct users to run it via
   caveats.
+- Every stable install reads the formula from the default branch, including
+  installs whose tarball is older than the branch, so wrappers and caveats must
+  refer only to files the installed tree has (checked under `opt_libexec`): no
+  `ada-pause` wrapper, menu bar caveat or `--status` line for a tarball that
+  predates them.
 - `brew install` and `brew upgrade` must write only under the Homebrew prefix;
   they must not modify user dotfiles, agent hook config, or an existing
   from-source install.
@@ -100,8 +105,11 @@ removed.
   choosing which integrations trigger ADA.
 - The installer must offer an interactive terminal selector when run from a TTY
   and a scriptable `--agents` path for non-interactive install flows.
-- The selector must include Terminal commands, Claude Code, Codex, opencode, and
-  Paseo as independently selectable integrations.
+- The selector must include Terminal commands, Claude Code, Codex, opencode,
+  Paseo, and the Menu bar login item as independently selectable rows. The
+  Menu bar row must be available when `ada-menubar` is built or can be (a
+  `Package.swift` and swift), selected by default when available, and must
+  delegate to `ada-menubar.sh install`.
 - The selector must move with the up/down arrow keys as well as `j`/`k` under
   macOS `/bin/bash` 3.2, which accepts only whole-second `read -t` timeouts.
 - The shared alert runtime files, including the native `ada-alert` helper, must
@@ -142,6 +150,15 @@ removed.
   so the LaunchAgent staging behavior stays centralized.
 - The installer must support `--list`, `--dry-run`, and `--no-test` for
   validation, documentation, and automation.
+- `--status` must report, for each integration, whether it is wired and
+  working (`ok`, `off`, `warn`, `unavailable`) from the markers the installer
+  writes: the managed `~/.zshrc` block or a `source …/ada.sh` line, both
+  Claude/Codex hooks, ada's opencode shim, and the Paseo LaunchAgent (running,
+  loaded, or neither). A wired path that no longer exists must be a warning.
+  The report must live in `lib/ada-status.sh`, which the installer sources for
+  its finders, so the menu bar can run it from a stage that has no installer.
+  With `ADA_STATUS_SKIP_PROTECTED=1` it must not check paths under `$HOME` or
+  `/Volumes`, which a LaunchAgent may not be allowed to look at.
 
 ## Terminal Command Alerts
 
@@ -202,8 +219,30 @@ removed.
 - The SwiftPM package must expose an optional `ada-menubar` executable product
   that runs as a native macOS menu bar status item.
 - The menu bar helper must not be an alert renderer or a replacement for the
-  terminal, Claude/Codex, or Paseo integrations; it may provide convenience
-  actions such as firing a sample alert and opening the ADA folder.
+  terminal, Claude/Codex, opencode or Paseo integrations. Its menu must offer:
+  the pause state and Pause (for 1 hour, until the next 08:00 at least an hour
+  away, until resumed) or Resume; the 10 newest history entries, marking those
+  a pause or mute dropped, where choosing one opens its click target (the click
+  URL, else the focus app's bundle id, never a `file:` URL); the muted
+  sessions, each named by its marker label, else its newest history label,
+  else its kind and a short id, with Unmute and Unmute All; the
+  `lib/ada-status.sh` report with Set Up Integrations; Send Test Alert; Open
+  ADA Folder; Quit. Its icon must show whether alerts are paused.
+- The menu bar must change state only by running the script that owns it
+  (`ada-pause.sh`, `ada-mute.sh clear`, `ada-history.sh clear`). It may read
+  the pause file, history and mute markers directly, with the same rules those
+  scripts apply, because running a script on every menu open is too slow.
+- Everything the menu bar decides must live in `ADAAlertCore` with Swift
+  Testing coverage; `ada-menubar --print-menu` must print the menu built from
+  real state, so the suite can check it against the scripts without a window.
+- Only `--check`, `--print-menu` and `--help` may run without starting the
+  app; any other argument must exit 2 rather than put a status item on screen.
+- One menu bar must run per user (an exclusive lock in `$TMPDIR`). Started by
+  launchd, it must exit 75 when the binary at its launch path is replaced (a
+  `brew upgrade`, a re-stage) so launchd restarts the new one, and exit 0 when
+  that path is gone for two checks in a row.
+- Set Up Integrations must hand the installer to Terminal as a `.command` file,
+  so the menu bar itself never runs anything under a TCC-protected folder.
 - The menu bar helper must trigger alerts through `ada-show-alert.sh` so it
   shares the same native-only rendering path and configuration as every other
   entry point.
@@ -300,6 +339,56 @@ removed.
   Homebrew must expose it as `ada-mute`.
 - A launcher running without `ada-mute.sh` beside it must still alert, with no
   muting.
+
+## Global Pause
+
+- A pause must silence every alert from every integration, including a pending
+  snooze relaunch that comes due while paused, until it ends or is resumed.
+- The pause check must live only in `ada-show-alert.sh`, beside the mute check
+  and before it. No integration may reimplement it.
+- The pause state must be one file (`ADA_PAUSE_FILE`, default
+  `$TMPDIR/ada-paused`) holding one decimal integer: the epoch second the pause
+  ends, or `0` for until resumed. Writers must replace it atomically (temp file
+  and rename).
+- A file at that path that is not a pause file (not a regular file, a symlink,
+  or not a number) must pause nothing and must never be overwritten or deleted.
+- The launcher must only read the pause file. An expired pause lets alerts
+  through; only the CLI deletes the file, so a launcher cannot race a new pause
+  being renamed into place.
+- Alerts the user asked for must show while paused: the terminal `ada` command,
+  the installer's sample alert, `ada-paseo-watch.sh test`, and the menu bar's
+  Test Alert pass `ADA_IGNORE_PAUSE=1`. zsh must pass it on the launcher's
+  command line only, never into the interactive shell.
+- When `TMPDIR` is unset, the launcher must use `getconf DARWIN_USER_TEMP_DIR`
+  (then `/tmp`), so a stripped environment still finds the pause and the mute
+  markers that terminals and launchd jobs see under the per-user temp dir.
+- `lib/ada-pause.sh <minutes>|until <epoch>|forever|resume|status` must set,
+  clear and describe the pause, and Homebrew must expose it as `ada-pause`.
+- A launcher running without `ada-pause.sh` beside it must still alert, with no
+  pausing.
+
+## Alert History
+
+- The launcher must append one line to the history (`ADA_HISTORY_FILE`, default
+  `$TMPDIR/ada-history.tsv`) for every alert it decides on: shown, or dropped
+  by a pause or a mute. A snooze relaunch must be flagged as one.
+- Each line must be tab-separated, version first: `1 epoch outcome snoozed key
+  kind label duration code repo focus_app focus_app_name click_url`. Tabs and
+  line breaks in a field must become spaces, and a field must be cut to 200
+  characters (the click URL to 500). Readers must skip lines of another version
+  and ignore columns past the last one they know.
+- A dropped alert must not resolve the repo (that runs git), so it records
+  `ADA_REPO` only when it inherited one.
+- The file must be created mode 600 and never written through a symlink or when
+  another user owns it. It must be trimmed to the newest `ADA_HISTORY_MAX`
+  lines (default 50; `0` keeps none) once it reaches twice that.
+- A history failure must never cost the alert, and a launcher without
+  `ada-history.sh` beside it must still alert.
+- `lib/ada-history.sh list|clear` must print and forget the history.
+- A mute marker must hold the label of the alert it was muted from, one line of
+  at most 200 characters, mode 600; `ada-mute list` must show it and `ada-mute
+  add <key> [label]` must accept one. The launcher must keep using only the
+  marker's name and mtime.
 
 ## Claude Code And Codex Hooks
 
@@ -453,9 +542,17 @@ removed.
 - The LaunchAgent must set `ADA_PASEO_ENV` to the env file under the per-user
   install directory in both modes, so watcher configuration survives a
   `brew upgrade` replacing the Homebrew-managed tree.
-- The staged runtime must include `ada-paseo-watch.sh`,
-  `ada-paseo-watch.py`, `ada-show-alert.sh`, `ada-snooze-daemon.py`,
-  `ada-mute.sh`, and `alert.html`. Staging must mirror the dev-checkout layout — the front door
+- The staged runtime must be every file in `ADA_RUNTIME_FILES`
+  (`lib/ada-stage.sh`), one list shared by every LaunchAgent that stages into
+  the same directory: today `ada-paseo-watch.sh`, `alert.html` and, under
+  `lib/`, `ada-paseo-watch.py`, `ada-show-alert.sh`, `ada-snooze-daemon.py`,
+  `ada-mute.sh`, `ada-pause.sh`, `ada-history.sh`, `ada-notify.sh` (which
+  `ada-mute.sh list` and `ada-pause.sh` source) and `ada-stage.sh`. The
+  installer, `ada.sh` and the hook and plugin scripts must never be staged.
+- Staging must replace each file by renaming a temp copy into place, never by
+  rewriting it, because a staged binary may be running and a staged script
+  may be mid-read. It must write `stage-info` (`source`, `rev`, `dirty`,
+  `staged_at`, `by`) beside the runtime. Staging must mirror the dev-checkout layout — the front door
   (`ada-paseo-watch.sh`) and `alert.html` at the top, the internal scripts under
   `lib/` — so every `lib/`-relative reference resolves identically whether run
   from a checkout or from the staged LaunchAgent.
@@ -480,6 +577,28 @@ removed.
   plist.
 - `ada-paseo-watch.sh test` must fire one sample alert through the shared
   launcher.
+
+## Menu Bar LaunchAgent
+
+- `ada-menubar.sh install` must make the menu bar a login item: a LaunchAgent
+  `com.ada.menubar` whose plist runs the `ada-menubar` binary with `RunAtLoad`,
+  `KeepAlive` restarting it only after an unsuccessful exit (so Quit keeps it
+  off until the next login or `ada-menubar.sh start`), `LimitLoadToSessionType
+  Aqua`, `AbandonProcessGroup` (a Test Alert window outlives it), and the same
+  baked-in `PATH` as the Paseo watcher.
+- It must stage like the Paseo watcher, through `lib/ada-stage.sh`, into the
+  same directory (`ADA_MENUBAR_INSTALL_DIR`, else `ADA_PASEO_INSTALL_DIR`, else
+  `~/.local/share/ada`), adding the `ada-menubar` helper, which it builds when
+  missing. A Homebrew install must run in place and must fail if a runtime file
+  or either helper is missing.
+- Installing, uninstalling or restaging one job must not break the other's
+  runtime; `uninstall` removes only its own plist.
+- `status` must report running, loaded but not running, or not installed; the
+  runtime the plist names; a stage that differs from the checkout, helpers
+  included; where the stage came from (`stage-info`); and the log.
+- `start` must load an installed but unloaded job and `kickstart` it.
+- `__ada_stable_dir` must stay identical in `ada-install.sh`,
+  `ada-paseo-watch.sh` and `ada-menubar.sh`, which a test checks.
 
 ## Dependencies And Degradation
 
@@ -528,6 +647,37 @@ removed.
 
 ## Change Log
 
+- 2026-09-24: The menu bar item is a real control surface and a login item. Its
+  bell shows whether alerts are paused, and its menu pauses and resumes them,
+  lists the recent alerts (a dropped Claude turn is one click from its
+  conversation), unmutes sessions, and shows the `--status` report. The
+  installer's new Menu bar row runs `ada-menubar.sh install`, which stages it
+  beside the Paseo watcher; a Homebrew install runs in place and restarts itself
+  after `brew upgrade`. The menu's decisions live in `ADAAlertCore`, and
+  `ada-menubar --print-menu` prints the menu from real state for the tests. An
+  older build treated every argument but `--check` as "start the app"; now any
+  other argument exits 2.
+- 2026-09-24: `ada-setup --status` reports which integrations are wired and
+  whether each still works, from the markers the installer writes, including
+  hooks that point at a deleted checkout. The report and the finders it shares
+  with the installer moved to `lib/ada-status.sh`; the Paseo watcher's staging
+  moved to `lib/ada-stage.sh`, which now replaces staged files by rename and
+  records where the stage came from, so a second LaunchAgent (the menu bar) can
+  share both.
+- 2026-09-24: The launcher keeps an alert history for the menu bar's Recent
+  Alerts: one line per alert, shown or dropped by a pause or a mute, with the
+  click target so a dropped Claude turn is still one click away. Mute markers
+  now hold the label of the alert they were muted from, which `ada-mute list`
+  shows.
+- 2026-09-24: Alerts can be paused. `ada-pause <minutes>|until <epoch>|forever`
+  silences every integration until the pause ends or `ada-pause resume`, the
+  switch the menu bar's Pause menu will use. The check sits in
+  `ada-show-alert.sh` beside the mute check; test alerts pass
+  `ADA_IGNORE_PAUSE=1`. With `TMPDIR` unset the launcher now asks `getconf
+  DARWIN_USER_TEMP_DIR` instead of falling back to `/tmp`, where it could not
+  see a pause, or mutes set from alerts that had `TMPDIR`. The Paseo stage gains
+  `ada-pause.sh` and `ada-notify.sh`; without the latter a staged `ada-mute.sh
+  list` printed errors and a blank "muted  ago" for every key.
 - 2026-09-24: The snooze daemon no longer does a reverse-DNS lookup when it
   binds. `HTTPServer.server_bind` calls `socket.getfqdn("127.0.0.1")` only to
   fill in a name nothing reads, and on GitHub's macOS runners that outlasted

@@ -36,6 +36,24 @@ PY
   assert_output_contains "codex"
   assert_output_contains "opencode"
   assert_output_contains "paseo"
+  assert_output_contains "menubar   Menu bar                   login item"
+}
+
+@test "the menu bar row says whether its login item is installed" {
+  run bash -c "\"$INSTALL\" --list | grep '^menubar'"
+  assert_output_contains "will add login item"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  touch "$HOME/Library/LaunchAgents/com.ada.menubar.plist"
+  run bash -c "\"$INSTALL\" --list | grep '^menubar'"
+  assert_output_contains "installed"
+}
+
+# Like Paseo, the login item is delegated wholesale to its own front door.
+@test "the menu bar row delegates to ada-menubar.sh install" {
+  run "$INSTALL" --agents menubar --dry-run --no-test
+  assert_success
+  assert_output_contains "Installing menu bar -> login item"
+  assert_output_contains "dry-run: would run $REPO_ROOT/ada-menubar.sh install"
 }
 
 @test "--help prints usage" {
@@ -94,7 +112,8 @@ PY
   mkdir -p "$keg/lib" "$prefix/opt"
   cp "$REPO_ROOT/ada-install.sh" "$REPO_ROOT/ada.sh" "$REPO_ROOT/alert.html" "$keg/"
   cp "$REPO_ROOT/lib/ada-show-alert.sh" "$REPO_ROOT/lib/ada-claude-hook.sh" \
-     "$REPO_ROOT/lib/ada-notify.sh" "$REPO_ROOT/lib/ada-opencode-plugin.mjs" "$keg/lib/"
+     "$REPO_ROOT/lib/ada-notify.sh" "$REPO_ROOT/lib/ada-opencode-plugin.mjs" \
+     "$REPO_ROOT/lib/ada-status.sh" "$REPO_ROOT/lib/ada-stage.sh" "$keg/lib/"
   cp "$REPO_ROOT/ada-alert" "$keg/ada-alert" 2>/dev/null \
     || cp "$REPO_ROOT/.build/release/ada-alert" "$keg/ada-alert"
   ln -s "../Cellar/ada/9.9.9" "$prefix/opt/ada"
@@ -315,7 +334,8 @@ JSON
   mkdir -p "$fake/lib"
   cp "$REPO_ROOT/ada-install.sh" "$fake/"
   cp "$REPO_ROOT/lib/ada-show-alert.sh" "$REPO_ROOT/lib/ada-claude-hook.sh" \
-     "$REPO_ROOT/lib/ada-notify.sh" "$fake/lib/"
+     "$REPO_ROOT/lib/ada-notify.sh" "$REPO_ROOT/lib/ada-status.sh" \
+     "$REPO_ROOT/lib/ada-stage.sh" "$fake/lib/"
   # Everything present EXCEPT lib/ada-opencode-plugin.mjs, which the shim the
   # installer writes will import on every opencode start.
   run "$fake/ada-install.sh" --list
@@ -376,7 +396,8 @@ JSON
 # --- the interactive selector, driven through a pty ---------------------------
 # interactive_select refuses to run without a terminal, so these go through
 # test/pty_run.py. HOME has ~/.claude and ~/.codex and the opencode stub is on
-# PATH, so four rows start selected; Paseo has no CLI, so its row is locked.
+# PATH, so five rows start selected (the menu bar can be built from this
+# checkout); Paseo has no CLI, so its row is locked.
 # --dry-run keeps every install step to a "would ..." line, which is how each
 # test reads back what the selection ended up being.
 select_keys() {
@@ -389,11 +410,12 @@ select_keys() {
   assert_success
   assert_output_contains "[-] Paseo"
   assert_output_contains "unavailable: not found"
-  assert_output_contains "Selected: Terminal commands, Claude Code, Codex, opencode"
+  assert_output_contains "Selected: Terminal commands, Claude Code, Codex, opencode, Menu bar"
   assert_output_contains "Installing terminal integration"
   assert_output_contains "Installing Claude Code integration"
   assert_output_contains "Installing Codex integration"
   assert_output_contains "Installing opencode integration"
+  assert_output_contains "Installing menu bar -> login item"
 }
 
 # macOS /bin/bash 3.2 rejects a fractional `read -t`, which used to leave the
@@ -406,11 +428,26 @@ select_keys() {
   refute_output_contains "Installing Claude Code integration"
 }
 
-@test "up from the first row wraps to the last available row, skipping Paseo" {
+@test "up from the first row wraps to the last row, the menu bar" {
   select_keys '\x1b[A' ' ' '\r'
   assert_success
-  refute_output_contains "Installing opencode integration"
+  refute_output_contains "Installing menu bar"
+  assert_output_contains "Installing opencode integration"
   assert_output_contains "Installing terminal integration"
+}
+
+@test "moving up past the menu bar skips the locked Paseo row" {
+  select_keys '\x1b[A' '\x1b[A' ' ' '\r'
+  assert_success
+  refute_output_contains "Installing opencode integration"
+  assert_output_contains "Installing menu bar -> login item"
+}
+
+@test "moving down from opencode skips the locked Paseo row" {
+  select_keys j j j j ' ' '\r'
+  assert_success
+  refute_output_contains "Installing menu bar"
+  assert_output_contains "Installing opencode integration"
 }
 
 @test "j and k move the cursor too" {
@@ -474,13 +511,31 @@ select_keys() {
 }
 
 # A checkout that is missing part of the runtime. The installer is symlinked in,
-# so it resolves its directory to the fixture, not to the repo.
+# so it resolves its directory to the fixture, not to the repo. The two libs it
+# sources come along unless the test names NO_LIBS.
 make_partial_checkout() {
   CHECKOUT="$BATS_TEST_TMPDIR/checkout"
   mkdir -p "$CHECKOUT/lib"
   ln -s "$REPO_ROOT/ada-install.sh" "$CHECKOUT/ada-install.sh"
-  local f
-  for f in "$@"; do ln -s "$REPO_ROOT/$f" "$CHECKOUT/$f"; done
+  local f libs=1
+  for f in "$@"; do
+    if [[ "$f" == NO_LIBS ]]; then libs=0; else ln -s "$REPO_ROOT/$f" "$CHECKOUT/$f"; fi
+  done
+  if (( libs )); then
+    ln -s "$REPO_ROOT/lib/ada-status.sh" "$CHECKOUT/lib/ada-status.sh"
+    ln -s "$REPO_ROOT/lib/ada-stage.sh" "$CHECKOUT/lib/ada-stage.sh"
+  fi
+}
+
+@test "a checkout missing the libs the installer sources is refused, even for --list" {
+  make_partial_checkout NO_LIBS lib/ada-show-alert.sh lib/ada-claude-hook.sh lib/ada-notify.sh
+  run "$CHECKOUT/ada-install.sh" --list
+  assert_failure
+  assert_output_contains "missing $CHECKOUT/lib/ada-status.sh"
+  ln -s "$REPO_ROOT/lib/ada-status.sh" "$CHECKOUT/lib/ada-status.sh"
+  run "$CHECKOUT/ada-install.sh" --list
+  assert_failure
+  assert_output_contains "missing $CHECKOUT/lib/ada-stage.sh"
 }
 
 @test "a checkout missing the launcher is refused" {
@@ -656,6 +711,33 @@ stale_helper_checkout() {
   [ ! -e "$BATS_TEST_TMPDIR/swift.log" ]
 }
 
+# --- --status: what is wired -------------------------------------------------
+
+@test "--status prints a row per integration without touching anything" {
+  run "$INSTALL" --status
+  assert_success
+  assert_output_contains "terminal  Terminal commands  off"
+  assert_output_contains "claude    Claude Code        unavailable"
+  refute_output_contains "Firing a sample alert"
+  [ ! -e "$HOME/.zshrc" ]
+}
+
+# The status check reads the markers the installer writes, so install through
+# the real installer and require status to see every one of them. This is what
+# keeps the status predicates from drifting away from the install code.
+@test "after installing each integration, --status reports it as ok" {
+  require_native_helper
+  mkdir -p "$HOME/.claude" "$HOME/.codex"
+  run "$INSTALL" --agents terminal,claude,codex,opencode --no-test
+  assert_success
+  run "$INSTALL" --status
+  assert_success
+  assert_output_contains "terminal  Terminal commands  ok           ~/.zshrc sources $REPO_ROOT/ada.sh"
+  assert_output_contains "claude    Claude Code        ok           hooks run $REPO_ROOT/lib/ada-claude-hook.sh"
+  assert_output_contains "codex     Codex              ok           hooks run $REPO_ROOT/lib/ada-claude-hook.sh"
+  assert_output_contains "opencode  opencode           ok           plugin loads $REPO_ROOT/lib/ada-opencode-plugin.mjs"
+}
+
 # --- the sample alert and Paseo delegation ------------------------------------
 
 @test "without --no-test the installer fires a sample alert" {
@@ -663,6 +745,15 @@ stale_helper_checkout() {
   run "$INSTALL" --agents terminal
   assert_success
   assert_output_contains "Firing a sample alert"
+  wait_for_file "$ADA_PROBE_OUT" || { echo "sample alert never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "ada%20install%20test"
+}
+
+@test "the sample alert fires even while alerts are paused" {
+  require_native_helper
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  run "$INSTALL" --agents terminal
+  assert_success
   wait_for_file "$ADA_PROBE_OUT" || { echo "sample alert never fired"; false; }
   assert_file_contains "$ADA_PROBE_OUT" "ada%20install%20test"
 }

@@ -1,17 +1,37 @@
 #!/bin/bash
-# Test double for `launchctl`, used by `ada-paseo-watch.sh status`.
-#   launchctl list                  -> prints the label when STUB_LAUNCHCTL_LOADED set
-#   launchctl print gui/<uid>/<lbl> -> prints "    pid = N" when STUB_LAUNCHCTL_PID set
+# Test double for `launchctl`, used by the LaunchAgent front doors
+# (ada-paseo-watch.sh, ada-menubar.sh) and lib/ada-status.sh.
+#   launchctl list                  -> one line per loaded label: STUB_LAUNCHCTL_LOADED
+#                                      is "1" (the Paseo watcher, for older tests) or
+#                                      a space-separated list of labels
+#   launchctl print gui/<uid>/<lbl> -> "    pid = N" from STUB_LAUNCHCTL_PIDS
+#                                      ("label=pid ..."), else STUB_LAUNCHCTL_PID
 #   launchctl load ...              -> fails when STUB_LAUNCHCTL_LOAD_FAIL set
+#   launchctl kickstart ...         -> fails when STUB_LAUNCHCTL_KICKSTART_FAIL set
+# Every call is appended to STUB_LAUNCHCTL_LOG when that is set.
+[ -n "${STUB_LAUNCHCTL_LOG:-}" ] && printf '%s\n' "$*" >> "$STUB_LAUNCHCTL_LOG"
 case "$1" in
   list)
-    [ -n "${STUB_LAUNCHCTL_LOADED:-}" ] && echo "com.ada.paseo-watch"
+    case "${STUB_LAUNCHCTL_LOADED:-}" in
+      "") ;;
+      1) echo "com.ada.paseo-watch" ;;
+      *) for label in $STUB_LAUNCHCTL_LOADED; do echo "$label"; done ;;
+    esac
     ;;
   print)
-    [ -n "${STUB_LAUNCHCTL_PID:-}" ] && printf '    pid = %s\n' "$STUB_LAUNCHCTL_PID"
+    label=${2##*/}
+    pid=""
+    for pair in ${STUB_LAUNCHCTL_PIDS:-}; do
+      [ "${pair%%=*}" = "$label" ] && pid=${pair#*=}
+    done
+    [ -z "$pid" ] && pid=${STUB_LAUNCHCTL_PID:-}
+    [ -n "$pid" ] && printf '    pid = %s\n' "$pid"
     ;;
   load)
     [ -n "${STUB_LAUNCHCTL_LOAD_FAIL:-}" ] && exit 1
+    ;;
+  kickstart)
+    [ -n "${STUB_LAUNCHCTL_KICKSTART_FAIL:-}" ] && exit 1
     ;;
   unload|bootstrap|bootout|enable|disable)
     # no-op success so `install`/`uninstall` can be tested without touching launchd
