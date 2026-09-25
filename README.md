@@ -482,11 +482,17 @@ ADA_PASEO_EVENTS="finish permission"
 ## Snoozing the alert
 
 Sometimes the build's done but you're not ready to context-switch back. The
-alert has a **Snooze** button under the dismiss hint; click it to reveal the
+alert has a snooze button under the dismiss hint; click it to reveal the
 delays, `5 10 30 60` minutes by default, configurable with `ADA_SNOOZE_MINUTES`.
 Click one and the window closes now and the *same* alert (same command,
 duration, exit code) pops back up after the delay, labelled as a snoozed
 reminder. You can snooze a reminder again.
+
+The button says what it covers. On a Claude Code or Codex alert it reads
+**Snooze this conversation** (see below); everywhere else it reads **Snooze this
+alert**. The confirmation gives the clock time, for example "This conversation
+is quiet until 3:00 PM" or "This alert comes back at 2:35 PM", and a click or
+`Esc` closes it right away.
 
 If you snooze often, click **Pin open** at the end of that row and every later
 alert shows the delays already expanded. Click it again (it reads **Pinned
