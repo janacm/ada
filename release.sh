@@ -25,11 +25,20 @@ set -euo pipefail
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 formula="$dir/Formula/ada.rb"
 
-# The newest stable tag (vX.Y or vX.Y.Z). A pre-release such as v1.0-rc1
-# version-sorts ahead of v0.9, so it must never be the base for the next number.
+# The newest stable tag (vX.Y or vX.Y.Z) reachable from HEAD. A pre-release
+# such as v1.0-rc1 version-sorts ahead of v0.9, and a tag on another branch is
+# not a release of main, so neither may set the next number.
 __latest_stable_tag() {
-  git -C "$dir" tag --list 'v*' --sort=-v:refname \
+  git -C "$dir" tag --list 'v*' --merged HEAD --sort=-v:refname \
     | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' | head -1 || true
+}
+
+# True when the local tag $1 is the one already on GitHub, i.e. it was
+# published and its tarball may already be in someone's cache.
+__tag_is_published() {
+  local remote
+  remote=$(git -C "$dir" ls-remote --tags origin "refs/tags/$1" | awk '{print $1}')
+  [[ -n "$remote" && "$remote" == "$(git -C "$dir" rev-parse "refs/tags/$1")" ]]
 }
 
 # True when the formula on this checkout already installs $1's tarball.
@@ -61,16 +70,19 @@ if [[ "${1:-}" == --next ]]; then
   [[ -f "$formula" ]] || { echo "release: missing $formula" >&2; exit 1; }
   last=$(__latest_stable_tag)
   current=$(__formula_version)
-  # Only a tag NEWER than what the formula installs can be an unfinished
-  # release; an older one is history, and "finishing" it would downgrade.
+  # Only a PUBLISHED tag NEWER than what the formula installs can be an
+  # unfinished release. An older one is history ("finishing" it would
+  # downgrade), and a local-only one was never released.
   if [[ -n "$last" ]] && ! __formula_points_at "$last" &&
-     { [[ -z "$current" ]] || __version_gt "$last" "$current"; }; then
+     { [[ -z "$current" ]] || __version_gt "$last" "$current"; } &&
+     __tag_is_published "$last"; then
     echo "release: $last is tagged but the formula never pointed at it; finishing $last" >&2
     echo "$last"
     exit 0
   fi
-  base=$last
-  [[ -n "$current" ]] && { [[ -z "$base" ]] || __version_gt "$current" "$base"; } && base=$current
+  # Count from what the formula installs; the tags only matter when it names
+  # no version at all.
+  base=${current:-$last}
   IFS=. read -r maj min _ <<<"${base#v}"
   maj=${maj:-0} min=${min:-0}
   if [[ "$bump" == major ]]; then maj=$((maj + 1)); min=0; else min=$((min + 1)); fi
@@ -134,14 +146,6 @@ if [[ "$(git -C "$dir" rev-parse HEAD)" != "$(git -C "$dir" rev-parse origin/mai
   exit 1
 fi
 
-# True when the local tag is the one already on GitHub, i.e. it was published
-# and its tarball may already be in someone's cache.
-__tag_is_published() {
-  local remote
-  remote=$(git -C "$dir" ls-remote --tags origin "refs/tags/$version" | awk '{print $1}')
-  [[ -n "$remote" && "$remote" == "$(git -C "$dir" rev-parse "refs/tags/$version")" ]]
-}
-
 if tagged=$(git -C "$dir" rev-parse -q --verify "refs/tags/$version^{commit}"); then
   # Re-running is supported for a tag that still describes main: HEAD itself,
   # or HEAD's parent when HEAD is this release's own formula bump.
@@ -154,7 +158,7 @@ if tagged=$(git -C "$dir" rev-parse -q --verify "refs/tags/$version^{commit}"); 
   # stopped before its formula bump (finish it), or one that finished and whose
   # bump was rebased onto later work (nothing to do). Either way the tarball is
   # the tagged code, and only the formula on main is missing or already right.
-  elif __tag_is_published && git -C "$dir" merge-base --is-ancestor "$tagged" HEAD; then
+  elif __tag_is_published "$version" && git -C "$dir" merge-base --is-ancestor "$tagged" HEAD; then
     if __formula_points_at "$version"; then
       echo "release: $version is already released and the formula points at it"
       exit 0

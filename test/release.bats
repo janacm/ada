@@ -231,6 +231,7 @@ finished_release() {
   finished_release v0.4
   git -C "$WORK" commit -q --allow-empty -m "more work"
   git -C "$WORK" tag -a v0.5 -m v0.5    # tagged, formula still at v0.4
+  git -C "$WORK" push -q origin v0.5
   run "$RELEASE" --next minor
   assert_success
   assert_output_contains "finishing v0.5"
@@ -343,4 +344,26 @@ finished_release() {
   git -C "$WORK" commit -q --allow-empty -m "Merge pull request #3 from janacm/x"
   run "$RELEASE" --prs-since-release
   assert_equal "$output" "3"
+}
+
+@test "--next ignores a newer tag on another branch" {
+  finished_release v0.4
+  git -C "$WORK" switch -q -c side
+  git -C "$WORK" commit -q --allow-empty -m "side work"
+  git -C "$WORK" tag -a v0.9 -m v0.9
+  git -C "$WORK" push -q origin v0.9
+  git -C "$WORK" switch -q main
+  run "$RELEASE" --next minor
+  assert_success
+  assert_equal "$output" "v0.5"
+}
+
+@test "--next does not offer to finish a local-only tag" {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "more work"
+  git -C "$WORK" tag -a v0.7 -m v0.7    # never pushed
+  run "$RELEASE" --next minor
+  assert_success
+  refute_output_contains "finishing"
+  assert_equal "$output" "v0.5"
 }
