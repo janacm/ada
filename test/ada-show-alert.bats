@@ -558,3 +558,47 @@ wait_for_trace() {
   bash -c ". '$REPO_ROOT/lib/ada-mute.sh'; __ada_snooze_release claude-abc"
   [ -L "$TMPDIR/ada-snoozed/claude-abc" ] && [ -f "$TMPDIR/elsewhere" ]
 }
+
+# The page labels the snooze from these two params, so the launcher must send
+# snoozescope=session exactly when it named a hold, plus the session's noun.
+@test "a session-scoped snooze tells the page its scope and noun, mute button or not" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  export ADA_SNOOZE_MINUTES="5 30" ADA_SESSION_KEY=claude-abc ADA_SESSION_KIND=conversation \
+         ADA_SNOOZE_SCOPE=session ADA_MUTE_BUTTON=0 ADA_AUTO_CLOSE=1
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&snoozescope=session"
+  assert_file_contains "$ADA_PROBE_OUT" "&mutekindb64=Y29udmVyc2F0aW9u"
+  refute_file_contains "$ADA_PROBE_OUT" "mute=1"
+  dismiss_daemon
+}
+
+@test "without session scope the page is told nothing about a session snooze" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  export ADA_SNOOZE_MINUTES="5" ADA_SESSION_KEY=claude-abc ADA_SESSION_KIND=conversation ADA_AUTO_CLOSE=1
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&snooze=1"
+  refute_file_contains "$ADA_PROBE_OUT" "snoozescope"
+  refute_file_contains "$ADA_PROBE_OUT" "mutekindb64"
+  dismiss_daemon
+}
+
+@test "session scope with snooze switched off sends no scope" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  export ADA_FOCUS_APP=com.example.app ADA_SESSION_KEY=claude-abc ADA_SNOOZE_SCOPE=session ADA_AUTO_CLOSE=1
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&snooze=0"
+  refute_file_contains "$ADA_PROBE_OUT" "snoozescope"
+  dismiss_daemon
+}
+
+@test "session scope with an invalid key sends no scope" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  export ADA_SNOOZE_MINUTES="5" ADA_SESSION_KEY="../escape" ADA_SNOOZE_SCOPE=session ADA_AUTO_CLOSE=1
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  refute_file_contains "$ADA_PROBE_OUT" "snoozescope"
+  dismiss_daemon
+}

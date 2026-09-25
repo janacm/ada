@@ -237,8 +237,11 @@ encoded_repo=$(__ada_url_encode "$ADA_REPO")
 encoded_repo_b64=$(__ada_b64url_encode "$ADA_REPO")
 encoded_focus_app_name=$(__ada_url_encode "$focus_app_name")
 encoded_focus_app_name_b64=$(__ada_b64url_encode "$focus_app_name")
+# The session noun ("conversation", "terminal", ...) labels both the mute button
+# and a session-wide snooze, so it goes out when either one is on. The param is
+# still called mutekindb64 because the mute button used it first.
 encoded_session_kind_b64=""
-[[ -n "$mute_file" ]] && encoded_session_kind_b64=$(__ada_b64url_encode "$session_kind")
+[[ -n "$mute_file" || -n "$hold_file" ]] && encoded_session_kind_b64=$(__ada_b64url_encode "$session_kind")
 
 # Snooze/focus: a sandboxed file:// page can't outlive its window or activate
 # another app itself, so we spawn a tiny detached daemon that the page signals
@@ -267,6 +270,9 @@ if [[ -n "$sport" && -n "$stoken" ]]; then
   daemon_q="&sport=${sport}&stoken=${stoken}"
   if [[ -n "${snooze_minutes// /}" ]]; then
     daemon_q="${daemon_q}&snooze=1&snoozemins=${snooze_minutes// /,}"
+    # The page says what a snooze covers, and only this launcher knows: a
+    # session-wide one needs the hold file named above.
+    [[ -n "$hold_file" ]] && daemon_q="${daemon_q}&snoozescope=session"
   else
     daemon_q="${daemon_q}&snooze=0"
   fi
@@ -277,10 +283,8 @@ if [[ -n "$sport" && -n "$stoken" ]]; then
   else
     daemon_q="${daemon_q}&focus=0"
   fi
-  if [[ -n "$mute_file" ]]; then
-    daemon_q="${daemon_q}&mute=1"
-    [[ -n "$encoded_session_kind_b64" ]] && daemon_q="${daemon_q}&mutekindb64=${encoded_session_kind_b64}"
-  fi
+  [[ -n "$mute_file" ]] && daemon_q="${daemon_q}&mute=1"
+  [[ -n "$encoded_session_kind_b64" ]] && daemon_q="${daemon_q}&mutekindb64=${encoded_session_kind_b64}"
 fi
 [[ -n "${ADA_SNOOZED:-}" ]] && daemon_q="${daemon_q}&snoozed=1"
 

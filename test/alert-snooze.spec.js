@@ -186,7 +186,6 @@ test('Enter submits a valid custom duration as snooze/<n>', async ({ page }) => 
   await input(page).fill('7');
   await page.keyboard.press('Enter');
   await expect(page.locator('.title')).toHaveText('Snoozed');
-  await expect(page.locator('.subtitle')).toHaveText('Back in 7 minutes');
   expect(await signals(page)).toEqual(['snooze/7']);
 });
 
@@ -195,17 +194,8 @@ test('the Set button submits the custom duration', async ({ page }) => {
   await customBtn(page).click();
   await input(page).fill('15');
   await setBtn(page).click();
-  await expect(page.locator('.subtitle')).toHaveText('Back in 15 minutes');
+  await expect(page.locator('.title')).toHaveText('Snoozed');
   expect(await signals(page)).toEqual(['snooze/15']);
-});
-
-test('a duration of 1 uses the singular "minute"', async ({ page }) => {
-  await openExpanded(page);
-  await customBtn(page).click();
-  await input(page).fill('1');
-  await page.keyboard.press('Enter');
-  await expect(page.locator('.subtitle')).toHaveText('Back in 1 minute');
-  expect(await signals(page)).toEqual(['snooze/1']);
 });
 
 test('the daemon upper bound (1440) is accepted', async ({ page }) => {
@@ -313,4 +303,107 @@ test('after a snooze the mute button does nothing', async ({ page }) => {
   await page.locator('button.snooze-btn').filter({ hasText: /^5m$/ }).click();
   await btn.evaluate((b) => b.click());
   expect(await signals(page)).toEqual(['snooze/5']);
+});
+
+// --- what a snooze covers ------------------------------------------------------
+// The launcher sends snoozescope=session only when it named a hold for the
+// session (lib/ada-show-alert.sh), and the noun in mutekindb64. The clock is
+// pinned so the confirmation's time is exact.
+
+test.describe('scope labels and confirmations', () => {
+  test.use({ locale: 'en-US', timezoneId: 'America/New_York' });
+  const at = (page, iso) => page.clock.setFixedTime(new Date(iso));
+  const label = (page) => page.locator('#snoozeLabel');
+  const note = (page) => page.locator('.confirm-note');
+  const session = { snoozescope: 'session', mutekindb64: b64url('conversation') };
+
+  test('a plain snooze says it covers this alert', async ({ page }) => {
+    await open(page);
+    await expect(label(page)).toHaveText('Snooze this alert');
+    await expect(toggle(page)).toHaveAttribute('title', 'Show this alert again later. Other alerts keep coming.');
+  });
+
+  test('a session-wide snooze names the conversation', async ({ page }) => {
+    await open(page, session);
+    await expect(label(page)).toHaveText('Snooze this conversation');
+    await expect(toggle(page)).toHaveAttribute('title', /Sending it a message ends the snooze early/);
+  });
+
+  test('a session-wide snooze with no noun says session', async ({ page }) => {
+    await open(page, { snoozescope: 'session' });
+    await expect(label(page)).toHaveText('Snooze this session');
+  });
+
+  test('the noun is text, not markup', async ({ page }) => {
+    await open(page, { snoozescope: 'session', mutekindb64: b64url('<b>x</b>') });
+    await expect(label(page)).toHaveText('Snooze this <b>x</b>');
+    await expect(page.locator('#snoozeToggle b')).toHaveCount(0);
+  });
+
+  test('the noun alone does not widen the scope', async ({ page }) => {
+    await open(page, { mute: '1', mutekindb64: b64url('conversation') });
+    await expect(label(page)).toHaveText('Snooze this alert');
+  });
+
+  test('a plain snooze confirms the time the alert comes back', async ({ page }) => {
+    await at(page, '2026-09-24T14:30:00-04:00');
+    await openExpanded(page);
+    await preset(page, '5m').click();
+    await expect(page.locator('.subtitle')).toHaveText(/^This alert comes back at 2:35\sPM$/);
+    await expect(note(page)).toHaveText('Other alerts still come through');
+  });
+
+  test('a session-wide snooze confirms how long the conversation stays quiet', async ({ page }) => {
+    await at(page, '2026-09-24T14:30:00-04:00');
+    await openExpanded(page, session);
+    await preset(page, '30m').click();
+    await expect(page.locator('.subtitle')).toHaveText(/^This conversation is quiet until 3:00\sPM$/);
+    await expect(note(page)).toHaveText('Send it a message to end the snooze early');
+    expect(await signals(page)).toEqual(['snooze/30']);
+  });
+
+  test('only a conversation promises that a message ends the snooze', async ({ page }) => {
+    await at(page, '2026-09-24T14:30:00-04:00');
+    await openExpanded(page, { snoozescope: 'session', mutekindb64: b64url('agent') });
+    await preset(page, '10m').click();
+    await expect(page.locator('.subtitle')).toHaveText(/^This agent is quiet until 2:40\sPM$/);
+    await expect(note(page)).toHaveCount(0);
+  });
+
+  test('a snooze into the next day says tomorrow', async ({ page }) => {
+    await at(page, '2026-09-24T23:50:00-04:00');
+    await openExpanded(page, session);
+    await preset(page, '30m').click();
+    await expect(page.locator('.subtitle')).toHaveText(/^This conversation is quiet until 12:20\sAM tomorrow$/);
+  });
+
+  test('a click on the confirmation closes it at once, with no second signal', async ({ page }) => {
+    await openExpanded(page);
+    await preset(page, '5m').click();
+    await expect(page.locator('.title')).toHaveText('Snoozed');
+    await page.mouse.click(10, 10);
+    await expect.poll(() => page.evaluate(() => window.__closed === true), { timeout: 500 }).toBe(true);
+    expect(await signals(page)).toEqual(['snooze/5']);
+  });
+
+  test('Esc on the confirmation closes it too', async ({ page }) => {
+    await openExpanded(page);
+    await preset(page, '5m').click();
+    await expect(page.locator('.title')).toHaveText('Snoozed');
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.evaluate(() => window.__closed === true), { timeout: 500 }).toBe(true);
+    expect(await signals(page)).toEqual(['snooze/5']);
+  });
+
+  test('left alone, the confirmation closes by itself', async ({ page }) => {
+    await openExpanded(page);
+    await preset(page, '5m').click();
+    await expect.poll(() => page.evaluate(() => window.__closed === true)).toBe(true);
+  });
+
+  test('the reminder after a session-wide snooze says the conversation can alert again', async ({ page }) => {
+    await open(page, { snoozed: '1', ...session });
+    await expect(page.locator('.subtitle')).toHaveText('Snooze over · this conversation can alert again');
+    await expect(label(page)).toHaveText('Snooze this conversation');
+  });
 });

@@ -254,9 +254,22 @@ removed.
 
 - `ADA_SNOOZE_MINUTES` must define the snooze button options, preserving an
   explicit empty value as "hide snooze buttons".
-- The snooze options must start collapsed behind a single "Snooze" toggle that
+- The snooze options must start collapsed behind a single snooze toggle that
   reveals them on click and hides them on a second click, without dismissing the
   alert.
+- The toggle must say what a snooze covers: "Snooze this <kind>" when the
+  launcher named a session hold (it then sends `snoozescope=session`, and the
+  noun in `mutekindb64` whenever a hold or the mute button needs it), otherwise
+  "Snooze this alert". The page must never infer the scope on its own.
+- A snooze confirmation must give the clock time: "This <kind> is quiet until
+  <time>" for a session-wide snooze, adding "Send it a message to end the
+  snooze early" only for a conversation (the one integration that releases the
+  hold), and "This alert comes back at <time>" with "Other alerts still come
+  through" otherwise. A time on the next day must say "tomorrow". A reminder
+  after a session-wide snooze must say "Snooze over · this <kind> can alert
+  again".
+- Snooze and mute confirmations must stay up long enough to read (1.2s) and
+  close at once on a click or `Esc`, without sending a second signal.
 - The revealed options must include a pin toggle. While pinned, every later
   alert (including snoozed relaunches) must open with the options already
   expanded; unpinning restores the collapsed default. The native helper must
@@ -639,6 +652,9 @@ removed.
 
 ## Change Log
 
+- 2026-09-24: The snooze toggle names its scope ("Snooze this conversation" or
+  "Snooze this alert"), and snooze confirmations give a clock time instead of
+  "Back in N minutes". A click or `Esc` closes a confirmation at once.
 - 2026-09-24: Snoozing a Claude Code / Codex alert now covers the conversation.
   Before, a snooze re-queued only the alert you clicked, so a conversation that
   kept working (a `/goal` run whose background tasks each opened a new turn)
