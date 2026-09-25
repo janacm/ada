@@ -22,7 +22,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install bats
         run: brew install bats-core
-      - name: Build the native alert helper
-        run: swift build -c release --product ada-alert
+      - name: Build the native helpers
+        run: |
+          swift build -c release --product ada-alert
+          swift build -c release --product ada-menubar
       - name: Run the bats suite
         run: bats test/

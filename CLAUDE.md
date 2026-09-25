@@ -97,14 +97,20 @@ PR **before** the merge, because the workflow reads the close event and a re-run
 replays that same event; a forgotten label means a manual `./release.sh`. It uses
 `pull_request_target` so fork PRs still get a write token, which is only safe
 because it never checks out the PR head, only `main` after the merge. If `main`
-moves while the job runs, `release.sh` refuses (HEAD != origin/main) and
-re-running the job releases the newer `main`. If it moves after the tag is
-pushed, the formula push fails and `release.sh` deletes that tag (remote and
-local) and its own formula commit, so the re-run cuts the same version. The
-next version comes from `release.sh --next minor|major`, which counts from the
-version the formula points at rather than the newest tag, so neither such an
-orphaned tag nor a pre-release tag like `v1.0-rc1` can push the number ahead. `.github/workflows/test.yml` runs
+moves before the tag is pushed, `release.sh` refuses (HEAD != origin/main) and
+re-running the job releases the newer `main`. `.github/workflows/test.yml` runs
 the same suite on every PR and every direct push to `main`.
+
+**A published tag is never deleted or moved.** The tag push and the formula
+push are separate, so a release can stop between them. If `main` moves in that
+window, `release.sh` replays its formula-only commit on the new `main` and
+pushes again; the tag keeps naming the code that was tested. If the job dies
+there instead, a re-run with the same version sees a tag that is on GitHub, is
+an ancestor of `main`, and isn't in the formula yet, and finishes it. The
+workflow picks the version with `release.sh --next minor|major`, which returns
+such an unfinished tag as is rather than counting past it, and ignores
+pre-release tags (`v1.0-rc1` version-sorts ahead of `v0.9`). A local-only stale
+tag is still refused, because that one really would release old code.
 
 ## Native helper is the only renderer
 

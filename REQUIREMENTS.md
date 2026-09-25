@@ -73,14 +73,13 @@ removed.
   the bats suite passes on the merged default branch. An unlabelled merge must
   not release. The release workflow must never check out or run the PR's head,
   only the default branch after the merge, because it holds a write token.
-- The next version must count from the version the formula on the default
-  branch points at (`release.sh --next minor|major`), not from the newest tag,
-  and only stable `vX.Y[.Z]` tags count when the formula names none, so a
-  pre-release tag such as `v1.0-rc1` can't outrank the current release.
-- When the formula push fails after the tag was pushed (the default branch
-  moved mid-release), `release.sh` must delete that tag locally and on the
-  remote and undo its formula commit, so a re-run cuts the same version from
-  the new tip rather than skipping one.
+- A tag that has been pushed must never be deleted or re-pointed. If the
+  default branch moves between the tag push and the formula push, the formula
+  bump must be replayed on the new tip; a re-run of the same version must
+  finish a published tag the formula doesn't point at yet, and the workflow's
+  next-version pick must return that version rather than skip it.
+- The next version must be computed from stable tags only (`vX.Y` or
+  `vX.Y.Z`), never from a pre-release tag.
 - Every PR and every direct push to the default branch must run the bats suite
   on macOS with the native helper built, so no test skips for lack of it.
 
@@ -575,7 +574,9 @@ removed.
   rules. Tags are paired in one linear pass, so unclosed tags can't stall the hook.
 - 2026-09-22: Releases are automated. Merging a PR labelled `release:minor` or
   `release:major` runs the bats suite and `release.sh` with the next version, and
-  a new `test` workflow runs the suite on every PR and push to `main`.
+  a new `test` workflow runs the suite on every PR and push to `main`. A release
+  that stops between its tag push and its formula push is finished rather than
+  skipped, and pre-release tags never set the next version.
 - 2026-09-17: Claude Code / Codex alert labels are now derived from the prompt
   rather than printing it verbatim. `UserPromptSubmit` also fires for messages
   the agent injects, so a turn that began with a background-task notification

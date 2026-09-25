@@ -26,13 +26,22 @@ setup() {
 
   # curl stub: the "tarball" is a fixed string, so its sha256 is known.
   mkdir -p "$BATS_TEST_TMPDIR/bin"
-  # STUB_CURL_MOVE_MAIN=<clone> lands a commit on origin's main mid-download.
   cat > "$BATS_TEST_TMPDIR/bin/curl" <<'SH'
 #!/bin/bash
 [ -n "${STUB_CURL_FAIL:-}" ] && exit 22
-if [ -n "${STUB_CURL_MOVE_MAIN:-}" ]; then
-  git -C "$STUB_CURL_MOVE_MAIN" commit -q --allow-empty -m "merged meanwhile" >/dev/null 2>&1
-  git -C "$STUB_CURL_MOVE_MAIN" push -q origin main >/dev/null 2>&1
+# Someone merges to main while the release waits on GitHub's tarball, i.e.
+# after release.sh checked HEAD and pushed the tag, before the formula push.
+if [ -n "${STUB_CURL_ADVANCE:-}" ]; then
+  other="$BATS_TEST_TMPDIR/other"
+  git clone -q "$STUB_CURL_ADVANCE" "$other" 2>/dev/null
+  git -C "$other" -c user.name=o -c user.email=o@example.invalid \
+    commit -q --allow-empty -m "concurrent work"
+  [ -n "${STUB_CURL_ADVANCE_FORMULA:-}" ] && {
+    sed -i '' 's|^  url ".*"|  url "https://example.invalid/other.tar.gz"|' "$other/Formula/ada.rb"
+    git -C "$other" -c user.name=o -c user.email=o@example.invalid commit -q -am "someone edits the formula"
+  }
+  git -C "$other" push -q origin main
+  unset STUB_CURL_ADVANCE
 fi
 printf 'fake tarball for %s' "${!#}"
 SH
@@ -168,92 +177,6 @@ expected_sha() {
   assert_equal "$output" ""
 }
 
-# --- the release workflow's version picker (release.sh --next) ------------------
-
-# The copied formula points at a real release; pin a made-up one so these tests
-# don't depend on which.
-point_formula_at() {
-  sed -i '' -E "s|(archive/refs/tags/)[^\"]*\\.tar\\.gz|\\1$1.tar.gz|" "$WORK/Formula/ada.rb"
-  git -C "$WORK" commit -q -am "formula at $1"
-  git -C "$WORK" push -q origin main
-}
-
-@test "--next counts up from the version the formula points at" {
-  point_formula_at v3.7
-  run "$RELEASE" --next minor
-  assert_success
-  assert_equal "$output" "v3.8"
-  run "$RELEASE" --next major
-  assert_equal "$output" "v4.0"
-}
-
-# A run that pushed its tag and then failed to push the formula leaves a tag
-# nothing distributes. Counting it would release v3.9 and never ship v3.8.
-@test "--next ignores a tag that no formula points at" {
-  point_formula_at v3.7
-  git -C "$WORK" tag -a v3.7 -m v3.7 HEAD~1
-  git -C "$WORK" tag -a v3.8 -m v3.8
-  run "$RELEASE" --next minor
-  assert_equal "$output" "v3.8"
-}
-
-@test "--next skips pre-release tags when the formula names no version" {
-  printf 'class Ada < Formula\nend\n' > "$WORK/Formula/ada.rb"
-  git -C "$WORK" commit -q -am "gut the formula"
-  git -C "$WORK" tag -a v0.4 -m v0.4
-  git -C "$WORK" tag -a v1.0-rc1 -m v1.0-rc1
-  run "$RELEASE" --next minor
-  assert_equal "$output" "v0.5"
-  run "$RELEASE" --next major
-  assert_equal "$output" "v1.0"
-}
-
-@test "--next with no formula version and no tags starts at v0.1" {
-  printf 'class Ada < Formula\nend\n' > "$WORK/Formula/ada.rb"
-  git -C "$WORK" commit -q -am "gut the formula"
-  run "$RELEASE" --next minor
-  assert_success
-  assert_equal "$output" "v0.1"
-}
-
-@test "--next needs minor or major" {
-  run "$RELEASE" --next patch
-  assert_failure
-  assert_output_contains "usage: release.sh --next minor|major"
-}
-
-# main moving between release.sh's HEAD check and its formula push is the case
-# the workflow can't prevent. The curl stub lands another merge on origin while
-# the tarball "downloads", exactly inside that window.
-@test "when main moves mid-release, the pushed tag is taken back and a re-run cuts the same version" {
-  local other="$BATS_TEST_TMPDIR/other"
-  git clone -q "$ORIGIN" "$other"
-  git -C "$other" config user.name "Other"
-  git -C "$other" config user.email "other@example.invalid"
-  export STUB_CURL_MOVE_MAIN="$other"
-  run "$RELEASE" v9.9.9
-  assert_failure
-  assert_output_contains "pushing the formula bump to main failed"
-  assert_output_contains "Removed tag v9.9.9"
-  run git -C "$ORIGIN" tag -l v9.9.9
-  assert_equal "$output" ""
-  run git -C "$WORK" tag -l v9.9.9
-  assert_equal "$output" ""
-  run git -C "$WORK" log -1 --format=%s
-  assert_equal "$output" "initial"
-  run git -C "$WORK" status --porcelain
-  assert_equal "$output" ""
-
-  unset STUB_CURL_MOVE_MAIN
-  git -C "$WORK" pull -q --ff-only origin main
-  run "$RELEASE" v9.9.9
-  assert_success
-  run git -C "$ORIGIN" log -1 --format=%s main
-  assert_equal "$output" "Homebrew: point formula at v9.9.9"
-  run git -C "$ORIGIN" log -1 --format=%s "v9.9.9^{commit}"
-  assert_equal "$output" "merged meanwhile"
-}
-
 @test "a formula with no url/sha256 to rewrite fails loudly" {
   printf 'class Ada < Formula\nend\n' > "$WORK/Formula/ada.rb"
   git -C "$WORK" commit -q -am "gut the formula"
@@ -261,4 +184,101 @@ point_formula_at() {
   run "$RELEASE" v9.9.9
   assert_failure
   assert_output_contains "could not rewrite url/sha256"
+}
+
+# --- --next: the version the release workflow cuts --------------------------
+
+# Tag the current HEAD and point the formula at that tag, as a finished release.
+finished_release() {
+  git -C "$WORK" tag -a "$1" -m "$1"
+  sed -i '' "s|^  url \".*\"|  url \"https://github.com/janacm/ada/archive/refs/tags/$1.tar.gz\"|" "$WORK/Formula/ada.rb"
+  git -C "$WORK" commit -q --allow-empty -am "Homebrew: point formula at $1"
+}
+
+@test "--next with no tags starts at v0.1 or v1.0" {
+  run "$RELEASE" --next minor
+  assert_equal "$output" "v0.1"
+  run "$RELEASE" --next major
+  assert_equal "$output" "v1.0"
+}
+
+@test "--next bumps the latest finished release" {
+  finished_release v0.4
+  run "$RELEASE" --next minor
+  assert_success
+  assert_equal "$output" "v0.5"
+  run "$RELEASE" --next major
+  assert_equal "$output" "v1.0"
+}
+
+@test "--next ignores a pre-release tag that version-sorts ahead" {
+  finished_release v0.4
+  git -C "$WORK" tag -a v1.0-rc1 -m rc
+  run "$RELEASE" --next minor
+  assert_equal "$output" "v0.5"
+}
+
+@test "--next returns an unfinished release instead of skipping past it" {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "more work"
+  git -C "$WORK" tag -a v0.5 -m v0.5    # tagged, formula still at v0.4
+  run "$RELEASE" --next minor
+  assert_success
+  assert_output_contains "finishing v0.5"
+  assert_equal "${lines[${#lines[@]}-1]}" "v0.5"
+}
+
+@test "--next rejects anything but minor or major" {
+  run "$RELEASE" --next patch
+  assert_failure
+  assert_output_contains "usage: release.sh --next minor|major"
+}
+
+# --- main moving under a release ---------------------------------------------
+
+@test "main moving during the release replays the formula bump instead of stranding the tag" {
+  export STUB_CURL_ADVANCE="$ORIGIN"
+  tagged=$(git -C "$WORK" rev-parse HEAD)
+  run "$RELEASE" v9.9.9
+  assert_success
+  assert_output_contains "main moved; replaying the formula bump"
+  run git -C "$ORIGIN" log --format=%s -2 main
+  assert_equal "${lines[0]}" "Homebrew: point formula at v9.9.9"
+  assert_equal "${lines[1]}" "concurrent work"
+  # the tag still names the code that was checked, not the later merge
+  assert_equal "$(git -C "$ORIGIN" rev-parse 'v9.9.9^{commit}')" "$tagged"
+}
+
+@test "a finished release whose bump was replayed re-runs as a no-op" {
+  export STUB_CURL_ADVANCE="$ORIGIN"
+  run "$RELEASE" v9.9.9
+  assert_success
+  before=$(git -C "$ORIGIN" rev-parse main)
+  run "$RELEASE" v9.9.9
+  assert_success
+  assert_output_contains "already released"
+  assert_equal "$(git -C "$ORIGIN" rev-parse main)" "$before"
+}
+
+@test "a published tag whose formula bump never landed is finished on re-run" {
+  git -C "$WORK" tag -a v9.9.9 -m v9.9.9
+  git -C "$WORK" push -q origin v9.9.9
+  git -C "$WORK" commit -q --allow-empty -m "later work"
+  git -C "$WORK" push -q origin main
+  run "$RELEASE" v9.9.9
+  assert_success
+  assert_output_contains "finishing v9.9.9"
+  assert_file_contains "$WORK/Formula/ada.rb" "sha256 \"$(expected_sha v9.9.9)\""
+  run git -C "$ORIGIN" log -1 --format=%s main
+  assert_equal "$output" "Homebrew: point formula at v9.9.9"
+}
+
+@test "a formula edit racing the release stops with a re-run hint" {
+  export STUB_CURL_ADVANCE="$ORIGIN" STUB_CURL_ADVANCE_FORMULA=1
+  run "$RELEASE" v9.9.9
+  assert_failure
+  assert_output_contains "conflicts with origin/main"
+  assert_output_contains "re-run ./release.sh v9.9.9"
+  run git -C "$WORK" status --porcelain
+  assert_equal "$output" ""
 }

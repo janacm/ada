@@ -52,23 +52,23 @@ jobs:
       # releases the newer main.
       - name: Install bats
         run: brew install bats-core
-      - name: Build the native alert helper
-        run: swift build -c release --product ada-alert
+      - name: Build the native helpers
+        run: |
+          swift build -c release --product ada-alert
+          swift build -c release --product ada-menubar
       - name: Run the bats suite
         run: bats test/
 
-      # The next version counts from the one the formula on main points at, not
-      # the newest tag, and skips pre-release tags (release.sh --next). If main
-      # moves after release.sh pushed the tag, its formula push fails and it
-      # deletes that tag, so re-running this job cuts the same version again
-      # instead of treating the orphaned tag as released and skipping one.
+      # release.sh --next picks it: stable tags only (a v1.0-rc1 must not be the
+      # base), and a tag an earlier run pushed without finishing is returned as
+      # is, so a re-run finishes that version instead of skipping past it.
       - name: Pick the next version
         id: version
         env:
           BUMP: ${{ contains(github.event.pull_request.labels.*.name, 'release:major') && 'major' || 'minor' }}
         run: |
           version=$(./release.sh --next "$BUMP")
-          echo "Releasing $version ($BUMP)"
+          echo "Releasing $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Release
