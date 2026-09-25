@@ -395,6 +395,43 @@ test.describe('scope labels and confirmations', () => {
     expect(await signals(page)).toEqual(['snooze/5']);
   });
 
+  test('a confirmation stays up 1.2s before closing itself', async ({ page }) => {
+    await page.clock.install();
+    await openExpanded(page);
+    await preset(page, '5m').click();
+    await page.clock.runFor(1100);
+    expect(await page.evaluate(() => window.__closed || false)).toBe(false);
+    await page.clock.runFor(200);
+    expect(await page.evaluate(() => window.__closed === true)).toBe(true);
+  });
+
+  test('the mute confirmation stays up 1.2s too', async ({ page }) => {
+    await page.clock.install();
+    await open(page, { mute: '1', mutekindb64: b64url('terminal') });
+    await muteBtn(page).click();
+    await page.clock.runFor(1100);
+    expect(await page.evaluate(() => window.__closed || false)).toBe(false);
+    await page.clock.runFor(200);
+    expect(await page.evaluate(() => window.__closed === true)).toBe(true);
+  });
+
+  test('across a daylight-saving change a day-long snooze names the weekday', async ({ page }) => {
+    // 23:30 on the Saturday before the March 2027 change: 24 hours later is
+    // 00:30 on Monday, two calendar days out, so "tomorrow" would be wrong.
+    await at(page, '2027-03-13T23:30:00-05:00');
+    await openExpanded(page, session);
+    await customBtn(page).click();
+    await input(page).fill('1440');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.subtitle')).toHaveText(/^This conversation is quiet until 12:30\sAM Monday$/);
+  });
+
+  test('a preset the daemon would reject is not offered', async ({ page }) => {
+    await openExpanded(page, { snoozemins: '5,2000' });
+    await expect(preset(page, '5m')).toBeVisible();
+    await expect(preset(page, '2000m')).toHaveCount(0);
+  });
+
   test('left alone, the confirmation closes by itself', async ({ page }) => {
     await openExpanded(page);
     await preset(page, '5m').click();

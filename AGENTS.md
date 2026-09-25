@@ -677,6 +677,18 @@ renames it over the marker.
   uses**, so the label and the release can't disagree. A slash command and a
   paste-only prompt count as yours; a task notification, CI event or system
   reminder does not.
+- **A scheduled prompt is not you typing.** `/loop` ticks and `CronCreate`
+  jobs reach UserPromptSubmit as the raw prompt text, and the payload has no
+  field saying they were scheduled (traced in the Claude Code 2.1.281 binary by
+  the review of this change, not captured live). `scheduled()` in the hook reads
+  the transcript for a `CronCreate` or `ScheduleWakeup` call whose `prompt`
+  matches, raw or as `/name args`. A loop scheduled with an
+  `<<autonomous-loop...>>` sentinel fires resolved text that matches nothing, so
+  it still releases the hold. Reading a 5.1 MB transcript costs about 5 ms here.
+- **The hook's Python lives in a single-quoted bash string.** One apostrophe
+  anywhere in it, a comment included, ends the string early; python3 then
+  fails, its stderr goes to `/dev/null`, `fields` is empty, and the hook exits 0
+  having done nothing, for every event. Use double quotes in that Python.
 - **The daemon waits by the wall clock in `POLL_SECONDS` steps**, rechecking
   the marker each step, so the reminder fires at the marker's wake time and a
   released hold ends the daemon within one step.

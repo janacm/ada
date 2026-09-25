@@ -606,14 +606,19 @@ hold_conversation() {
   hold_conversation sess-h1
   run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h1","prompt":"<task-notification> <task-id>b1</task-id> <status>completed</status> <summary>Background command \"Wait for review\" completed</summary> </task-notification>"}'
   [ -f "$TMPDIR/ada-snoozed/claude-sess-h1" ]
+  # The turn was stamped, so Stop really reaches the launcher: the silence
+  # below is the hold's doing, not a missing stamp.
+  [ -f "$STATE_DIR/sess-h1.start" ]
   run_hook '{"hook_event_name":"Stop","session_id":"sess-h1","cwd":"/tmp"}'
-  refute_file_appears "$ADA_PROBE_OUT"
+  # The detached notify -> launcher -> helper chain can take most of a second.
+  refute_file_appears "$ADA_PROBE_OUT" 60
 }
 
 @test "a CI event the agent injected keeps the hold too" {
   hold_conversation sess-h1
   run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h1","prompt":"<ci-monitor-event>checks failed on PR 15</ci-monitor-event>"}'
   [ -f "$TMPDIR/ada-snoozed/claude-sess-h1" ]
+  assert_file_contains "$STATE_DIR/sess-h1.prompt" "checks failed on PR 15"
 }
 
 @test "a prompt you type ends the snooze and the turn alerts again" {
@@ -641,4 +646,47 @@ hold_conversation() {
   hold_conversation sess-h5
   run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h6","prompt":"hello"}'
   [ -f "$TMPDIR/ada-snoozed/claude-sess-h5" ]
+}
+
+# /loop ticks and CronCreate jobs re-submit, as plain text, a prompt the agent
+# scheduled earlier; the payload can't tell them from typing. The tool call that
+# scheduled them is in the transcript, and a match keeps the hold.
+scheduling_transcript() {
+  local t="$BATS_TEST_TMPDIR/scheduled.jsonl"
+  printf '%s\n' \
+    '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"ScheduleWakeup","input":{"delaySeconds":300,"prompt":"/babysit-prs","reason":"watch"}}]}}' \
+    '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"CronCreate","input":{"cron":"*/5 * * * *","prompt":"check the deploy"}}]}}' \
+    > "$t"
+  printf '%s' "$t"
+}
+
+@test "a CronCreate prompt firing during a snooze keeps the hold" {
+  hold_conversation sess-h7
+  t=$(scheduling_transcript)
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h7\",\"transcript_path\":\"$t\",\"prompt\":\"check the deploy\"}"
+  assert_success
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h7" ]
+}
+
+@test "a /loop tick keeps the hold, as plain text or as slash-command markup" {
+  hold_conversation sess-h7
+  t=$(scheduling_transcript)
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h7\",\"transcript_path\":\"$t\",\"prompt\":\"/babysit-prs\"}"
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h7" ]
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h7\",\"transcript_path\":\"$t\",\"prompt\":\"<command-name>/babysit-prs</command-name> <command-message>babysit-prs</command-message>\"}"
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h7" ]
+}
+
+@test "a typed prompt that only resembles a scheduled one still ends the snooze" {
+  hold_conversation sess-h7
+  t=$(scheduling_transcript)
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h7\",\"transcript_path\":\"$t\",\"prompt\":\"check the deploy again\"}"
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h7" ]
+}
+
+@test "a missing or unreadable transcript counts the prompt as typed" {
+  hold_conversation sess-h8
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h8\",\"transcript_path\":\"$BATS_TEST_TMPDIR/nope.jsonl\",\"prompt\":\"check the deploy\"}"
+  assert_success
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h8" ]
 }

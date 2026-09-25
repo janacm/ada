@@ -121,15 +121,27 @@ __ada_mute_prune() {
 # Marker: $TMPDIR/ada-snoozed/<key>, one line "<wake epoch> <daemon token>".
 # The token lets a daemon tell its own hold from a newer one.
 
-__ada_snooze_hold_file() {
-  __ada_mute_key_ok "${1:-}" || return 1
-  printf '%s/ada-snoozed/%s' "${TMPDIR:-/tmp}" "$1"
+# The launcher and the Claude hook must agree on this path, and a hook started
+# from a stripped environment may have no TMPDIR. Terminals and launchd jobs
+# both get the per-user Darwin temp dir, so fall back to that before /tmp.
+__ada_snooze_tmpdir() {
+  local t=${TMPDIR:-}
+  [[ -n "$t" ]] || t=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null) || t=""
+  printf '%s' "${t:-/tmp}"
 }
 
-# True (0) while an unexpired hold covers this key. An expired or garbled
+__ada_snooze_hold_file() {
+  __ada_mute_key_ok "${1:-}" || return 1
+  printf '%s/ada-snoozed/%s' "$(__ada_snooze_tmpdir)" "$1"
+}
+
+# True (0) while an unexpired hold covers this key. Like a mute marker, only a
+# plain file counts; a symlink is never read or deleted. An expired or garbled
 # marker is removed on the way: its daemon is waking up right now, or died.
-# Like a mute marker, only a plain file counts; a symlink is never read or
-# deleted.
+# Removing an expired one also cancels a reminder whose daemon has not got to
+# it yet (it checks the marker every 10s). That is deliberate: this alert is
+# newer news about the same session, and the reminder, arriving seconds later,
+# would close it and show the older one.
 __ada_snooze_held() {
   local file wake="" rest=""
   file=$(__ada_snooze_hold_file "${1:-}") || return 1

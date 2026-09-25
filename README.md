@@ -505,6 +505,7 @@ hold every one of those would pop a new alert minutes into your snooze. So until
 the snooze is up that conversation stays silent, and then you get the one
 reminder. Sending the conversation a prompt yourself ends the snooze early,
 since you're back: that turn alerts as usual and the stale reminder is dropped.
+A `/loop` tick or a scheduled prompt the agent set up doesn't count as you.
 Other conversations keep alerting throughout. To snooze only the one alert, set
 `ADA_SNOOZE_SCOPE=alert` in the environment Claude Code runs its hooks with.
 Terminal, opencode and Paseo alerts still snooze only themselves.
