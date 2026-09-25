@@ -25,6 +25,7 @@ TMP = tempfile.mkdtemp(prefix="snooze-check.")
 # patch below is undone right after the scenario that needs it.
 REAL_POPEN = subprocess.Popen
 REAL_SLEEP = time.sleep
+REAL_TIME = time.time
 FAILURES = []
 
 
@@ -83,11 +84,32 @@ def wait_file(path, seconds=5):
     return False
 
 
-def drive(mod, handoff, method, path_fn):
+class Clock:
+    """Wall clock for a snooze: real time plus whatever the daemon has "slept",
+    so a 5-minute snooze passes instantly. on_sleep(clock, seconds) runs before
+    each sleep, to act mid-snooze (release the hold, jump the clock)."""
+    def __init__(self, on_sleep=None):
+        self.offset = 0.0
+        self.sleeps = []
+        self.on_sleep = on_sleep
+
+    def time(self):
+        return REAL_TIME() + self.offset
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        if self.on_sleep:
+            self.on_sleep(self, seconds)
+        self.offset += seconds
+
+
+def drive(mod, handoff, method, path_fn, clock=None):
     """Run mod.main() with a client thread sending one request once the handoff
     appears. path_fn(token) builds the request path. Returns the HTTP status."""
     mod.daemonize = lambda: None
-    mod.time.sleep = lambda s: None
+    clock = clock or Clock()
+    mod.time.sleep = clock.sleep
+    mod.time.time = clock.time
     result = {}
 
     def client():
@@ -105,6 +127,7 @@ def drive(mod, handoff, method, path_fn):
         mod.main()
     finally:
         time.sleep = REAL_SLEEP
+        time.time = REAL_TIME
     t.join(5)
     return result.get("status")
 
@@ -268,6 +291,109 @@ check("mute does not follow a symlink named like the marker",
       status == 200 and os.stat(target).st_mtime < 1000 and os.path.islink(link),
       os.stat(target).st_mtime)
 os.environ.pop("ADA_MUTE_FILE", None)
+
+# --- session-scoped snooze hold ---------------------------------------------------------------
+HOLD_DIR = os.path.join(TMP, "ada-snoozed")
+hold = os.path.join(HOLD_DIR, "claude-abc")
+seen = {}
+
+
+def peek(clock, seconds):
+    if "marker" not in seen and os.path.exists(hold):
+        seen["marker"] = open(hold).read()
+        seen["at"] = clock.time()
+
+
+handoff = os.path.join(TMP, "h21")
+script, out = recorder("hold-relaunch")
+mod, _ = load(argv(handoff, script=script), env={"ADA_SNOOZE_HOLD_FILE": hold})
+clock = Clock(peek)
+status = drive(mod, handoff, "GET", lambda tok: "/%s/snooze/5" % tok, clock)
+wake, owner = seen.get("marker", "0 ?").split()
+check("a session snooze writes the hold marker, creating its directory",
+      "marker" in seen and owner == mod.token, seen)
+check("the hold lasts exactly the snooze", abs(int(wake) - (seen.get("at", 0) + 300)) <= 1,
+      (wake, seen.get("at")))
+check("the hold is lifted before the snoozed alert is relaunched",
+      wait_file(out) and not os.path.exists(hold), os.path.exists(hold))
+check("the daemon never sleeps longer than its poll step",
+      clock.sleeps and max(clock.sleeps) <= mod.POLL_SECONDS, clock.sleeps)
+
+
+def release(clock, seconds):
+    if clock.offset >= 60 and os.path.exists(hold):
+        os.remove(hold)
+
+
+handoff = os.path.join(TMP, "h22")
+script, out = recorder("released")
+log = os.path.join(TMP, "released.log")
+mod, _ = load(argv(handoff, script=script),
+              env={"ADA_SNOOZE_HOLD_FILE": hold, "ADA_SNOOZE_LOG": log})
+clock = Clock(release)
+drive(mod, handoff, "GET", lambda tok: "/%s/snooze/30" % tok, clock)
+os.environ.pop("ADA_SNOOZE_LOG")
+check("a released hold ends the snooze without re-showing the alert",
+      not os.path.exists(out) and "snooze released early" in open(log).read(),
+      open(log).read())
+check("a released hold ends the daemon at its next poll, not at the wake time",
+      clock.offset < 60 + 2 * mod.POLL_SECONDS, clock.offset)
+
+
+def replace(clock, seconds):
+    if clock.offset >= 60 and "replaced" not in seen:
+        seen["replaced"] = True
+        with open(hold, "w") as f:
+            f.write("%d newer-token\n" % (clock.time() + 600))
+
+
+handoff = os.path.join(TMP, "h23")
+script, out = recorder("replaced")
+mod, _ = load(argv(handoff, script=script), env={"ADA_SNOOZE_HOLD_FILE": hold})
+drive(mod, handoff, "GET", lambda tok: "/%s/snooze/5" % tok, Clock(replace))
+check("a hold replaced by a newer snooze is left to that snooze",
+      not os.path.exists(out) and "newer-token" in open(hold).read())
+os.remove(hold)
+
+
+def lid_shut(clock, seconds):
+    if len(clock.sleeps) == 1:
+        clock.offset += 3600  # the Mac slept through the rest of the snooze
+
+
+handoff = os.path.join(TMP, "h24")
+script, out = recorder("lid")
+mod, _ = load(argv(handoff, script=script), env={"ADA_SNOOZE_HOLD_FILE": hold})
+clock = Clock(lid_shut)
+drive(mod, handoff, "GET", lambda tok: "/%s/snooze/30" % tok, clock)
+check("the snooze wakes by the wall clock, however long the sleep ran",
+      wait_file(out) and len(clock.sleeps) == 1, clock.sleeps)
+
+handoff = os.path.join(TMP, "h25")
+script, out = recorder("unwritable-hold")
+mod, _ = load(argv(handoff, script=script),
+              env={"ADA_SNOOZE_HOLD_FILE": os.path.join(blocker, "claude-abc")})
+drive(mod, handoff, "GET", lambda tok: "/%s/snooze/5" % tok)
+check("an unwritable hold falls back to a plain snooze that still relaunches", wait_file(out))
+os.environ.pop("ADA_SNOOZE_HOLD_FILE", None)
+
+target = os.path.join(TMP, "hold-target")
+with open(target, "w") as f:
+    f.write("untouched\n")
+os.makedirs(HOLD_DIR, exist_ok=True)
+os.symlink(target, hold)
+seen.clear()
+handoff = os.path.join(TMP, "h26")
+script, out = recorder("symlinked-hold")
+mod, _ = load(argv(handoff, script=script), env={"ADA_SNOOZE_HOLD_FILE": hold})
+drive(mod, handoff, "GET", lambda tok: "/%s/snooze/5" % tok, Clock(peek))
+check("a symlink at the hold path is replaced, never written through",
+      open(target).read() == "untouched\n" and seen.get("marker", "").split()[1:2] == [mod.token],
+      (open(target).read(), seen))
+check("the relaunch still happens after replacing it", wait_file(out))
+if os.path.lexists(hold):
+    os.remove(hold)
+os.environ.pop("ADA_SNOOZE_HOLD_FILE", None)
 
 # --- failure paths in main() ---------------------------------------------------------------
 mod, _ = load(argv(os.path.join(TMP, "missing-dir", "handoff")))

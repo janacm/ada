@@ -569,3 +569,76 @@ PY
   run_hook '{"hook_event_name":"Stop","session_id":"sess-m2","cwd":"/tmp"}'
   wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
 }
+
+# --- session-scoped snooze hold ------------------------------------------------
+# A Claude conversation keeps opening turns of its own after you snooze it (a
+# background task finishing, a CI event), so the hook asks for a snooze that
+# holds the whole conversation, and releases the hold when YOU send a prompt.
+# The launcher's side of the hold is covered in ada-show-alert.bats.
+
+hold_conversation() {
+  mkdir -p "$TMPDIR/ada-snoozed"
+  printf '%s tok\n' "$(( $(/bin/date +%s) + 600 ))" > "$TMPDIR/ada-snoozed/claude-$1"
+}
+
+@test "Stop asks for a snooze that holds the whole conversation" {
+  export ADA_PROBE_SCOPE_OUT="$BATS_TEST_TMPDIR/probe-scope.txt"
+  stamp_session "sess-h0" "$(( $(/bin/date +%s) - 120 ))" "keyed turn"
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-h0","cwd":"/tmp"}'
+  wait_for_file "$ADA_PROBE_SCOPE_OUT" || { echo "alert never fired"; false; }
+  run cat "$ADA_PROBE_SCOPE_OUT"
+  assert_equal "$output" "session"
+}
+
+@test "ADA_SNOOZE_SCOPE=alert keeps a snooze to the one alert" {
+  export ADA_PROBE_SCOPE_OUT="$BATS_TEST_TMPDIR/probe-scope.txt" ADA_SNOOZE_SCOPE=alert
+  stamp_session "sess-h0" "$(( $(/bin/date +%s) - 120 ))" "keyed turn"
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-h0","cwd":"/tmp"}'
+  wait_for_file "$ADA_PROBE_SCOPE_OUT" || { echo "alert never fired"; false; }
+  run cat "$ADA_PROBE_SCOPE_OUT"
+  assert_equal "$output" "alert"
+}
+
+# The reported bug: snooze a conversation for 30 minutes, and its next
+# background-task turn popped a new alert three minutes later.
+@test "a turn the agent opened during a snooze stays quiet" {
+  export ADA_CLAUDE_THRESHOLD=0
+  hold_conversation sess-h1
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h1","prompt":"<task-notification> <task-id>b1</task-id> <status>completed</status> <summary>Background command \"Wait for review\" completed</summary> </task-notification>"}'
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h1" ]
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-h1","cwd":"/tmp"}'
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "a CI event the agent injected keeps the hold too" {
+  hold_conversation sess-h1
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h1","prompt":"<ci-monitor-event>checks failed on PR 15</ci-monitor-event>"}'
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h1" ]
+}
+
+@test "a prompt you type ends the snooze and the turn alerts again" {
+  export ADA_CLAUDE_THRESHOLD=0
+  hold_conversation sess-h2
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h2","prompt":"get the gitignore commit onto main too"}'
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h2" ]
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-h2","cwd":"/tmp"}'
+  wait_for_file "$ADA_PROBE_OUT" || { echo "the turn you started stayed held"; false; }
+}
+
+@test "a slash command you type ends the snooze" {
+  hold_conversation sess-h3
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h3","prompt":"<command-name>/goal</command-name> <command-message>goal</command-message> <command-args>fix it</command-args>"}'
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h3" ]
+}
+
+@test "pasting copied harness markup counts as a prompt you sent" {
+  hold_conversation sess-h4
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h4","prompt":"<pasted_content id=\"c1\"><task-notification><summary>copied</summary></task-notification></pasted_content id=\"c1\">"}'
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h4" ]
+}
+
+@test "typing in one conversation leaves another's snooze in place" {
+  hold_conversation sess-h5
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h6","prompt":"hello"}'
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h5" ]
+}

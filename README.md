@@ -185,6 +185,7 @@ All settings are environment variables. Set them before `ada.sh` is sourced
 | `ADA_PASEO_EVENTS` | `finish error permission` | Which Paseo agent events fire an alert — any subset of `finish` (turn done), `error` (turn failed), `permission` (agent is blocked waiting on you). Only used by the [Paseo integration](#paseo). |
 | `ADA_PASEO_SKIP_WHEN_ACTIVE` | `sh.paseo.desktop` | Like `ADA_SKIP_WHEN_ACTIVE`, but for the Paseo watcher: stay silent when the Paseo desktop app is frontmost (you're already watching). Set to empty to always alert. |
 | `ADA_SNOOZE_MINUTES` | `5 10 30 60` | Space-separated snooze options, in minutes, shown as buttons on the alert. Set to empty to hide the buttons. Requires `python3` (see [Snoozing the alert](#snoozing-the-alert)). |
+| `ADA_SNOOZE_SCOPE` | `session` for Claude/Codex, `alert` elsewhere | `session`: a snooze also holds the rest of the conversation's alerts until it's up or you send the conversation a prompt. `alert`: a snooze re-shows only the snoozed alert. |
 | `ADA_MUTE_BUTTON` | `1` | Set to `0` to hide the **Mute this …** button. Sessions you already muted stay muted. See [Muting a session](#muting-a-session). |
 | `ADA_MUTE_MAX_AGE` | `86400` | Seconds a mute lasts before that session alerts again. `0` keeps it until you clear it. |
 | `ADA_MUTE_DIR` | `${TMPDIR}/ada-muted` | Where the mute markers live: one file per muted session, holding the label of the alert it was muted from. |
@@ -490,6 +491,17 @@ alert shows the delays already expanded. Click it again (it reads **Pinned
 open** while on) to go back to the collapsed button. The native helper stores
 the choice in user defaults (`defaults read com.ada.alert snoozePinned`), so it
 survives reboots and upgrades; `defaults delete com.ada.alert` resets it.
+
+Snoozing a Claude Code or Codex alert quiets the whole conversation, not just
+that one alert. The agent often keeps going after you snooze it: a background
+task finishing or a CI event each starts a turn you didn't type, and without the
+hold every one of those would pop a new alert minutes into your snooze. So until
+the snooze is up that conversation stays silent, and then you get the one
+reminder. Sending the conversation a prompt yourself ends the snooze early,
+since you're back: that turn alerts as usual and the stale reminder is dropped.
+Other conversations keep alerting throughout. To snooze only the one alert, set
+`ADA_SNOOZE_SCOPE=alert` in the environment Claude Code runs its hooks with.
+Terminal, opencode and Paseo alerts still snooze only themselves.
 
 Need a duration that isn't on the list? Click **Custom** to reveal a minutes
 input, type any value (1–1440), and press Enter or **Set**. `Esc` while it's

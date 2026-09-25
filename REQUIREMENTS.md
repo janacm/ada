@@ -274,6 +274,26 @@ removed.
   URL, and ignore requests without that token.
 - A snooze request must close the current alert and relaunch the same alert after
   the chosen delay.
+- When the integration sets `ADA_SNOOZE_SCOPE=session` and the alert has a valid
+  `ADA_SESSION_KEY`, a snooze must also hold every later alert for that session
+  until the snooze is up, then relaunch only the snoozed alert. Other sessions
+  must keep alerting. The daemon writes the hold to `$TMPDIR/ada-snoozed/<key>`
+  as `<wake epoch> <daemon token>`, and must remove it before its own relaunch
+  so the reminder is not dropped by its own hold.
+- The hold check must live in `ada-show-alert.sh` beside the mute check. A hold
+  past its wake time, or one that can't be parsed, must not silence anything and
+  must be removed.
+- The Claude/Codex hook must opt in (it defaults `ADA_SNOOZE_SCOPE` to
+  `session`, and a user-set `alert` must win), because the agent opens turns of
+  its own after a snooze, for a background task finishing or a CI event. A
+  prompt the user sends in that conversation, including a slash command or a
+  paste, must release the hold, and a released hold must cancel the pending
+  relaunch. An injected block (task notification, CI event, system reminder)
+  must not release it. The zsh hook, opencode and Paseo keep the default `alert`
+  scope.
+- The daemon must wait for a snooze by the wall clock in steps of at most
+  `POLL_SECONDS`, rechecking its hold each step, so a released hold ends it
+  early and the relaunch time matches the hold's wake time.
 - Snooze delays must be positive and no longer than 24 hours.
 - A focus request must use the configured bundle id to bring the originating app
   forward, or, when `ADA_CLICK_URL` is set, `open` that URL instead (which both
@@ -619,6 +639,13 @@ removed.
 
 ## Change Log
 
+- 2026-09-24: Snoozing a Claude Code / Codex alert now covers the conversation.
+  Before, a snooze re-queued only the alert you clicked, so a conversation that
+  kept working (a `/goal` run whose background tasks each opened a new turn)
+  popped a fresh alert three minutes into a 30-minute snooze. The hook sets
+  `ADA_SNOOZE_SCOPE=session`; the daemon writes a hold marker that
+  `ada-show-alert.sh` honors until the snooze is up, and a prompt you send in
+  that conversation releases the hold and cancels the reminder.
 - 2026-09-24: The menu bar item is a real control surface and a login item. Its
   bell shows whether alerts are paused, and its menu pauses and resumes them,
   lists the recent alerts (a dropped Claude turn is one click from its

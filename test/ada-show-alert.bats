@@ -434,3 +434,127 @@ dismiss_daemon() {
   assert_success
   wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
 }
+
+# --- session-scoped snooze hold (lib/ada-mute.sh) ------------------------------
+
+# Write a hold marker the way the daemon does: "<wake epoch> <token>".
+hold_session() {
+  mkdir -p "$TMPDIR/ada-snoozed"
+  printf '%s tok\n' "$(( $(/bin/date +%s) + $2 ))" > "$TMPDIR/ada-snoozed/$1"
+}
+
+@test "an alert for a session inside a snooze hold is dropped" {
+  export ADA_SESSION_KEY=claude-abc
+  hold_session claude-abc 600
+  run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+  [ -f "$TMPDIR/ada-snoozed/claude-abc" ]
+}
+
+@test "a hold past its wake time lets the alert through and is removed" {
+  export ADA_SESSION_KEY=claude-abc
+  hold_session claude-abc -5
+  run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  [ ! -e "$TMPDIR/ada-snoozed/claude-abc" ]
+}
+
+@test "a garbled hold marker does not silence the session" {
+  export ADA_SESSION_KEY=claude-abc
+  mkdir -p "$TMPDIR/ada-snoozed"
+  printf 'soon\n' > "$TMPDIR/ada-snoozed/claude-abc"
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  [ ! -e "$TMPDIR/ada-snoozed/claude-abc" ]
+}
+
+@test "another session's snooze hold leaves this alert alone" {
+  export ADA_SESSION_KEY=claude-def
+  hold_session claude-abc 600
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+}
+
+@test "an invalid session key never reads a hold outside the hold dir" {
+  export ADA_SESSION_KEY="../escape"
+  mkdir -p "$TMPDIR/ada-snoozed"
+  printf '%s tok\n' "$(( $(/bin/date +%s) + 600 ))" > "$TMPDIR/escape"
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  [ -f "$TMPDIR/escape" ]
+}
+
+# Poll for a line in the daemon's trace log. The daemon holds bats' output fd
+# until it exits, so each test below also has to see it exit.
+wait_for_trace() {
+  local t=150
+  while (( t-- > 0 )); do grep -q "$1" "$ADA_SNOOZE_LOG" 2>/dev/null && return 0; sleep 0.1; done
+  echo "trace never showed: $1"; cat "$ADA_SNOOZE_LOG" 2>/dev/null; return 1
+}
+
+# The whole path minus the window: the page's snooze signal reaches the daemon,
+# the daemon writes the hold the launcher named, the same session's next alert
+# is dropped while another session's still fires, and releasing the hold (what a
+# typed prompt does) ends the daemon without re-showing the snoozed alert.
+@test "ADA_SNOOZE_SCOPE=session: a snooze holds the session until released" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  command -v curl >/dev/null 2>&1 || skip "curl required"
+  export ADA_SNOOZE_MINUTES="30" ADA_SESSION_KEY=claude-abc ADA_SNOOZE_SCOPE=session \
+         ADA_AUTO_CLOSE=5 ADA_SNOOZE_LOG="$BATS_TEST_TMPDIR/snooze.log"
+  run "$LAUNCHER" "first" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  local before; before=$(/bin/date +%s)
+  dismiss_daemon snooze/30
+  wait_for_trace "holding"
+  run cat "$TMPDIR/ada-snoozed/claude-abc"
+  local wake=${output%% *}
+  (( wake >= before + 1800 - 1 && wake <= before + 1800 + 5 )) || { echo "wake $wake is not ~30m after $before"; false; }
+
+  rm -f "$ADA_PROBE_OUT"
+  run "$LAUNCHER" "agent turn during the snooze" "1s" 0
+  refute_file_appears "$ADA_PROBE_OUT"
+
+  ADA_SESSION_KEY=claude-other ADA_SNOOZE_MINUTES="" run "$LAUNCHER" "another conversation" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "another session was held too"; false; }
+
+  rm -f "$ADA_PROBE_OUT"
+  bash -c ". '$REPO_ROOT/lib/ada-mute.sh'; __ada_snooze_release claude-abc"
+  wait_for_trace "released early"
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "without ADA_SNOOZE_SCOPE a snooze re-arms only its own alert" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  command -v curl >/dev/null 2>&1 || skip "curl required"
+  export ADA_SNOOZE_MINUTES="1" ADA_SESSION_KEY=claude-abc ADA_AUTO_CLOSE=5 \
+         ADA_SNOOZE_LOG="$BATS_TEST_TMPDIR/snooze.log"
+  # The label lands in the daemon's argv, which is how the end of the test finds
+  # it: its handoff file is in the real temp dir, since mktemp -t ignores TMPDIR.
+  local label="rearm $BATS_TEST_TMPDIR"
+  run "$LAUNCHER" "$label" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  dismiss_daemon snooze/1
+  wait_for_trace "relaunch after sleep"
+  refute_file_contains "$ADA_SNOOZE_LOG" "holding"
+  [ ! -e "$TMPDIR/ada-snoozed/claude-abc" ]
+
+  rm -f "$ADA_PROBE_OUT"
+  ADA_SNOOZE_MINUTES="" run "$LAUNCHER" "next turn" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "the next alert was held without session scope"; false; }
+  # The daemon is still asleep on its 1-minute snooze and would hold bats' fd.
+  /usr/bin/pkill -f "ada-snooze-daemon.py .*$label" || { echo "daemon not found"; false; }
+}
+
+@test "a symlink at a session's hold path neither silences it nor gets deleted" {
+  export ADA_SESSION_KEY=claude-abc
+  mkdir -p "$TMPDIR/ada-snoozed"
+  printf '%s tok\n' "$(( $(/bin/date +%s) + 600 ))" > "$TMPDIR/elsewhere"
+  ln -s "$TMPDIR/elsewhere" "$TMPDIR/ada-snoozed/claude-abc"
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "a symlinked hold silenced the session"; false; }
+  [ -L "$TMPDIR/ada-snoozed/claude-abc" ]
+  bash -c ". '$REPO_ROOT/lib/ada-mute.sh'; __ada_snooze_release claude-abc"
+  [ -L "$TMPDIR/ada-snoozed/claude-abc" ] && [ -f "$TMPDIR/elsewhere" ]
+}
