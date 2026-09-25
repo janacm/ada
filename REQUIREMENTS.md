@@ -248,12 +248,13 @@ removed.
   noun in `mutekindb64` whenever a hold or the mute button needs it), otherwise
   "Snooze this alert". The page must never infer the scope on its own.
 - A snooze confirmation must give the clock time: "This <kind> is quiet until
-  <time>" for a session-wide snooze, adding "Send it a message to end the
-  snooze early" only for a conversation (the one integration that releases the
-  hold), and "This alert comes back at <time>" with "Other alerts still come
-  through" otherwise. A time on the next day must say "tomorrow". A reminder
-  after a session-wide snooze must say "Snooze over · this <kind> can alert
-  again".
+  <time>" for a session-wide snooze, adding "Send it a message to end the snooze
+  early" only for a conversation (the one integration that releases the hold),
+  and "This alert comes back at <time>" with "Other alerts still come through"
+  otherwise. A time on the next day must say "tomorrow", and one further out (a
+  day-long snooze across a daylight-saving change) the weekday. Presets outside
+  1..1440 minutes must not render. A reminder after a session-wide snooze must
+  say "Snooze over · this <kind> can alert again".
 - Snooze and mute confirmations must stay up long enough to read (1.2s) and
   close at once on a click or `Esc`, without sending a second signal.
 - The revealed options must include a pin toggle. While pinned, every later
@@ -284,15 +285,21 @@ removed.
   so the reminder is not dropped by its own hold.
 - The hold check must live in `ada-show-alert.sh` beside the mute check. A hold
   past its wake time, or one that can't be parsed, must not silence anything and
-  must be removed.
+  must be removed. Removing an expired hold cancels a reminder whose daemon has
+  not woken yet; the alert that removed it is the newer news and must not be
+  replaced by the older reminder seconds later.
+- The launcher and the Claude hook must resolve the hold path the same way,
+  falling back to the per-user Darwin temp dir when `TMPDIR` is unset.
 - The Claude/Codex hook must opt in (it defaults `ADA_SNOOZE_SCOPE` to
   `session`, and a user-set `alert` must win), because the agent opens turns of
   its own after a snooze, for a background task finishing or a CI event. A
   prompt the user sends in that conversation, including a slash command or a
   paste, must release the hold, and a released hold must cancel the pending
   relaunch. An injected block (task notification, CI event, system reminder)
-  must not release it. The zsh hook, opencode and Paseo keep the default `alert`
-  scope.
+  must not release it, and neither may a prompt that matches one the agent
+  scheduled earlier in the session (a `CronCreate` or `ScheduleWakeup` call in
+  the transcript), since `/loop` ticks and cron jobs arrive as plain text. The
+  zsh hook, opencode and Paseo keep the default `alert` scope.
 - The daemon must wait for a snooze by the wall clock in steps of at most
   `POLL_SECONDS`, rechecking its hold each step, so a released hold ends it
   early and the relaunch time matches the hold's wake time.

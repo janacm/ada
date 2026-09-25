@@ -328,11 +328,16 @@ log = os.path.join(TMP, "released.log")
 mod, _ = load(argv(handoff, script=script),
               env={"ADA_SNOOZE_HOLD_FILE": hold, "ADA_SNOOZE_LOG": log})
 clock = Clock(release)
+# Record the relaunch synchronously: the recorder script writes its file after
+# Popen returns, so checking for that file could pass before it lands.
+launched = []
+mod.subprocess.Popen = lambda cmd, **kw: launched.append(cmd)
 drive(mod, handoff, "GET", lambda tok: "/%s/snooze/30" % tok, clock)
+subprocess.Popen = REAL_POPEN
 os.environ.pop("ADA_SNOOZE_LOG")
 check("a released hold ends the snooze without re-showing the alert",
-      not os.path.exists(out) and "snooze released early" in open(log).read(),
-      open(log).read())
+      launched == [] and "snooze released early" in open(log).read(),
+      (launched, open(log).read()))
 check("a released hold ends the daemon at its next poll, not at the wake time",
       clock.offset < 60 + 2 * mod.POLL_SECONDS, clock.offset)
 
@@ -347,9 +352,12 @@ def replace(clock, seconds):
 handoff = os.path.join(TMP, "h23")
 script, out = recorder("replaced")
 mod, _ = load(argv(handoff, script=script), env={"ADA_SNOOZE_HOLD_FILE": hold})
+launched = []
+mod.subprocess.Popen = lambda cmd, **kw: launched.append(cmd)
 drive(mod, handoff, "GET", lambda tok: "/%s/snooze/5" % tok, Clock(replace))
+subprocess.Popen = REAL_POPEN
 check("a hold replaced by a newer snooze is left to that snooze",
-      not os.path.exists(out) and "newer-token" in open(hold).read())
+      launched == [] and "newer-token" in open(hold).read(), launched)
 os.remove(hold)
 
 

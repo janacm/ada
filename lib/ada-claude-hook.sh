@@ -161,6 +161,40 @@ def injected(prompt):
     # mangled.
     return p, not paste_only and bool(INJECTED_OUTER_TAG.match(p)) and p.endswith(">")
 
+SCHEDULING_TOOLS = ("CronCreate", "ScheduleWakeup")
+
+def scheduled(forms, tp):
+    # A /loop tick or a CronCreate job re-submits, as plain text, a prompt the
+    # agent scheduled earlier in this conversation, and nothing in the hook
+    # payload tells it from one you typed. The transcript does: the tool call
+    # that scheduled the prompt is already in it. A loop scheduled with an
+    # <<autonomous-loop...>> sentinel fires resolved text that matches nothing
+    # here, so it still counts as yours.
+    if not tp:
+        return False
+    try:
+        with open(tp, "rb") as f:
+            data = f.read()
+    except OSError:
+        return False
+    needles = [b"\"" + t.encode() + b"\"" for t in SCHEDULING_TOOLS]
+    if not any(n in data for n in needles):
+        return False
+    for line in data.splitlines():
+        if not any(n in line for n in needles):
+            continue
+        try:
+            content = (json.loads(line).get("message") or {}).get("content")
+        except Exception:
+            continue
+        for block in content if isinstance(content, list) else []:
+            if (isinstance(block, dict) and block.get("type") == "tool_use"
+                    and block.get("name") in SCHEDULING_TOOLS):
+                prompt = ((block.get("input") or {}).get("prompt") or "")
+                if one_line(prompt) in forms:
+                    return True
+    return False
+
 def label_for(p, is_injected):
     # A turn label a human can read on a maximized window, from what injected()
     # returned. Rendering an injected block verbatim fills the alert with task
@@ -205,9 +239,12 @@ tp  = clean(d.get("transcript_path", ""))
 pr  = clean(d.get("prompt", ""))
 text, is_injected = injected(d.get("prompt", ""))
 lb  = label_for(text, is_injected)
-# Did you send this prompt, as opposed to the agent injecting it? A slash
-# command is wrapped in markup but still something you typed.
+# Did you send this prompt, as opposed to the agent injecting or scheduling it?
+# A slash command is wrapped in markup but still something you typed, unless it
+# is one the agent scheduled (compared both raw and as "/name args").
 by  = "0" if is_injected and not SLASH_COMMAND.search(text[:8192]) else "1"
+if by == "1" and ev == "UserPromptSubmit" and scheduled({one_line(text), lb}, tp):
+    by = "0"
 # Fields are joined with US (\x1f), a NON-whitespace delimiter, so an empty field
 # (e.g. a payload with no transcript_path) is preserved instead of collapsing the
 # way adjacent IFS-whitespace tabs would — which used to shift the prompt into

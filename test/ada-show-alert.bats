@@ -7,6 +7,14 @@ setup() {
   LAUNCHER="$REPO_ROOT/lib/ada-show-alert.sh"
 }
 
+# A snoozing daemon inherits bats' output fd, so one that a failed assertion
+# left asleep would stall the whole run until it wakes. The tests that snooze
+# put the test's tmpdir in the label, which lands in the daemon's argv (its
+# handoff file does not: mktemp -t ignores TMPDIR on macOS).
+teardown() {
+  /usr/bin/pkill -f "ada-snooze-daemon.py .*$BATS_TEST_TMPDIR" 2>/dev/null || true
+}
+
 # A test that lets the launcher spawn the loopback daemon ends it here, via the
 # port and token in the recorded URL. Otherwise bats waits out the daemon's
 # deadline (autoclose + 15s) before finishing the test.
@@ -404,7 +412,7 @@ wait_for_trace() {
   command -v curl >/dev/null 2>&1 || skip "curl required"
   export ADA_SNOOZE_MINUTES="30" ADA_SESSION_KEY=claude-abc ADA_SNOOZE_SCOPE=session \
          ADA_AUTO_CLOSE=5 ADA_SNOOZE_LOG="$BATS_TEST_TMPDIR/snooze.log"
-  run "$LAUNCHER" "first" "1s" 0
+  run "$LAUNCHER" "first $BATS_TEST_TMPDIR" "1s" 0
   wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
   local before; before=$(/bin/date +%s)
   dismiss_daemon snooze/30

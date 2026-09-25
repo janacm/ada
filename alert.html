@@ -620,12 +620,17 @@
     closeWindow();
   }
 
-  // "2:30 PM", or "2:30 PM tomorrow". A snooze is at most 1440 minutes, so
-  // another day can only be tomorrow.
+  // "2:30 PM", "2:30 PM tomorrow", or "2:30 PM Saturday". A snooze is at most
+  // 1440 minutes, but across a daylight-saving change that can still land two
+  // calendar days out, so tomorrow is checked rather than assumed.
   function clockIn(mins) {
     const at = new Date(Date.now() + mins * 60000);
     const time = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    return at.toDateString() === new Date().toDateString() ? time : time + ' tomorrow';
+    const today = new Date();
+    if (at.toDateString() === today.toDateString()) return time;
+    const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    if (at.toDateString() === tomorrow.toDateString()) return time + ' tomorrow';
+    return time + ' ' + at.toLocaleDateString([], { weekday: 'long' });
   }
 
   // Replace the alert with a short confirmation. Text goes in with textContent,
@@ -746,8 +751,10 @@
       try { window.webkit?.messageHandlers?.adaSnoozePin?.postMessage(pinned); } catch (e) {}
     }
 
+    // The daemon ignores anything outside 1..1440, so such a preset would only
+    // show a confirmation for a snooze that never happens.
     const mins = (params.get('snoozemins') || '5,10,30,60')
-      .split(',').map(n => parseInt(n, 10)).filter(n => Number.isFinite(n) && n > 0);
+      .split(',').map(n => parseInt(n, 10)).filter(n => Number.isFinite(n) && n > 0 && n <= 1440);
     for (const m of mins) {
       const btn = document.createElement('button');
       btn.type = 'button';
