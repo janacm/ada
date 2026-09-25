@@ -29,9 +29,45 @@ setup() {
   cat > "$BATS_TEST_TMPDIR/bin/curl" <<'SH'
 #!/bin/bash
 [ -n "${STUB_CURL_FAIL:-}" ] && exit 22
+# Someone merges to main while the release waits on GitHub's tarball, i.e.
+# after release.sh checked HEAD and pushed the tag, before the formula push.
+if [ -n "${STUB_CURL_ADVANCE:-}" ]; then
+  other="$BATS_TEST_TMPDIR/other"
+  git clone -q "$STUB_CURL_ADVANCE" "$other" 2>/dev/null
+  git -C "$other" -c user.name=o -c user.email=o@example.invalid \
+    commit -q --allow-empty -m "concurrent work"
+  [ -n "${STUB_CURL_ADVANCE_FORMULA:-}" ] && {
+    sed -i '' 's|^  url ".*"|  url "https://example.invalid/other.tar.gz"|' "$other/Formula/ada.rb"
+    git -C "$other" -c user.name=o -c user.email=o@example.invalid commit -q -am "someone edits the formula"
+  }
+  git -C "$other" push -q origin main
+  unset STUB_CURL_ADVANCE
+fi
 printf 'fake tarball for %s' "${!#}"
 SH
   chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+  # gh stub for --auto: `gh pr view <n> ...` prints release:major for the PR
+  # numbers listed in STUB_GH_MAJOR, and nothing for any other PR.
+  #
+  # `gh api repos/.../commits/<sha>/pulls` answers with the PR a commit came
+  # from: the #N in a merge or squash subject, or a "<subject><TAB><N>" line in
+  # $BATS_TEST_TMPDIR/pr-map for a rebase-merged commit whose subject has none.
+  export STUB_REPO="$WORK"
+  cat > "$BATS_TEST_TMPDIR/bin/gh" <<'SH'
+#!/bin/bash
+if [ "$1" = api ]; then
+  [ -n "${STUB_GH_API_FAIL:-}" ] && { echo "HTTP 502" >&2; exit 1; }
+  sha=$(printf '%s' "$2" | sed -nE 's|.*/commits/([0-9a-f]+)/pulls$|\1|p')
+  subj=$(git -C "$STUB_REPO" log -1 --format=%s "$sha")
+  printf '%s\n' "$subj" | sed -nE -e 's/^Merge pull request #([0-9]+) .*/\1/p' -e 's/.*\(#([0-9]+)\)$/\1/p'
+  [ -f "$BATS_TEST_TMPDIR/pr-map" ] && awk -F'\t' -v s="$subj" '$1 == s { print $2 }' "$BATS_TEST_TMPDIR/pr-map"
+  exit 0
+fi
+[ "$1 $2" = "pr view" ] || exit 1
+for n in ${STUB_GH_MAJOR:-}; do [ "$n" = "$3" ] && echo "release:major"; done
+echo "enhancement"
+SH
+  chmod +x "$BATS_TEST_TMPDIR/bin/gh"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
 
@@ -170,4 +206,334 @@ expected_sha() {
   run "$RELEASE" v9.9.9
   assert_failure
   assert_output_contains "could not rewrite url/sha256"
+}
+
+# --- --next: the version the release workflow cuts --------------------------
+
+# Tag the current HEAD and point the formula at that tag, as a finished release.
+finished_release() {
+  git -C "$WORK" tag -a "$1" -m "$1"
+  sed -i '' "s|^  url \".*\"|  url \"https://github.com/janacm/ada/archive/refs/tags/$1.tar.gz\"|" "$WORK/Formula/ada.rb"
+  git -C "$WORK" commit -q --allow-empty -am "Homebrew: point formula at $1"
+}
+
+@test "--next with no tags counts from the formula's version" {
+  run "$RELEASE" --next minor
+  assert_equal "$output" "v0.5"      # the fixture's formula installs v0.4
+  run "$RELEASE" --next major
+  assert_equal "$output" "v1.0"
+}
+
+@test "--next with no version anywhere starts at v0.1 or v1.0" {
+  sed -i '' 's|^  url ".*"|  url "https://example.invalid/ada.tar.gz"|' "$WORK/Formula/ada.rb"
+  git -C "$WORK" commit -q -am "formula names no tag"
+  run "$RELEASE" --next minor
+  assert_equal "$output" "v0.1"
+  run "$RELEASE" --next major
+  assert_equal "$output" "v1.0"
+}
+
+@test "--next bumps the latest finished release" {
+  finished_release v0.4
+  run "$RELEASE" --next minor
+  assert_success
+  assert_equal "$output" "v0.5"
+  run "$RELEASE" --next major
+  assert_equal "$output" "v1.0"
+}
+
+@test "--next ignores a pre-release tag that version-sorts ahead" {
+  finished_release v0.4
+  git -C "$WORK" tag -a v1.0-rc1 -m rc
+  run "$RELEASE" --next minor
+  assert_equal "$output" "v0.5"
+}
+
+@test "--next returns an unfinished release instead of skipping past it" {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "more work"
+  git -C "$WORK" tag -a v0.5 -m v0.5    # tagged, formula still at v0.4
+  git -C "$WORK" push -q origin v0.5
+  run "$RELEASE" --next minor
+  assert_success
+  assert_output_contains "finishing v0.5"
+  assert_equal "${lines[${#lines[@]}-1]}" "v0.5"
+}
+
+@test "--next rejects anything but minor or major" {
+  run "$RELEASE" --next patch
+  assert_failure
+  assert_output_contains "usage: release.sh --next minor|major"
+}
+
+# --- main moving under a release ---------------------------------------------
+
+@test "main moving during the release replays the formula bump instead of stranding the tag" {
+  export STUB_CURL_ADVANCE="$ORIGIN"
+  tagged=$(git -C "$WORK" rev-parse HEAD)
+  run "$RELEASE" v9.9.9
+  assert_success
+  assert_output_contains "main moved; replaying the formula bump"
+  run git -C "$ORIGIN" log --format=%s -2 main
+  assert_equal "${lines[0]}" "Homebrew: point formula at v9.9.9"
+  assert_equal "${lines[1]}" "concurrent work"
+  # the tag still names the code that was checked, not the later merge
+  assert_equal "$(git -C "$ORIGIN" rev-parse 'v9.9.9^{commit}')" "$tagged"
+}
+
+@test "a finished release whose bump was replayed re-runs as a no-op" {
+  export STUB_CURL_ADVANCE="$ORIGIN"
+  run "$RELEASE" v9.9.9
+  assert_success
+  before=$(git -C "$ORIGIN" rev-parse main)
+  run "$RELEASE" v9.9.9
+  assert_success
+  assert_output_contains "already released"
+  assert_equal "$(git -C "$ORIGIN" rev-parse main)" "$before"
+}
+
+@test "a published tag whose formula bump never landed is finished on re-run" {
+  git -C "$WORK" tag -a v9.9.9 -m v9.9.9
+  git -C "$WORK" push -q origin v9.9.9
+  git -C "$WORK" commit -q --allow-empty -m "later work"
+  git -C "$WORK" push -q origin main
+  run "$RELEASE" v9.9.9
+  assert_success
+  assert_output_contains "finishing v9.9.9"
+  assert_file_contains "$WORK/Formula/ada.rb" "sha256 \"$(expected_sha v9.9.9)\""
+  run git -C "$ORIGIN" log -1 --format=%s main
+  assert_equal "$output" "Homebrew: point formula at v9.9.9"
+}
+
+@test "a formula edit racing the release stops with a re-run hint" {
+  export STUB_CURL_ADVANCE="$ORIGIN" STUB_CURL_ADVANCE_FORMULA=1
+  run "$RELEASE" v9.9.9
+  assert_failure
+  assert_output_contains "conflicts with origin/main"
+  assert_output_contains "re-run ./release.sh v9.9.9"
+  run git -C "$WORK" status --porcelain
+  assert_equal "$output" ""
+  # main is back on origin/main, so the hinted re-run really does finish it
+  assert_equal "$(git -C "$WORK" rev-parse HEAD)" "$(git -C "$ORIGIN" rev-parse main)"
+  run "$RELEASE" v9.9.9
+  assert_success
+  assert_output_contains "finishing v9.9.9"
+  run git -C "$ORIGIN" log -1 --format=%s main
+  assert_equal "$output" "Homebrew: point formula at v9.9.9"
+}
+
+# --- no downgrades; which PRs a release covers -------------------------------
+
+@test "re-running an older published version refuses to downgrade the formula" {
+  finished_release v0.5
+  git -C "$WORK" commit -q --allow-empty -m "more work"
+  finished_release v0.6
+  git -C "$WORK" push -q origin main --tags
+  run "$RELEASE" v0.5
+  assert_failure
+  assert_output_contains "older than the formula's v0.6; refusing to downgrade"
+  assert_file_contains "$WORK/Formula/ada.rb" "refs/tags/v0.6.tar.gz"
+}
+
+@test "--next never offers to finish a tag older than the formula's version" {
+  finished_release v0.6
+  git -C "$WORK" tag -a v0.5 -m v0.5 HEAD~1
+  run "$RELEASE" --next minor
+  assert_success
+  assert_equal "$output" "v0.7"
+}
+
+@test "--next counts from the formula's version when it is ahead of the tags" {
+  sed -i '' 's|^  url ".*"|  url "https://github.com/janacm/ada/archive/refs/tags/v2.3.tar.gz"|' "$WORK/Formula/ada.rb"
+  git -C "$WORK" commit -q -am "formula at v2.3"
+  git -C "$WORK" tag -a v0.4 -m v0.4
+  run "$RELEASE" --next minor
+  assert_equal "$output" "v2.4"
+}
+
+@test "--prs-since-release lists merge and squash PRs after the formula's version" {
+  git -C "$WORK" commit -q --allow-empty -m "Old work (#5)"
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #12 from janacm/feature"
+  git -C "$WORK" commit -q --allow-empty -m "A squashed change (#13)"
+  git -C "$WORK" commit -q --allow-empty -m "Direct push, no PR"
+  run "$RELEASE" --prs-since-release
+  assert_success
+  assert_equal "$(echo $output)" "12 13"
+}
+
+@test "--prs-since-release with no release tag looks at all of history" {
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #3 from janacm/x"
+  run "$RELEASE" --prs-since-release
+  assert_equal "$output" "3"
+}
+
+@test "--next ignores a newer tag on another branch" {
+  finished_release v0.4
+  git -C "$WORK" switch -q -c side
+  git -C "$WORK" commit -q --allow-empty -m "side work"
+  git -C "$WORK" tag -a v0.9 -m v0.9
+  git -C "$WORK" push -q origin v0.9
+  git -C "$WORK" switch -q main
+  run "$RELEASE" --next minor
+  assert_success
+  assert_equal "$output" "v0.5"
+}
+
+@test "--next does not offer to finish a local-only tag" {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "more work"
+  git -C "$WORK" tag -a v0.7 -m v0.7    # never pushed
+  run "$RELEASE" --next minor
+  assert_success
+  refute_output_contains "finishing"
+  assert_equal "$output" "v0.5"
+}
+
+# --- --auto: the release workflow's whole job ---------------------------------
+
+# A finished v0.4 on origin, then a merged PR on top: the state the workflow
+# sees after a labelled merge.
+released_v04_then_pr() {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #${1:-20} from janacm/feature"
+  git -C "$WORK" push -q origin main --tags
+}
+
+@test "--auto minor releases the tested main as the next minor" {
+  released_v04_then_pr
+  tested=$(git -C "$WORK" rev-parse HEAD)
+  run "$RELEASE" --auto minor
+  assert_success
+  assert_equal "$(git -C "$ORIGIN" rev-parse 'v0.5^{commit}')" "$tested"
+  assert_file_contains "$WORK/Formula/ada.rb" "refs/tags/v0.5.tar.gz"
+}
+
+@test "--auto goes major when an earlier PR since the release asked for it" {
+  released_v04_then_pr 20
+  git -C "$WORK" commit -q --allow-empty -m "A later minor change (#21)"
+  git -C "$WORK" push -q origin main
+  export STUB_GH_MAJOR="20"
+  run "$RELEASE" --auto minor
+  assert_success
+  assert_output_contains "#20 asked for a major release"
+  run git -C "$ORIGIN" tag -l v1.0
+  assert_equal "$output" "v1.0"
+}
+
+@test "--auto finishes a stranded tag, then releases the tested main too" {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #19 from janacm/earlier"
+  git -C "$WORK" tag -a v0.5 -m v0.5          # an earlier run died after this push
+  echo feature > "$WORK/feature.txt"; git -C "$WORK" add feature.txt
+  git -C "$WORK" commit -q -m "Merge pull request #20 from janacm/feature"
+  git -C "$WORK" push -q origin main --tags
+  stranded=$(git -C "$WORK" rev-parse 'v0.5^{commit}')
+  tested=$(git -C "$WORK" rev-parse HEAD)
+  run "$RELEASE" --auto minor
+  assert_success
+  assert_output_contains "finishing v0.5"
+  assert_output_contains "now releasing the tested main"
+  assert_equal "$(git -C "$ORIGIN" rev-parse 'v0.5^{commit}')" "$stranded"
+  # v0.6 names the commit the suite ran on, not the v0.5 formula bump
+  assert_equal "$(git -C "$ORIGIN" rev-parse 'v0.6^{commit}')" "$tested"
+  run git -C "$ORIGIN" log --format=%s -3 main
+  assert_equal "${lines[0]}" "Homebrew: point formula at v0.6"
+  assert_equal "${lines[1]}" "Homebrew: point formula at v0.5"
+  assert_equal "${lines[2]}" "Merge pull request #20 from janacm/feature"
+}
+
+@test "--auto leaves untested commits from a concurrent merge for the next release" {
+  finished_release v0.4
+  git -C "$WORK" tag -a v0.5 -m v0.5
+  echo feature > "$WORK/feature.txt"; git -C "$WORK" add feature.txt
+  git -C "$WORK" commit -q -m "Merge pull request #20 from janacm/feature"
+  git -C "$WORK" push -q origin main --tags
+  export STUB_CURL_ADVANCE="$ORIGIN"
+  run "$RELEASE" --auto minor
+  assert_success
+  assert_output_contains "finishing v0.5"
+  assert_output_contains "newer commits ship with the next labelled merge"
+  run git -C "$ORIGIN" tag -l v0.6
+  assert_equal "$output" ""
+}
+
+@test "--auto rejects anything but minor or major" {
+  run "$RELEASE" --auto patch
+  assert_failure
+  assert_output_contains "usage: release.sh --auto minor|major"
+}
+
+@test "--auto stops rather than guess when a PR's labels can't be read" {
+  released_v04_then_pr 20
+  # the commit-to-PR lookup works; only reading the labels fails
+  mv "$BATS_TEST_TMPDIR/bin/gh" "$BATS_TEST_TMPDIR/bin/gh-ok"
+  cat > "$BATS_TEST_TMPDIR/bin/gh" <<SH
+#!/bin/bash
+[ "\$1" = api ] && exec "$BATS_TEST_TMPDIR/bin/gh-ok" "\$@"
+echo "HTTP 502" >&2; exit 1
+SH
+  chmod +x "$BATS_TEST_TMPDIR/bin/gh"
+  run "$RELEASE" --auto minor
+  assert_failure
+  assert_output_contains "could not read the labels of #20; not releasing"
+  run git -C "$ORIGIN" tag -l v0.5
+  assert_equal "$output" ""
+}
+
+@test "--prs-since-release finds a rebase-merged PR whose subjects carry no number" {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "Part one of the big change"
+  git -C "$WORK" commit -q --allow-empty -m "Part two of the big change"
+  printf 'Part one of the big change\t30\nPart two of the big change\t30\n' > "$BATS_TEST_TMPDIR/pr-map"
+  run "$RELEASE" --prs-since-release
+  assert_success
+  assert_equal "$output" "30"
+}
+
+@test "--auto goes major for a rebase-merged release:major PR" {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "Breaking rework"
+  git -C "$WORK" commit -q --allow-empty -m "A later minor change (#31)"
+  git -C "$WORK" push -q origin main --tags
+  printf 'Breaking rework\t30\n' > "$BATS_TEST_TMPDIR/pr-map"
+  export STUB_GH_MAJOR="30"
+  run "$RELEASE" --auto minor
+  assert_success
+  assert_output_contains "#30 asked for a major release"
+  run git -C "$ORIGIN" tag -l v1.0
+  assert_equal "$output" "v1.0"
+}
+
+@test "a failed commit-to-PR lookup stops the release" {
+  released_v04_then_pr 20
+  export STUB_GH_API_FAIL=1
+  run "$RELEASE" --prs-since-release
+  assert_failure
+  assert_output_contains "could not look up the PR for"
+  run "$RELEASE" --auto minor
+  assert_failure
+  run git -C "$ORIGIN" tag -l v0.5
+  assert_equal "$output" ""
+}
+
+# A previous recovery tagged v0.6 on the tested commit, then died before its
+# formula bump; main tip is the v0.5 formula bump on top. Finishing v0.6 must
+# not publish a v0.7 for that formula-only commit.
+@test "--auto finishes a stranded recovery tag without a spurious extra release" {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #19 from janacm/earlier"
+  git -C "$WORK" tag -a v0.5 -m v0.5
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #20 from janacm/feature"
+  git -C "$WORK" tag -a v0.6 -m v0.6
+  sed -i '' 's|^  url ".*"|  url "https://github.com/janacm/ada/archive/refs/tags/v0.5.tar.gz"|' "$WORK/Formula/ada.rb"
+  git -C "$WORK" commit -q -am "Homebrew: point formula at v0.5"
+  git -C "$WORK" push -q origin main --tags
+  run "$RELEASE" --auto minor
+  assert_success
+  assert_output_contains "finishing v0.6"
+  assert_output_contains "nothing but the formula changed since v0.6"
+  assert_file_contains "$WORK/Formula/ada.rb" "refs/tags/v0.6.tar.gz"
+  run git -C "$ORIGIN" tag -l v0.7
+  assert_equal "$output" ""
 }

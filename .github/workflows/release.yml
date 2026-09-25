@@ -1,0 +1,79 @@
+name: release
+
+# Cut a Homebrew release when a PR labelled `release:minor` (v0.4 -> v0.5) or
+# `release:major` (v0.4 -> v1.0) is merged into main. Unlabelled merges do
+# nothing. The label must be on the PR BEFORE it is merged: this reads the
+# labels from the close event, and a re-run replays that same event.
+#
+# pull_request_target, not pull_request: under pull_request a PR from a fork
+# gets a read-only GITHUB_TOKEN, so the tag and formula pushes would fail. The
+# _target event runs this file as it is on main, with a write token. That is
+# only safe because nothing below checks out the PR's head: every step runs main
+# as it stands after the merge.
+#
+# The formula bump release.sh pushes cannot re-trigger anything: pushes made
+# with GITHUB_TOKEN start no workflows, and this one only listens for PRs.
+on:
+  pull_request_target:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+  # read the labels of every PR since the last release (see "Pick the next version")
+  pull-requests: read
+
+jobs:
+  release:
+    if: >-
+      github.event.pull_request.merged == true &&
+      (contains(github.event.pull_request.labels.*.name, 'release:minor') ||
+       contains(github.event.pull_request.labels.*.name, 'release:major'))
+    runs-on: macos-latest
+    # One release at a time. Job-level, not workflow-level, so an unlabelled
+    # merge (whose job is skipped) never enters the group. GitHub keeps only one
+    # PENDING run per group, so if three labelled PRs merge while a release is
+    # running, the middle one is cancelled; the last one still releases main,
+    # which includes the middle PR's changes, and goes major if any PR since
+    # the last release was labelled release:major.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          # release.sh needs every tag (to find the last version) and a local
+          # `main` branch that matches origin/main.
+          fetch-depth: 0
+
+      # Test exactly what is about to be tagged. release.sh re-fetches main and
+      # refuses if it moved while this ran; re-running the job then tests and
+      # releases the newer main.
+      - name: Install bats
+        run: brew install bats-core
+      - name: Build the native helpers
+        run: |
+          swift build -c release --product ada-alert
+          swift build -c release --product ada-menubar
+      - name: Run the bats suite
+        run: bats test/
+
+      # release.sh --auto does the rest, and bats covers it: the bump is major
+      # if this PR or any PR since the last release asked for it (GitHub keeps
+      # one pending run per concurrency group, so a queued major run can be
+      # replaced by a later minor one); --next picks the version (stable tags
+      # only, and an earlier run's pushed-but-unfinished tag is finished rather
+      # than skipped); and after finishing such a tag, the tested main is
+      # released too.
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUMP: ${{ contains(github.event.pull_request.labels.*.name, 'release:major') && 'major' || 'minor' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          ./release.sh --auto "$BUMP"
