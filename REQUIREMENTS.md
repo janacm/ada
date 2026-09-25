@@ -46,6 +46,11 @@ removed.
 - The formula must not run the onboarding installer automatically. It must
   expose the installer as an `ada-setup` wrapper and direct users to run it via
   caveats.
+- Every stable install reads the formula from the default branch, including
+  installs whose tarball is older than the branch, so wrappers and caveats must
+  refer only to files the installed tree has (checked under `opt_libexec`): no
+  `ada-pause` wrapper, menu bar caveat or `--status` line for a tarball that
+  predates them.
 - `brew install` and `brew upgrade` must write only under the Homebrew prefix;
   they must not modify user dotfiles, agent hook config, or an existing
   from-source install.

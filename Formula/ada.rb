@@ -69,6 +69,21 @@ class Ada < Formula
   end
 
   def caveats
+    # Like the wrappers above: every stable install reads these caveats from
+    # main, including ones whose tarball predates the menu bar and --status, so
+    # only mention what the installed tree has.
+    menubar = <<~EOS if (opt_libexec/"ada-menubar.sh").exist?
+
+      It also offers the menu bar item (pause every alert, recent alerts,
+      muted sessions, what is wired), started at login as a LaunchAgent. To
+      remove that login item before `brew uninstall ada`:
+
+        #{opt_libexec}/ada-menubar.sh uninstall
+    EOS
+    status = if (opt_libexec/"lib/ada-status.sh").exist?
+      "\n  ada-setup --status    # what is wired, and whether it still works"
+    end
+
     <<~EOS
       ada is installed but not yet wired up. Run:
 
@@ -81,18 +96,11 @@ class Ada < Formula
       directory, the Paseo LaunchAgent watcher. It writes timestamped backups
       before any JSON edit and is idempotent, so re-run it any time to change
       which integrations are active.
-
-      It also offers the menu bar item (pause every alert, recent alerts,
-      muted sessions, what is wired), started at login as a LaunchAgent. To
-      remove that login item before `brew uninstall ada`:
-
-        #{opt_libexec}/ada-menubar.sh uninstall
-
+      #{menubar}
       Scriptable form:
 
         ada-setup --agents terminal,claude,codex,opencode
-        ada-setup --list
-        ada-setup --status    # what is wired, and whether it still works
+        ada-setup --list#{status}
 
       Upgrades: `brew upgrade ada` keeps existing wiring working, because it
       points at the version-stable #{opt_libexec}. Re-run ada-setup only to pick

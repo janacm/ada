@@ -107,7 +107,7 @@ __ada_mute_prune() {
 __ada_mute_cli() {
   local action=${1:-list}
   shift 2>/dev/null
-  local dir key file age max label
+  local dir key file age max label tmp
   dir=$(__ada_mute_dir)
 
   case "$action" in
@@ -161,7 +161,15 @@ __ada_mute_cli() {
       mkdir -p "$dir" || return 1
       if [[ -n "$label" ]]; then
         label=${label//$'\t'/ }; label=${label//$'\r'/ }; label=${label//$'\n'/ }
-        ( umask 077; printf '%s\n' "${label:0:200}" > "$file" ) || return 1
+        # The label is a prompt, so it goes into a new mode-600 file renamed
+        # over the marker: writing into an existing marker would keep whatever
+        # mode it had (0644 from an older daemon or a plain add). The dot keeps
+        # the temp name from ever passing as a key.
+        tmp=$(mktemp "$dir/.label.XXXXXX") || return 1
+        if ! { printf '%s\n' "${label:0:200}" > "$tmp" && mv -f "$tmp" "$file"; }; then
+          rm -f "$tmp"
+          return 1
+        fi
       else
         touch "$file" || return 1
       fi

@@ -217,6 +217,19 @@ age_marker() {
   refute_output_contains $'ago\t'
 }
 
+# An older daemon, or a plain `add`, left a 0644 marker. Writing a label (a
+# prompt) into that same file would keep it world-readable.
+@test "a label added to an existing world-readable marker is private" {
+  "$MUTE" add claude-abc >/dev/null
+  chmod 644 "$ADA_MUTE_DIR/claude-abc"
+  run "$MUTE" add claude-abc "secret prompt"
+  assert_success
+  assert_equal "$(cat "$ADA_MUTE_DIR/claude-abc")" "secret prompt"
+  assert_equal "$(stat -f %Lp "$ADA_MUTE_DIR/claude-abc")" 600
+  run ls -A "$ADA_MUTE_DIR"
+  assert_equal "$output" "claude-abc"
+}
+
 @test "adding a label to a muted key replaces the old one" {
   "$MUTE" add claude-abc "old" >/dev/null
   "$MUTE" add claude-abc "new" >/dev/null
