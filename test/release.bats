@@ -415,13 +415,14 @@ released_v04_then_pr() {
   git -C "$WORK" commit -q --allow-empty -m "Merge pull request #20 from janacm/feature"
   git -C "$WORK" push -q origin main --tags
   stranded=$(git -C "$WORK" rev-parse 'v0.5^{commit}')
+  tested=$(git -C "$WORK" rev-parse HEAD)
   run "$RELEASE" --auto minor
   assert_success
   assert_output_contains "finishing v0.5"
   assert_output_contains "now releasing the tested main"
   assert_equal "$(git -C "$ORIGIN" rev-parse 'v0.5^{commit}')" "$stranded"
-  run git -C "$ORIGIN" tag -l v0.6
-  assert_equal "$output" "v0.6"
+  # v0.6 names the commit the suite ran on, not the v0.5 formula bump
+  assert_equal "$(git -C "$ORIGIN" rev-parse 'v0.6^{commit}')" "$tested"
   run git -C "$ORIGIN" log --format=%s -3 main
   assert_equal "${lines[0]}" "Homebrew: point formula at v0.6"
   assert_equal "${lines[1]}" "Homebrew: point formula at v0.5"
@@ -446,4 +447,17 @@ released_v04_then_pr() {
   run "$RELEASE" --auto patch
   assert_failure
   assert_output_contains "usage: release.sh --auto minor|major"
+}
+
+@test "--auto stops rather than guess when a PR's labels can't be read" {
+  released_v04_then_pr 20
+  cat > "$BATS_TEST_TMPDIR/bin/gh" <<'SH'
+#!/bin/bash
+echo "HTTP 502" >&2; exit 1
+SH
+  run "$RELEASE" --auto minor
+  assert_failure
+  assert_output_contains "could not read the labels of #20; not releasing"
+  run git -C "$ORIGIN" tag -l v0.5
+  assert_equal "$output" ""
 }

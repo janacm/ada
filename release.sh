@@ -109,10 +109,14 @@ if [[ "${1:-}" == --auto ]]; then
     || { echo "usage: release.sh --auto minor|major" >&2; exit 1; }
   self="${BASH_SOURCE[0]}"
   tested=$(git -C "$dir" rev-parse HEAD)
+  # A label lookup that fails must stop the release, not read as "no major
+  # label": a release published as minor can't be taken back.
   __pick() {
-    local bump=$trigger pr
+    local bump=$trigger pr labels
     for pr in $("$self" --prs-since-release); do
-      if gh pr view "$pr" --json labels --jq '.labels[].name' 2>/dev/null | grep -qx 'release:major'; then
+      labels=$(gh pr view "$pr" --json labels --jq '.labels[].name') \
+        || { echo "release: could not read the labels of #$pr; not releasing" >&2; return 1; }
+      if grep -qx 'release:major' <<<"$labels"; then
         echo "release: #$pr asked for a major release" >&2
         bump=major
       fi
@@ -125,6 +129,11 @@ if [[ "${1:-}" == --auto ]]; then
     if [[ "$(git -C "$dir" rev-parse -q --verify HEAD~1 || true)" == "$tested" ]]; then
       echo "release: finished the stranded $version; now releasing the tested main"
       version=$(__pick)
+      # HEAD is now the stranded release's formula bump, so tag the commit the
+      # suite actually ran on and publish it; the normal re-run path then
+      # finishes that published tag with its own formula bump.
+      git -C "$dir" tag -a "$version" -m "$version" "$tested"
+      git -C "$dir" push origin "$version"
       "$self" "$version"
     else
       echo "release: main moved during the release; its newer commits ship with the next labelled merge"

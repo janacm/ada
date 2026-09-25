@@ -83,11 +83,12 @@ removed.
   the formula already installs. A re-run of a version older than the
   formula's must be refused rather than downgrade the formula.
 - A run that finishes a stranded tag must also release the commit it tested,
-  so the triggering merge is not left unreleased. It must not release commits
-  it did not test.
+  and tag that commit itself, so the triggering merge is not left unreleased.
+  It must not release commits it did not test.
 - A release must be major when any PR merged since the last release carries
   `release:major`, even if the run that survives GitHub's one-pending-run
-  concurrency limit was triggered by a `release:minor` merge.
+  concurrency limit was triggered by a `release:minor` merge. A PR whose labels
+  can't be read must stop the release rather than count as not major.
 - Every PR and every direct push to the default branch must run the bats suite
   on macOS with the native helper built, so no test skips for lack of it.
 
