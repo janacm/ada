@@ -281,4 +281,11 @@ finished_release() {
   assert_output_contains "re-run ./release.sh v9.9.9"
   run git -C "$WORK" status --porcelain
   assert_equal "$output" ""
+  # main is back on origin/main, so the hinted re-run really does finish it
+  assert_equal "$(git -C "$WORK" rev-parse HEAD)" "$(git -C "$ORIGIN" rev-parse main)"
+  run "$RELEASE" v9.9.9
+  assert_success
+  assert_output_contains "finishing v9.9.9"
+  run git -C "$ORIGIN" log -1 --format=%s main
+  assert_equal "$output" "Homebrew: point formula at v9.9.9"
 }

@@ -172,18 +172,25 @@ else
   # The tag is already public, so main moving during the tarball download must
   # not strand it. The bump touches only the formula: replay it on the new main
   # and push again. A conflict means someone else changed the formula; stop.
+  #
+  # Giving up drops the unpushed bump and puts main back on origin/main, so the
+  # suggested re-run passes the HEAD == origin/main check and finishes the tag.
+  # --keep refuses rather than discard anything but that one commit (the tree
+  # was clean when this started).
+  __give_up() {
+    git -C "$dir" fetch -q origin main || true
+    git -C "$dir" reset -q --keep origin/main || true
+    echo "release: $1; re-run ./release.sh $version to finish" >&2
+    exit 1
+  }
   for attempt in 1 2 3; do
     git -C "$dir" push -q origin main && break
-    if (( attempt == 3 )); then
-      echo "release: could not push the formula bump; re-run ./release.sh $version to finish" >&2
-      exit 1
-    fi
+    (( attempt < 3 )) || __give_up "could not push the formula bump"
     echo "release: main moved; replaying the formula bump on origin/main"
     git -C "$dir" fetch -q origin main
     if ! git -C "$dir" rebase -q origin/main; then
       git -C "$dir" rebase --abort 2>/dev/null || true
-      echo "release: the formula bump conflicts with origin/main; re-run ./release.sh $version to finish" >&2
-      exit 1
+      __give_up "the formula bump conflicts with origin/main"
     fi
   done
   echo "Committed and pushed the formula bump to main"
