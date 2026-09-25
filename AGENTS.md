@@ -117,6 +117,9 @@ The workflow's whole job is `release.sh --auto minor|major`, kept in the script
 so bats covers it. After finishing a stranded tag it also releases the commit
 the job tested, but only when nothing but its own formula bump sits on top: a
 concurrent merge's commits are untested and wait for the next labelled merge.
+And only when the tested commit has product changes beyond `Formula/ada.rb`
+since the tag it just finished: after a recovery that died mid-way, the tested
+commit can be nothing but an earlier formula bump, which is not a release.
 It picks each version with `release.sh --next minor|major`, which counts
 from the formula's version, looks only at stable tags reachable from `HEAD`
 (`v1.0-rc1` version-sorts ahead of `v0.9`; a tag on another branch is not a

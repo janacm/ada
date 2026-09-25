@@ -129,7 +129,12 @@ if [[ "${1:-}" == --auto ]]; then
   version=$(__pick)
   "$self" "$version"
   if [[ "$(git -C "$dir" rev-parse "refs/tags/$version^{commit}")" != "$tested" ]]; then
-    if [[ "$(git -C "$dir" rev-parse -q --verify HEAD~1 || true)" == "$tested" ]]; then
+    # Only product changes justify another version. The tested commit can be
+    # nothing but an earlier release's formula bump on top of that tag, when a
+    # previous recovery died after pushing its tag.
+    if git -C "$dir" diff --quiet "refs/tags/$version^{commit}" "$tested" -- . ':(exclude)Formula/ada.rb'; then
+      echo "release: nothing but the formula changed since $version; no further release"
+    elif [[ "$(git -C "$dir" rev-parse -q --verify HEAD~1 || true)" == "$tested" ]]; then
       echo "release: finished the stranded $version; now releasing the tested main"
       version=$(__pick)
       # HEAD is now the stranded release's formula bump, so tag the commit the

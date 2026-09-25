@@ -84,7 +84,8 @@ removed.
   formula's must be refused rather than downgrade the formula.
 - A run that finishes a stranded tag must also release the commit it tested,
   and tag that commit itself, so the triggering merge is not left unreleased.
-  It must not release commits it did not test.
+  It must not release commits it did not test, nor a commit that differs from
+  the finished tag only in `Formula/ada.rb`.
 - A release must be major when any PR merged since the last release carries
   `release:major`, even if the run that survives GitHub's one-pending-run
   concurrency limit was triggered by a `release:minor` merge. A PR whose labels

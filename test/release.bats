@@ -425,7 +425,8 @@ released_v04_then_pr() {
   finished_release v0.4
   git -C "$WORK" commit -q --allow-empty -m "Merge pull request #19 from janacm/earlier"
   git -C "$WORK" tag -a v0.5 -m v0.5          # an earlier run died after this push
-  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #20 from janacm/feature"
+  echo feature > "$WORK/feature.txt"; git -C "$WORK" add feature.txt
+  git -C "$WORK" commit -q -m "Merge pull request #20 from janacm/feature"
   git -C "$WORK" push -q origin main --tags
   stranded=$(git -C "$WORK" rev-parse 'v0.5^{commit}')
   tested=$(git -C "$WORK" rev-parse HEAD)
@@ -445,7 +446,8 @@ released_v04_then_pr() {
 @test "--auto leaves untested commits from a concurrent merge for the next release" {
   finished_release v0.4
   git -C "$WORK" tag -a v0.5 -m v0.5
-  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #20 from janacm/feature"
+  echo feature > "$WORK/feature.txt"; git -C "$WORK" add feature.txt
+  git -C "$WORK" commit -q -m "Merge pull request #20 from janacm/feature"
   git -C "$WORK" push -q origin main --tags
   export STUB_CURL_ADVANCE="$ORIGIN"
   run "$RELEASE" --auto minor
@@ -512,5 +514,26 @@ SH
   run "$RELEASE" --auto minor
   assert_failure
   run git -C "$ORIGIN" tag -l v0.5
+  assert_equal "$output" ""
+}
+
+# A previous recovery tagged v0.6 on the tested commit, then died before its
+# formula bump; main tip is the v0.5 formula bump on top. Finishing v0.6 must
+# not publish a v0.7 for that formula-only commit.
+@test "--auto finishes a stranded recovery tag without a spurious extra release" {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #19 from janacm/earlier"
+  git -C "$WORK" tag -a v0.5 -m v0.5
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #20 from janacm/feature"
+  git -C "$WORK" tag -a v0.6 -m v0.6
+  sed -i '' 's|^  url ".*"|  url "https://github.com/janacm/ada/archive/refs/tags/v0.5.tar.gz"|' "$WORK/Formula/ada.rb"
+  git -C "$WORK" commit -q -am "Homebrew: point formula at v0.5"
+  git -C "$WORK" push -q origin main --tags
+  run "$RELEASE" --auto minor
+  assert_success
+  assert_output_contains "finishing v0.6"
+  assert_output_contains "nothing but the formula changed since v0.6"
+  assert_file_contains "$WORK/Formula/ada.rb" "refs/tags/v0.6.tar.gz"
+  run git -C "$ORIGIN" tag -l v0.7
   assert_equal "$output" ""
 }
