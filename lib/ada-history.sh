@@ -9,9 +9,10 @@
 # Format v1: one line per alert, tab-separated, the version first so a reader
 # can skip lines it doesn't know and ignore columns added after the last one:
 #   1  epoch  outcome  snoozed  key  kind  label  duration  code  repo  focus_app  focus_app_name  click_url
-# outcome is shown, paused or muted; snoozed is 1 for a snooze relaunch. Tabs
-# and line breaks inside a field become spaces, and a field is cut to 200
-# characters (the click URL to 500).
+# outcome is shown, paused, muted or held (dropped by a snooze holding that
+# conversation); snoozed is 1 for a snooze relaunch. Tabs and line breaks
+# inside a field become spaces, and a field is cut to 200 characters (the click
+# URL to 500).
 #
 # The labels are your prompts and commands, so the file is created mode 600 and
 # never written through a symlink or when someone else owns it. It stays on

@@ -104,6 +104,62 @@ __ada_mute_prune() {
   return 0
 }
 
+# --- snooze hold --------------------------------------------------------------
+# A snooze on its own re-shows the one alert you snoozed. An agent keeps going
+# after that alert, though: in Claude Code a background task finishing or a CI
+# event each opens a turn nobody typed, and every one of those turns used to
+# pop a fresh alert a few minutes into a 30-minute snooze.
+#
+# So when the integration asks for it (ADA_SNOOZE_SCOPE=session), the daemon
+# writes a hold marker for the session as the snooze starts, and the launcher
+# drops that session's alerts until the marker's wake time. Then the daemon
+# removes the marker and re-shows the snoozed alert, as before. Typing into the
+# session yourself releases the hold early (__ada_snooze_release): you came
+# back, so the next alert is one you want and the pending reminder is stale.
+# The daemon sees its marker gone and exits without re-showing anything.
+#
+# Marker: $TMPDIR/ada-snoozed/<key>, one line "<wake epoch> <daemon token>".
+# The token lets a daemon tell its own hold from a newer one.
+
+# The launcher and the Claude hook must agree on this path, and a hook started
+# from a stripped environment may have no TMPDIR. Terminals and launchd jobs
+# both get the per-user Darwin temp dir, so fall back to that before /tmp.
+__ada_snooze_tmpdir() {
+  local t=${TMPDIR:-}
+  [[ -n "$t" ]] || t=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null) || t=""
+  printf '%s' "${t:-/tmp}"
+}
+
+__ada_snooze_hold_file() {
+  __ada_mute_key_ok "${1:-}" || return 1
+  printf '%s/ada-snoozed/%s' "$(__ada_snooze_tmpdir)" "$1"
+}
+
+# True (0) while an unexpired hold covers this key. Like a mute marker, only a
+# plain file counts; a symlink is never read or deleted. An expired or garbled
+# marker is removed on the way: its daemon is waking up right now, or died.
+# Removing an expired one also cancels a reminder whose daemon has not got to
+# it yet (it checks the marker every 10s). That is deliberate: this alert is
+# newer news about the same session, and the reminder, arriving seconds later,
+# would close it and show the older one.
+__ada_snooze_held() {
+  local file wake="" rest=""
+  file=$(__ada_snooze_hold_file "${1:-}") || return 1
+  [[ -f "$file" && ! -L "$file" ]] || return 1
+  read -r wake rest < "$file" 2>/dev/null
+  [[ "$wake" =~ ^[0-9]{1,15}$ ]] && (( 10#$wake > $(date +%s) )) && return 0
+  rm -f "$file"
+  return 1
+}
+
+# End a session's hold early, which also cancels its pending reminder.
+__ada_snooze_release() {
+  local file
+  file=$(__ada_snooze_hold_file "${1:-}") || return 0
+  [[ -f "$file" && ! -L "$file" ]] && rm -f "$file"
+  return 0
+}
+
 __ada_mute_cli() {
   local action=${1:-list}
   shift 2>/dev/null

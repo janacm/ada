@@ -279,9 +279,23 @@ removed.
 
 - `ADA_SNOOZE_MINUTES` must define the snooze button options, preserving an
   explicit empty value as "hide snooze buttons".
-- The snooze options must start collapsed behind a single "Snooze" toggle that
+- The snooze options must start collapsed behind a single snooze toggle that
   reveals them on click and hides them on a second click, without dismissing the
   alert.
+- The toggle must say what a snooze covers: "Snooze this <kind>" when the
+  launcher named a session hold (it then sends `snoozescope=session`, and the
+  noun in `mutekindb64` whenever a hold or the mute button needs it), otherwise
+  "Snooze this alert". The page must never infer the scope on its own.
+- A snooze confirmation must give the clock time: "This <kind> is quiet until
+  <time>" for a session-wide snooze, adding "Send it a message to end the snooze
+  early" only for a conversation (the one integration that releases the hold),
+  and "This alert comes back at <time>" with "Other alerts still come through"
+  otherwise. A time on the next day must say "tomorrow", and one further out (a
+  day-long snooze across a daylight-saving change) the weekday. Presets outside
+  1..1440 minutes must not render. A reminder after a session-wide snooze must
+  say "Snooze over · this <kind> can alert again".
+- Snooze and mute confirmations must stay up long enough to read (1.2s) and
+  close at once on a click or `Esc`, without sending a second signal.
 - The revealed options must include a pin toggle. While pinned, every later
   alert (including snoozed relaunches) must open with the options already
   expanded; unpinning restores the collapsed default. The native helper must
@@ -302,6 +316,34 @@ removed.
   `127.0.0.1` wherever reverse DNS is slow.
 - A snooze request must close the current alert and relaunch the same alert after
   the chosen delay.
+- When the integration sets `ADA_SNOOZE_SCOPE=session` and the alert has a valid
+  `ADA_SESSION_KEY`, a snooze must also hold every later alert for that session
+  until the snooze is up, then relaunch only the snoozed alert. Other sessions
+  must keep alerting. The daemon writes the hold to `$TMPDIR/ada-snoozed/<key>`
+  as `<wake epoch> <daemon token>`, and must remove it before its own relaunch
+  so the reminder is not dropped by its own hold.
+- The hold check must live in `ada-show-alert.sh` beside the mute check. A hold
+  past its wake time, or one that can't be parsed, must not silence anything and
+  must be removed. Removing an expired hold cancels a reminder whose daemon has
+  not woken yet; the alert that removed it is the newer news and must not be
+  replaced by the older reminder seconds later.
+- The launcher and the Claude hook must resolve the hold path the same way,
+  falling back to the per-user Darwin temp dir when `TMPDIR` is unset.
+- The Claude/Codex hook must opt in (it defaults `ADA_SNOOZE_SCOPE` to
+  `session`, and a user-set `alert` must win), because the agent opens turns of
+  its own after a snooze, for a background task finishing or a CI event. A
+  prompt the user sends in that conversation, including a slash command or a
+  paste, must release the hold, and a released hold must cancel the pending
+  relaunch. An injected block (task notification, CI event, system reminder)
+  must not release it, and neither may a prompt that matches one the agent
+  scheduled earlier in the session (a `CronCreate` or `ScheduleWakeup` call in
+  the transcript), since `/loop` ticks and cron jobs arrive as plain text, nor
+  the resolved tick of a loop scheduled with an autonomous-loop or loop.md
+  sentinel (a line starting "# Autonomous loop tick" or "# /loop tick"). The zsh
+  hook, opencode and Paseo keep the default `alert` scope.
+- The daemon must wait for a snooze by the wall clock in steps of at most
+  `POLL_SECONDS`, rechecking its hold each step, so a released hold ends it
+  early and the relaunch time matches the hold's wake time.
 - Snooze delays must be positive and no longer than 24 hours.
 - A focus request must use the configured bundle id to bring the originating app
   forward, or, when `ADA_CLICK_URL` is set, `open` that URL instead (which both
@@ -647,6 +689,16 @@ removed.
 
 ## Change Log
 
+- 2026-09-24: The snooze toggle names its scope ("Snooze this conversation" or
+  "Snooze this alert"), and snooze confirmations give a clock time instead of
+  "Back in N minutes". A click or `Esc` closes a confirmation at once.
+- 2026-09-24: Snoozing a Claude Code / Codex alert now covers the conversation.
+  Before, a snooze re-queued only the alert you clicked, so a conversation that
+  kept working (a `/goal` run whose background tasks each opened a new turn)
+  popped a fresh alert three minutes into a 30-minute snooze. The hook sets
+  `ADA_SNOOZE_SCOPE=session`; the daemon writes a hold marker that
+  `ada-show-alert.sh` honors until the snooze is up, and a prompt you send in
+  that conversation releases the hold and cancels the reminder.
 - 2026-09-24: The menu bar item is a real control surface and a login item. Its
   bell shows whether alerts are paused, and its menu pauses and resumes them,
   lists the recent alerts (a dropped Claude turn is one click from its

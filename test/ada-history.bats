@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # Tests for lib/ada-history.sh — the line the launcher writes for every alert it
-# decides on (shown, paused or muted), which the menu bar's Recent Alerts reads.
+# decides on (shown, paused, muted or held), which the menu bar's Recent Alerts
+# reads.
 
 setup() {
   load test_helper
@@ -70,6 +71,18 @@ field() {
   assert_equal "$(field 7)" "while away"
   # Resolving the repo runs git, which waits until an alert is known to show.
   assert_equal "$(field 10)" ""
+  assert_equal "$(field 13)" "claude://resume?session=abc"
+}
+
+@test "an alert a conversation snooze holds back is recorded as held" {
+  mkdir -p "$TMPDIR/ada-snoozed"
+  printf '%s tok\n' "$(( $(/bin/date +%s) + 600 ))" > "$TMPDIR/ada-snoozed/claude-abc"
+  export ADA_SESSION_KEY=claude-abc ADA_CLICK_URL="claude://resume?session=abc"
+  run "$LAUNCHER" "background task done" "1m 0s" 0
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+  assert_equal "$(field 3)" held
+  assert_equal "$(field 5)" claude-abc
   assert_equal "$(field 13)" "claude://resume?session=abc"
 }
 

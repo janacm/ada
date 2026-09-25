@@ -71,6 +71,7 @@ import Testing
             entry("broke", code: "2", ago: 300),
             entry("while away", outcome: "paused", ago: 200),
             entry("quiet", outcome: "muted", ago: 100),
+            entry("held back", outcome: "held", ago: 75),
             entry("again", ago: 50, snoozed: "1"),
             entry("no target", ago: 10, url: "").replacingOccurrences(of: "com.example.term", with: ""),
         ]
@@ -89,6 +90,9 @@ import Testing
             #expect(title.hasSuffix("(while paused)")); #expect(symbol == "pause.circle")
         } else { Issue.record("while away") }
         if case let .action(title, _, _)? = find("quiet") { #expect(title.hasSuffix("(muted)")) } else { Issue.record("quiet") }
+        if case let .action(title, _, symbol)? = find("held back") {
+            #expect(title.hasSuffix("(while snoozed)")); #expect(symbol == "alarm")
+        } else { Issue.record("held back") }
         if case let .action(title, _, _)? = find("again") { #expect(title.hasSuffix("(snoozed)")) } else { Issue.record("again") }
         // Nowhere to go: shown, but not choosable.
         if case .info? = find("no target") {} else { Issue.record("no target should be info") }

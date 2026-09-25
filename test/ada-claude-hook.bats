@@ -569,3 +569,171 @@ PY
   run_hook '{"hook_event_name":"Stop","session_id":"sess-m2","cwd":"/tmp"}'
   wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
 }
+
+# --- session-scoped snooze hold ------------------------------------------------
+# A Claude conversation keeps opening turns of its own after you snooze it (a
+# background task finishing, a CI event), so the hook asks for a snooze that
+# holds the whole conversation, and releases the hold when YOU send a prompt.
+# The launcher's side of the hold is covered in ada-show-alert.bats.
+
+hold_conversation() {
+  mkdir -p "$TMPDIR/ada-snoozed"
+  printf '%s tok\n' "$(( $(/bin/date +%s) + 600 ))" > "$TMPDIR/ada-snoozed/claude-$1"
+}
+
+@test "Stop asks for a snooze that holds the whole conversation" {
+  export ADA_PROBE_SCOPE_OUT="$BATS_TEST_TMPDIR/probe-scope.txt"
+  stamp_session "sess-h0" "$(( $(/bin/date +%s) - 120 ))" "keyed turn"
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-h0","cwd":"/tmp"}'
+  wait_for_file "$ADA_PROBE_SCOPE_OUT" || { echo "alert never fired"; false; }
+  run cat "$ADA_PROBE_SCOPE_OUT"
+  assert_equal "$output" "session"
+}
+
+@test "ADA_SNOOZE_SCOPE=alert keeps a snooze to the one alert" {
+  export ADA_PROBE_SCOPE_OUT="$BATS_TEST_TMPDIR/probe-scope.txt" ADA_SNOOZE_SCOPE=alert
+  stamp_session "sess-h0" "$(( $(/bin/date +%s) - 120 ))" "keyed turn"
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-h0","cwd":"/tmp"}'
+  wait_for_file "$ADA_PROBE_SCOPE_OUT" || { echo "alert never fired"; false; }
+  run cat "$ADA_PROBE_SCOPE_OUT"
+  assert_equal "$output" "alert"
+}
+
+# The reported bug: snooze a conversation for 30 minutes, and its next
+# background-task turn popped a new alert three minutes later.
+@test "a turn the agent opened during a snooze stays quiet" {
+  export ADA_CLAUDE_THRESHOLD=0
+  hold_conversation sess-h1
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h1","prompt":"<task-notification> <task-id>b1</task-id> <status>completed</status> <summary>Background command \"Wait for review\" completed</summary> </task-notification>"}'
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h1" ]
+  # The turn was stamped, so Stop really reaches the launcher: the silence
+  # below is the hold's doing, not a missing stamp.
+  [ -f "$STATE_DIR/sess-h1.start" ]
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-h1","cwd":"/tmp"}'
+  # The detached notify -> launcher -> helper chain can take most of a second.
+  refute_file_appears "$ADA_PROBE_OUT" 60
+}
+
+@test "a CI event the agent injected keeps the hold too" {
+  hold_conversation sess-h1
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h1","prompt":"<ci-monitor-event>checks failed on PR 15</ci-monitor-event>"}'
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h1" ]
+  assert_file_contains "$STATE_DIR/sess-h1.prompt" "checks failed on PR 15"
+}
+
+@test "a prompt you type ends the snooze and the turn alerts again" {
+  export ADA_CLAUDE_THRESHOLD=0
+  hold_conversation sess-h2
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h2","prompt":"get the gitignore commit onto main too"}'
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h2" ]
+  run_hook '{"hook_event_name":"Stop","session_id":"sess-h2","cwd":"/tmp"}'
+  wait_for_file "$ADA_PROBE_OUT" || { echo "the turn you started stayed held"; false; }
+}
+
+@test "a slash command you type ends the snooze" {
+  hold_conversation sess-h3
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h3","prompt":"<command-name>/goal</command-name> <command-message>goal</command-message> <command-args>fix it</command-args>"}'
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h3" ]
+}
+
+@test "pasting copied harness markup counts as a prompt you sent" {
+  hold_conversation sess-h4
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h4","prompt":"<pasted_content id=\"c1\"><task-notification><summary>copied</summary></task-notification></pasted_content id=\"c1\">"}'
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h4" ]
+}
+
+@test "typing in one conversation leaves another's snooze in place" {
+  hold_conversation sess-h5
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h6","prompt":"hello"}'
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h5" ]
+}
+
+# /loop ticks and CronCreate jobs re-submit, as plain text, a prompt the agent
+# scheduled earlier; the payload can't tell them from typing. The tool call that
+# scheduled them is in the transcript, and a match keeps the hold.
+scheduling_transcript() {
+  local t="$BATS_TEST_TMPDIR/scheduled.jsonl"
+  printf '%s\n' \
+    '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"ScheduleWakeup","input":{"delaySeconds":300,"prompt":"/babysit-prs","reason":"watch"}}]}}' \
+    '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"CronCreate","input":{"cron":"*/5 * * * *","prompt":"check the deploy"}}]}}' \
+    > "$t"
+  printf '%s' "$t"
+}
+
+@test "a CronCreate prompt firing during a snooze keeps the hold" {
+  hold_conversation sess-h7
+  t=$(scheduling_transcript)
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h7\",\"transcript_path\":\"$t\",\"prompt\":\"check the deploy\"}"
+  assert_success
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h7" ]
+}
+
+@test "a /loop tick keeps the hold, as plain text or as slash-command markup" {
+  hold_conversation sess-h7
+  t=$(scheduling_transcript)
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h7\",\"transcript_path\":\"$t\",\"prompt\":\"/babysit-prs\"}"
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h7" ]
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h7\",\"transcript_path\":\"$t\",\"prompt\":\"<command-name>/babysit-prs</command-name> <command-message>babysit-prs</command-message>\"}"
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h7" ]
+}
+
+@test "a typed prompt that only resembles a scheduled one still ends the snooze" {
+  hold_conversation sess-h7
+  t=$(scheduling_transcript)
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h7\",\"transcript_path\":\"$t\",\"prompt\":\"check the deploy again\"}"
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h7" ]
+}
+
+@test "a missing or unreadable transcript counts the prompt as typed" {
+  hold_conversation sess-h8
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h8\",\"transcript_path\":\"$BATS_TEST_TMPDIR/nope.jsonl\",\"prompt\":\"check the deploy\"}"
+  assert_success
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h8" ]
+}
+
+# An autonomous /loop schedules a sentinel, and Claude Code fires resolved
+# instructions instead (in 2.1.281 they open with "# Autonomous loop tick" or
+# "# /loop tick", after a one-time preamble on the first tick).
+sentinel_transcript() {
+  local t="$BATS_TEST_TMPDIR/sentinel.jsonl"
+  printf '%s\n' \
+    "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"$1\",\"input\":{\"delaySeconds\":1200,\"cron\":\"*/5 * * * *\",\"prompt\":\"$2\",\"reason\":\"loop\"}}]}}" \
+    > "$t"
+  printf '%s' "$t"
+}
+
+@test "a dynamic autonomous-loop tick keeps the hold" {
+  hold_conversation sess-h9
+  t=$(sentinel_transcript ScheduleWakeup "<<autonomous-loop-dynamic>>")
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h9\",\"transcript_path\":\"$t\",\"prompt\":\"# Autonomous loop tick (dynamic pacing)\\n\\nRun the autonomous check using the loop instructions established earlier in this conversation.\"}"
+  assert_success
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h9" ]
+}
+
+@test "the first autonomous tick, behind its preamble, keeps the hold" {
+  hold_conversation sess-h9
+  t=$(sentinel_transcript CronCreate "<<autonomous-loop>>")
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h9\",\"transcript_path\":\"$t\",\"prompt\":\"You are running an autonomous loop.\\n\\n---\\n\\n# Autonomous loop tick\\n\\nRun the autonomous check.\"}"
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h9" ]
+}
+
+@test "a loop.md tick keeps the hold" {
+  hold_conversation sess-h9
+  t=$(sentinel_transcript CronCreate "<<loop.md>>")
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h9\",\"transcript_path\":\"$t\",\"prompt\":\"# /loop tick \\u2014 loop.md tasks\\n\\nWork the tasks from the loop.md contents.\"}"
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h9" ]
+}
+
+@test "a tick heading typed in a conversation with no sentinel loop ends the snooze" {
+  hold_conversation sess-h9
+  t=$(scheduling_transcript)
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h9\",\"transcript_path\":\"$t\",\"prompt\":\"# Autonomous loop tick\\n\\nwhat does this heading mean?\"}"
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h9" ]
+}
+
+@test "text that only mentions a tick heading mid-line still ends the snooze" {
+  hold_conversation sess-h9
+  t=$(sentinel_transcript ScheduleWakeup "<<autonomous-loop-dynamic>>")
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h9\",\"transcript_path\":\"$t\",\"prompt\":\"why does the loop say # Autonomous loop tick every time?\"}"
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h9" ]
+}
