@@ -110,7 +110,12 @@ an ancestor of `main`, and isn't in the formula yet, and finishes it. The
 workflow picks the version with `release.sh --next minor|major`, which returns
 such an unfinished tag as is rather than counting past it, and ignores
 pre-release tags (`v1.0-rc1` version-sorts ahead of `v0.9`). A local-only stale
-tag is still refused, because that one really would release old code.
+tag is still refused, because that one really would release old code, and so
+is any tag older than the formula's version: "finishing" it would downgrade
+every install. The bump is major when any PR merged since the formula's
+version (`release.sh --prs-since-release`) is labelled `release:major`, not only
+the PR that triggered the run, because GitHub keeps one pending run per
+concurrency group and a queued major run can be replaced by a later minor one.
 
 ## Native helper is the only renderer
 

@@ -20,6 +20,8 @@ on:
 
 permissions:
   contents: write
+  # read the labels of every PR since the last release (see "Pick the next version")
+  pull-requests: read
 
 jobs:
   release:
@@ -32,7 +34,8 @@ jobs:
     # merge (whose job is skipped) never enters the group. GitHub keeps only one
     # PENDING run per group, so if three labelled PRs merge while a release is
     # running, the middle one is cancelled; the last one still releases main,
-    # which includes the middle PR's changes, under the last PR's label.
+    # which includes the middle PR's changes, and goes major if any PR since
+    # the last release was labelled release:major.
     concurrency:
       group: release
       cancel-in-progress: false
@@ -62,12 +65,24 @@ jobs:
       # release.sh --next picks it: stable tags only (a v1.0-rc1 must not be the
       # base), and a tag an earlier run pushed without finishing is returned as
       # is, so a re-run finishes that version instead of skipping past it.
+      #
+      # Major if ANY PR merged since the last release asked for it, not just
+      # this one: GitHub keeps one pending run per concurrency group, so a
+      # queued release:major run can be replaced by a later release:minor one.
       - name: Pick the next version
         id: version
         env:
+          GH_TOKEN: ${{ github.token }}
           BUMP: ${{ contains(github.event.pull_request.labels.*.name, 'release:major') && 'major' || 'minor' }}
         run: |
-          version=$(./release.sh --next "$BUMP")
+          bump=$BUMP
+          for pr in $(./release.sh --prs-since-release); do
+            if gh pr view "$pr" --json labels --jq '.labels[].name' | grep -qx 'release:major'; then
+              echo "#$pr asked for a major release"
+              bump=major
+            fi
+          done
+          version=$(./release.sh --next "$bump")
           echo "Releasing $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 

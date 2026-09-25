@@ -79,7 +79,12 @@ removed.
   finish a published tag the formula doesn't point at yet, and the workflow's
   next-version pick must return that version rather than skip it.
 - The next version must be computed from stable tags only (`vX.Y` or
-  `vX.Y.Z`), never from a pre-release tag.
+  `vX.Y.Z`), never from a pre-release tag, and never from below the version
+  the formula already installs. A re-run of a version older than the
+  formula's must be refused rather than downgrade the formula.
+- A release must be major when any PR merged since the last release carries
+  `release:major`, even if the run that survives GitHub's one-pending-run
+  concurrency limit was triggered by a `release:minor` merge.
 - Every PR and every direct push to the default branch must run the bats suite
   on macOS with the native helper built, so no test skips for lack of it.
 

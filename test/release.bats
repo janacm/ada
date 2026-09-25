@@ -195,7 +195,16 @@ finished_release() {
   git -C "$WORK" commit -q --allow-empty -am "Homebrew: point formula at $1"
 }
 
-@test "--next with no tags starts at v0.1 or v1.0" {
+@test "--next with no tags counts from the formula's version" {
+  run "$RELEASE" --next minor
+  assert_equal "$output" "v0.5"      # the fixture's formula installs v0.4
+  run "$RELEASE" --next major
+  assert_equal "$output" "v1.0"
+}
+
+@test "--next with no version anywhere starts at v0.1 or v1.0" {
+  sed -i '' 's|^  url ".*"|  url "https://example.invalid/ada.tar.gz"|' "$WORK/Formula/ada.rb"
+  git -C "$WORK" commit -q -am "formula names no tag"
   run "$RELEASE" --next minor
   assert_equal "$output" "v0.1"
   run "$RELEASE" --next major
@@ -288,4 +297,50 @@ finished_release() {
   assert_output_contains "finishing v9.9.9"
   run git -C "$ORIGIN" log -1 --format=%s main
   assert_equal "$output" "Homebrew: point formula at v9.9.9"
+}
+
+# --- no downgrades; which PRs a release covers -------------------------------
+
+@test "re-running an older published version refuses to downgrade the formula" {
+  finished_release v0.5
+  git -C "$WORK" commit -q --allow-empty -m "more work"
+  finished_release v0.6
+  git -C "$WORK" push -q origin main --tags
+  run "$RELEASE" v0.5
+  assert_failure
+  assert_output_contains "older than the formula's v0.6; refusing to downgrade"
+  assert_file_contains "$WORK/Formula/ada.rb" "refs/tags/v0.6.tar.gz"
+}
+
+@test "--next never offers to finish a tag older than the formula's version" {
+  finished_release v0.6
+  git -C "$WORK" tag -a v0.5 -m v0.5 HEAD~1
+  run "$RELEASE" --next minor
+  assert_success
+  assert_equal "$output" "v0.7"
+}
+
+@test "--next counts from the formula's version when it is ahead of the tags" {
+  sed -i '' 's|^  url ".*"|  url "https://github.com/janacm/ada/archive/refs/tags/v2.3.tar.gz"|' "$WORK/Formula/ada.rb"
+  git -C "$WORK" commit -q -am "formula at v2.3"
+  git -C "$WORK" tag -a v0.4 -m v0.4
+  run "$RELEASE" --next minor
+  assert_equal "$output" "v2.4"
+}
+
+@test "--prs-since-release lists merge and squash PRs after the formula's version" {
+  git -C "$WORK" commit -q --allow-empty -m "Old work (#5)"
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #12 from janacm/feature"
+  git -C "$WORK" commit -q --allow-empty -m "A squashed change (#13)"
+  git -C "$WORK" commit -q --allow-empty -m "Direct push, no PR"
+  run "$RELEASE" --prs-since-release
+  assert_success
+  assert_equal "$(echo $output)" "12 13"
+}
+
+@test "--prs-since-release with no release tag looks at all of history" {
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #3 from janacm/x"
+  run "$RELEASE" --prs-since-release
+  assert_equal "$output" "3"
 }

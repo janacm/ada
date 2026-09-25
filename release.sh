@@ -12,6 +12,8 @@
 #   ./release.sh v1.0.0 --no-push      # tag locally only, change nothing else
 #   ./release.sh v1.0.0 --no-formula   # tag + push, print fields, don't commit
 #   ./release.sh --next minor|major    # print the version to release next
+#   ./release.sh --prs-since-release   # PR numbers merged since the formula's
+#                                      # version (the workflow reads their labels)
 #
 # Because the two steps are separate pushes, a release can stop halfway: the
 # tag is on GitHub but main never got the formula bump. Re-running with the same
@@ -35,21 +37,62 @@ __formula_points_at() {
   grep -qF "refs/tags/$1.tar.gz\"" "$formula"
 }
 
+# The version the formula installs now (v0.4), or nothing.
+__formula_version() {
+  sed -nE 's|^[[:space:]]*url "[^"]*/refs/tags/(v[^"]*)\.tar\.gz"|\1|p' "$formula" | head -1
+}
+
+# True when version $1 is newer than $2, comparing vX.Y[.Z] numerically.
+__version_gt() {
+  local a b i
+  IFS=. read -r -a a <<<"${1#v}"
+  IFS=. read -r -a b <<<"${2#v}"
+  for i in 0 1 2; do
+    (( 10#${a[i]:-0} > 10#${b[i]:-0} )) && return 0
+    (( 10#${a[i]:-0} < 10#${b[i]:-0} )) && return 1
+  done
+  return 1
+}
+
 if [[ "${1:-}" == --next ]]; then
   bump=${2:-}
   [[ "$bump" == minor || "$bump" == major ]] \
     || { echo "usage: release.sh --next minor|major" >&2; exit 1; }
   [[ -f "$formula" ]] || { echo "release: missing $formula" >&2; exit 1; }
   last=$(__latest_stable_tag)
-  if [[ -n "$last" ]] && ! __formula_points_at "$last"; then
+  current=$(__formula_version)
+  # Only a tag NEWER than what the formula installs can be an unfinished
+  # release; an older one is history, and "finishing" it would downgrade.
+  if [[ -n "$last" ]] && ! __formula_points_at "$last" &&
+     { [[ -z "$current" ]] || __version_gt "$last" "$current"; }; then
     echo "release: $last is tagged but the formula never pointed at it; finishing $last" >&2
     echo "$last"
     exit 0
   fi
-  IFS=. read -r maj min _ <<<"${last#v}"
+  base=$last
+  [[ -n "$current" ]] && { [[ -z "$base" ]] || __version_gt "$current" "$base"; } && base=$current
+  IFS=. read -r maj min _ <<<"${base#v}"
   maj=${maj:-0} min=${min:-0}
   if [[ "$bump" == major ]]; then maj=$((maj + 1)); min=0; else min=$((min + 1)); fi
   echo "v$maj.$min"
+  exit 0
+fi
+
+# Every PR merged since the formula's version, from merge-commit subjects
+# ("Merge pull request #12 from ...") and squash subjects ("Title (#12)").
+# The release workflow reads their labels because GitHub keeps only one pending
+# run per concurrency group: a queued release:major replaced by a newer
+# release:minor run must still make the release major.
+if [[ "${1:-}" == --prs-since-release ]]; then
+  [[ -f "$formula" ]] || { echo "release: missing $formula" >&2; exit 1; }
+  current=$(__formula_version)
+  range=HEAD
+  if [[ -n "$current" ]] && git -C "$dir" rev-parse -q --verify "refs/tags/$current" >/dev/null; then
+    range="$current..HEAD"
+  fi
+  git -C "$dir" log --format=%s "$range" \
+    | sed -nE -e 's/^Merge pull request #([0-9]+) .*/\1/p' -e 's/.*\(#([0-9]+)\)$/\1/p' \
+    | sort -un
   exit 0
 fi
 
@@ -115,6 +158,11 @@ if tagged=$(git -C "$dir" rev-parse -q --verify "refs/tags/$version^{commit}"); 
     if __formula_points_at "$version"; then
       echo "release: $version is already released and the formula points at it"
       exit 0
+    fi
+    current=$(__formula_version)
+    if [[ -n "$current" ]] && ! __version_gt "$version" "$current"; then
+      echo "release: $version is older than the formula's $current; refusing to downgrade" >&2
+      exit 1
     fi
     echo "release: finishing $version: the tag is published but the formula never pointed at it"
   else
