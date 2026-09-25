@@ -726,9 +726,15 @@ renames it over the marker.
   field saying they were scheduled (traced in the Claude Code 2.1.281 binary by
   the review of this change, not captured live). `scheduled()` in the hook reads
   the transcript for a `CronCreate` or `ScheduleWakeup` call whose `prompt`
-  matches, raw or as `/name args`. A loop scheduled with an
-  `<<autonomous-loop...>>` sentinel fires resolved text that matches nothing, so
-  it still releases the hold. Reading a 5.1 MB transcript costs about 5 ms here.
+  matches, raw or as `/name args`. An autonomous loop schedules a sentinel
+  (`<<autonomous-loop>>`, `<<autonomous-loop-dynamic>>`, `<<loop.md>>`,
+  `<<loop.md-dynamic>>`) and fires resolved instructions instead; when the
+  transcript holds such a call, a prompt with a line starting "# Autonomous
+  loop tick" or "# /loop tick" counts as the agent's. Those headings are
+  Claude Code's own template text (read from the 2.1.281 binary, where `L()`
+  swaps a sentinel for them), so a reworded release makes ticks count as typed
+  again: the hold is released early, never an alert lost. Reading a 5.1 MB
+  transcript costs about 5 ms here.
 - **The hook's Python lives in a single-quoted bash string.** One apostrophe
   anywhere in it, a comment included, ends the string early; python3 then
   fails, its stderr goes to `/dev/null`, `fields` is empty, and the hook exits 0

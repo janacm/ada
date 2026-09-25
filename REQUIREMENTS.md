@@ -337,8 +337,10 @@ removed.
   relaunch. An injected block (task notification, CI event, system reminder)
   must not release it, and neither may a prompt that matches one the agent
   scheduled earlier in the session (a `CronCreate` or `ScheduleWakeup` call in
-  the transcript), since `/loop` ticks and cron jobs arrive as plain text. The
-  zsh hook, opencode and Paseo keep the default `alert` scope.
+  the transcript), since `/loop` ticks and cron jobs arrive as plain text, nor
+  the resolved tick of a loop scheduled with an autonomous-loop or loop.md
+  sentinel (a line starting "# Autonomous loop tick" or "# /loop tick"). The zsh
+  hook, opencode and Paseo keep the default `alert` scope.
 - The daemon must wait for a snooze by the wall clock in steps of at most
   `POLL_SECONDS`, rechecking its hold each step, so a released hold ends it
   early and the relaunch time matches the hold's wake time.

@@ -690,3 +690,50 @@ scheduling_transcript() {
   assert_success
   [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h8" ]
 }
+
+# An autonomous /loop schedules a sentinel, and Claude Code fires resolved
+# instructions instead (in 2.1.281 they open with "# Autonomous loop tick" or
+# "# /loop tick", after a one-time preamble on the first tick).
+sentinel_transcript() {
+  local t="$BATS_TEST_TMPDIR/sentinel.jsonl"
+  printf '%s\n' \
+    "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"$1\",\"input\":{\"delaySeconds\":1200,\"cron\":\"*/5 * * * *\",\"prompt\":\"$2\",\"reason\":\"loop\"}}]}}" \
+    > "$t"
+  printf '%s' "$t"
+}
+
+@test "a dynamic autonomous-loop tick keeps the hold" {
+  hold_conversation sess-h9
+  t=$(sentinel_transcript ScheduleWakeup "<<autonomous-loop-dynamic>>")
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h9\",\"transcript_path\":\"$t\",\"prompt\":\"# Autonomous loop tick (dynamic pacing)\\n\\nRun the autonomous check using the loop instructions established earlier in this conversation.\"}"
+  assert_success
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h9" ]
+}
+
+@test "the first autonomous tick, behind its preamble, keeps the hold" {
+  hold_conversation sess-h9
+  t=$(sentinel_transcript CronCreate "<<autonomous-loop>>")
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h9\",\"transcript_path\":\"$t\",\"prompt\":\"You are running an autonomous loop.\\n\\n---\\n\\n# Autonomous loop tick\\n\\nRun the autonomous check.\"}"
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h9" ]
+}
+
+@test "a loop.md tick keeps the hold" {
+  hold_conversation sess-h9
+  t=$(sentinel_transcript CronCreate "<<loop.md>>")
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h9\",\"transcript_path\":\"$t\",\"prompt\":\"# /loop tick \\u2014 loop.md tasks\\n\\nWork the tasks from the loop.md contents.\"}"
+  [ -f "$TMPDIR/ada-snoozed/claude-sess-h9" ]
+}
+
+@test "a tick heading typed in a conversation with no sentinel loop ends the snooze" {
+  hold_conversation sess-h9
+  t=$(scheduling_transcript)
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h9\",\"transcript_path\":\"$t\",\"prompt\":\"# Autonomous loop tick\\n\\nwhat does this heading mean?\"}"
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h9" ]
+}
+
+@test "text that only mentions a tick heading mid-line still ends the snooze" {
+  hold_conversation sess-h9
+  t=$(sentinel_transcript ScheduleWakeup "<<autonomous-loop-dynamic>>")
+  run_hook "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"sess-h9\",\"transcript_path\":\"$t\",\"prompt\":\"why does the loop say # Autonomous loop tick every time?\"}"
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h9" ]
+}
