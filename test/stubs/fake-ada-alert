@@ -11,4 +11,8 @@
 [ -n "${ADA_PROBE_SESSION_OUT:-}" ] && printf '%s %s\n' "${ADA_SESSION_KEY:-}" "${ADA_SESSION_KIND:-}" > "$ADA_PROBE_SESSION_OUT"
 # And whether a snooze of this alert would hold the rest of the session.
 [ -n "${ADA_PROBE_SCOPE_OUT:-}" ] && printf '%s\n' "${ADA_SNOOZE_SCOPE:-}" > "$ADA_PROBE_SCOPE_OUT"
+# The pause state a window inherits: a summary must carry none of the alert or
+# the pause that led to it, and a failed-pause alert must ignore the pause.
+[ -n "${ADA_PROBE_PAUSE_OUT:-}" ] && printf '%s|%s|%s|%s\n' "${ADA_PAUSE_FLUSH:-}" "${ADA_IGNORE_PAUSE:-}" \
+  "${ADA_SESSION_KEY:-}" "${ADA_SNOOZED:-}" > "$ADA_PROBE_PAUSE_OUT"
 exit 0

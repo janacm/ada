@@ -52,7 +52,14 @@ setup_common() {
   unset ADA_SESSION_KEY ADA_SESSION_KIND ADA_MUTE_DIR ADA_MUTE_MAX_AGE ADA_MUTE_FILE \
         ADA_SNOOZE_SCOPE ADA_SNOOZE_HOLD_FILE ADA_SNOOZE_LOG
   # A pause or history file from the developer's shell must not leak in either.
-  unset ADA_PAUSE_FILE ADA_IGNORE_PAUSE ADA_HISTORY_FILE ADA_HISTORY_MAX
+  unset ADA_PAUSE_FILE ADA_IGNORE_PAUSE ADA_HISTORY_FILE ADA_HISTORY_MAX \
+        ADA_PAUSE_FLUSH ADA_PAUSE_BUTTON ADA_PAUSE_CLI ADA_SUMMARY_AUTO_CLOSE \
+        ADA_SUMMARY_TARGETS ADA_MUTED_KEYS
+  # A timed pause starts a detached timer that would outlive the test (and see
+  # the next test's pause file); the tests that want one turn it back on. The
+  # summary window has a pid file of its own, kept private like the alert's.
+  export ADA_PAUSE_TIMER=0
+  export ADA_SUMMARY_PID_FILE="$BATS_TEST_TMPDIR/ada-alert-summary.pid"
 
   export ADA_ALERT_FILE="$REPO_ROOT/alert.html"
 
@@ -106,6 +113,49 @@ refute_file_appears() {
   return 0
 }
 
+# --- a pause's held alerts (lib/ada-pause.sh) ---------------------------------
+
+# Write one record the way a pause keeps an alert it held back: the alert's
+# history line, alone in <pause file>.held/<epoch>.<pid>.<n>.tsv.
+#   held_record <label> <duration> <code> [key] [click_url] [focus_app]
+#               [epoch] [snoozed] [focus_app_name]
+# The repo column is filled in, so a summary never runs git for it.
+held_record() {
+  local dir="${ADA_PAUSE_FILE:-$TMPDIR/ada-paused}.held" epoch=${7:-$(/bin/date +%s)}
+  mkdir -p "$dir" && chmod 700 "$dir"
+  printf '1\t%s\tpaused\t%s\t%s\tconversation\t%s\t%s\t%s\theld-repo\t%s\t%s\t%s\t%s\n' \
+    "$epoch" "${8:-0}" "${4:-}" "$1" "$2" "$3" "${6:-}" "${9:-}" "${5:-}" "$TMPDIR" \
+    > "$dir/$epoch.$$.$RANDOM$RANDOM.tsv"
+}
+
+# Decode base64url the way the page does: the summaryb64 of the last summary
+# URL in a probe file (default $ADA_PROBE_OUT), or with -b any value given
+# (a pauseresumeb64, a cmdb64).
+summary_json() {
+  local b64
+  if [[ "${1:-}" == -b ]]; then
+    b64=$2
+  else
+    b64=$(grep 'mode=summary' "${1:-$ADA_PROBE_OUT}" | tail -n 1 | sed -n 's/.*[?&]summaryb64=\([^&]*\).*/\1/p')
+  fi
+  python3 -c 'import base64,sys; s=sys.argv[1]; s+="="*(-len(s)%4); print(base64.urlsafe_b64decode(s).decode())' "$b64"
+}
+
+# Evaluate a python expression over JSON on stdin, bound to d.
+json_get() {
+  python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(eval(sys.argv[1]))' "$1"
+}
+
+# PATH without any directory that holds an ada-pause. A Homebrew ada puts one
+# in <prefix>/bin, and __ada_pause_resume_cmd prefers it to the script path, so
+# a test that expects the script path must not see the developer's. A stub
+# earlier on PATH cannot hide it from `type -P`; only leaving it out does.
+path_without_ada_pause() {
+  local d out="" IFS=:
+  for d in $PATH; do [[ -x "$d/ada-pause" ]] || out+=${out:+:}$d; done
+  printf '%s' "$out"
+}
+
 # Skip a test when the native helper isn't built (install paths that aren't
 # --dry-run call ensure_native_alert, which would otherwise try to swift-build).
 require_native_helper() {
@@ -113,6 +163,25 @@ require_native_helper() {
     || [ -x "$REPO_ROOT/.build/release/ada-alert" ] \
     || [ -x "$REPO_ROOT/.build/debug/ada-alert" ] \
     || skip "native ada-alert not built (swift build -c release --product ada-alert)"
+}
+
+# Kill every process whose command line matches the extended regex $1, for a
+# teardown. A daemon or pause timer detaches with a double fork (behind the
+# /usr/bin/python3 shim), so one pkill, or one empty pgrep, can land between
+# steps and miss the process that survives. Keep killing until two checks in a
+# row, 100ms apart, find nothing, for at most ~2s.
+reap_processes() {
+  local tries=20 clear=0
+  while (( clear < 2 && tries-- > 0 )); do
+    if /usr/bin/pgrep -f "$1" >/dev/null 2>&1; then
+      clear=0
+      /usr/bin/pkill -f "$1" 2>/dev/null
+    else
+      clear=$(( clear + 1 ))
+    fi
+    sleep 0.1
+  done
+  return 0
 }
 
 # --- tiny assertion helpers (we don't vendor bats-assert) --------------------

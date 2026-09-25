@@ -3,16 +3,22 @@
 # ada-history — the alerts ada raised, oldest first
 # -------------------------------------------------------------
 # ada-show-alert.sh appends one line for every alert it decides on: shown, or
-# dropped by a pause or a mute. The menu bar's Recent Alerts reads it, so an
-# alert dropped while you were paused is still one click from its conversation.
+# held back by a pause, a mute or a conversation snooze. The menu bar's Recent
+# Alerts reads it, so an alert you missed is still one click from its source.
 #
 # Format v1: one line per alert, tab-separated, the version first so a reader
 # can skip lines it doesn't know and ignore columns added after the last one:
-#   1  epoch  outcome  snoozed  key  kind  label  duration  code  repo  focus_app  focus_app_name  click_url
+#   1  epoch  outcome  snoozed  key  kind  label  duration  code  repo  focus_app  focus_app_name  click_url  dir
 # outcome is shown, paused, muted or held (dropped by a snooze holding that
-# conversation); snoozed is 1 for a snooze relaunch. Tabs and line breaks
-# inside a field become spaces, and a field is cut to 200 characters (the click
-# URL to 500).
+# conversation); snoozed is 1 for a snooze relaunch; dir is where the alert
+# came from (ADA_REPO_DIR, else the launcher's cwd). dir came later than the
+# rest, so an older line ends at click_url. Tabs and line breaks inside a field
+# become spaces, and a field is cut to 200 characters (the click URL and dir to
+# 500).
+#
+# The same line is the record a pause keeps for each alert it holds back
+# (lib/ada-pause.sh), which is why building a line and appending it to this
+# file are separate steps.
 #
 # The labels are your prompts and commands, so the file is created mode 600 and
 # never written through a symlink or when someone else owns it. It stays on
@@ -71,15 +77,12 @@ __ada_history_trim() {
   return 0
 }
 
-# __ada_history_record <outcome> <key> <kind> <label> <duration> <code> <repo>
-#                      <focus_app> <focus_app_name> <click_url>
-# Never fails: a history problem must not cost the alert.
-__ada_history_record() {
-  local file max snoozed=0 field
-  max=$(__ada_history_max)
-  (( max > 0 )) || return 0
-  file=$(__ada_history_file)
-  __ada_history_writable "$file" || return 0
+# __ada_history_build <outcome> <key> <kind> <label> <duration> <code> <repo>
+#                     <focus_app> <focus_app_name> <click_url> [dir]
+# Sets __ada_history_line to the line for one alert, stamped now. It works with
+# ADA_HISTORY_MAX=0 too: a pause keeps the same line as its record.
+__ada_history_build() {
+  local snoozed=0 field
   [[ -n "${ADA_SNOOZED:-}" ]] && snoozed=1
   __ada_history_line="1"$'\t'"$(date +%s)"
   __ada_history_add "${1:-}"
@@ -88,6 +91,17 @@ __ada_history_record() {
     __ada_history_add "$field"
   done
   __ada_history_add "${10:-}" 500
+  __ada_history_add "${11:-}" 500
+}
+
+# Append __ada_history_line to the history, within ADA_HISTORY_MAX.
+# Never fails: a history problem must not cost the alert.
+__ada_history_append() {
+  local file max
+  max=$(__ada_history_max)
+  (( max > 0 )) || return 0
+  file=$(__ada_history_file)
+  __ada_history_writable "$file" || return 0
   if [[ ! -e "$file" ]]; then
     mkdir -p "$(dirname "$file")" 2>/dev/null || return 0
     ( umask 077; : >> "$file" ) 2>/dev/null || return 0
@@ -95,6 +109,13 @@ __ada_history_record() {
   # One write of one short line: appends from concurrent launchers don't mix.
   printf '%s\n' "$__ada_history_line" >> "$file" 2>/dev/null || return 0
   __ada_history_trim "$file" "$max"
+}
+
+# __ada_history_record <the arguments of __ada_history_build>
+# Build the line and append it. Never fails.
+__ada_history_record() {
+  __ada_history_build "$@"
+  __ada_history_append
 }
 
 __ada_history_cli() {
@@ -117,7 +138,7 @@ __ada_history_cli() {
       fi
       ;;
     -h|--help|help)
-      sed -n '20,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '27,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       ;;
     *)
       echo "ada-history: unknown command: $action (try list, clear)" >&2

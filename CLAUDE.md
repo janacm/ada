@@ -586,11 +586,13 @@ before anything spawns when the key is muted.
 
 ## Pausing is enforced in the launcher only
 
-`lib/ada-pause.sh` is the global switch (the menu bar's Pause menu, and
-`ada-pause` under Homebrew). The state is one file, `$TMPDIR/ada-paused`
-(`ADA_PAUSE_FILE`), holding the epoch second the pause ends or `0` for until
-resumed. `lib/ada-show-alert.sh` sources it just before the mute block and exits
-while paused, so the snooze relaunch is dropped too.
+`lib/ada-pause.sh` is the global switch (the menu bar's Pause menu, the
+alert's "Pause all alerts", and `ada-pause` under Homebrew). The state is one
+file, `$TMPDIR/ada-paused` (`ADA_PAUSE_FILE`), holding the epoch second the
+pause ends or `0` for until resumed. `lib/ada-show-alert.sh` sources it and,
+after the mute block and the conversation hold, holds every alert back while
+paused, the snooze relaunch included. What it holds is shown as one summary
+when the pause ends; see the next section.
 
 - **The launcher never deletes the pause file**, even an expired one. The CLI
   writes through a temp file and `mv`; a launcher `rm` landing between that
@@ -618,12 +620,153 @@ while paused, so the snooze relaunch is dropped too.
   Python keeps that, so `wait` never returns. The Ctrl-C loop test re-arms
   SIGINT itself for exactly this reason.
 
+## A pause holds alerts back and shows them in one summary
+
+An alert that arrives while paused is kept, not dropped: the launcher writes its
+history line as one file in `<pause file>.held/`, and when the pause ends one
+summary window lists them all. `lib/ada-pause.sh` owns the records, the claim
+and the payload (`__ada_pause_hold`, `__ada_pause_gate`, `__ada_pause_summary`);
+the launcher decides when to call them. The page contract (every URL param,
+and the summary JSON) is in the header of `lib/ada-show-alert.sh`.
+
+- **The pause check comes after the mute check and the conversation hold.**
+  The first version put it before them, which made a muted or snoozed session's
+  alerts land in the summary. Keeping the order also keeps the mute rule in one
+  place: at flush time the launcher builds `ADA_MUTED_KEYS` from
+  `__ada_is_muted`, and the python pass only filters on it.
+- **Record, recheck, take back.** `__ada_pause_gate` writes the record, then
+  asks `__ada_is_paused` again with a fresh clock. Still paused: the record
+  waits. Over: it `rm`s its own record and the alert shows. That `rm` fails only
+  when a flush renamed the directory in between, and then the record is in that
+  summary. A flush claims only after it has seen the pause over itself, and a
+  pause only ends (by time, or by its file going), so the two cannot both miss
+  or both take the alert. Without the recheck, an alert recorded just after a
+  flush ran waited for a summary that never came.
+- **One rename claims everything.** A flush renames `held/` to
+  `<pause file>.claim.<epoch>.<pid>/`; of two flushes (the timer and `resume` in
+  the same second) only one gets the records. A claim older than 10 minutes
+  belongs to a flush that died, and the next one shows it. The epoch is in the
+  name because a directory's mtime is when its last record was written, not
+  when it was claimed. Neither name can be one of `mktemp`'s `$file.XXXXXX`.
+  A stale claim is taken the same way, with its own rename to a fresh
+  `claim.<now>.<pid>.<n>` name, before it is read: merging it by path let two
+  flushes running at once both show its rows. Two flushes can still each open a
+  summary (one takes the stale claim, the other `held/`); they share the
+  summary's window slot, so the second replaces the first. No row is shown
+  twice, but the first window's rows are only in the history after that.
+- **The launcher still never deletes the pause file.** The timer and the flush
+  read it; only `status` and `resume` remove it. The timer uses the file's value
+  as its token: a different value is a newer pause, whose own timer owns the
+  end; no file before the end is a resume, which shows the summary itself; no
+  file after the end is `status` cleaning up, and the timer still flushes.
+- **Three triggers, one rule.** The timer, `resume` and an alert that finds the
+  pause over with records left all run the launcher with `ADA_PAUSE_FLUSH`, and
+  the flush claims only when no pause is in effect. The summary pass checks
+  that again right before its renames (`paused()` in `__ada_pause_summary`):
+  the launcher's own check comes before python starts and the mutes are
+  scanned, and a pause set in that gap would have had its first alerts swept
+  into the previous summary, opened mid-pause. The third one covers a timer
+  that died (a logout), a pause set by a writer that armed none (the menu bar
+  writing the file itself would be one), and the alert racing the end.
+- **Claim after the helper check.** Flush mode claims only once
+  `__ada_find_native_alert` succeeded, so a missing helper exits 1 with the
+  records still waiting.
+- **`ADA_PAUSE_FLUSH` is unset the moment it is read**, and flush mode unsets
+  the session, click, snooze and pause-bypass variables before it starts the
+  helper or a daemon. The timer inherits the environment of whatever set the
+  pause, which is often an alert's daemon, so without this the summary would
+  carry that alert's session key into its mute button or its click target.
+- **The summary has its own window slot** (`ADA_SUMMARY_PID_FILE`). Sharing
+  `ADA_NATIVE_PID_FILE` let the next alert close the summary, which is the whole
+  batch. A summary is not recorded in the history: its rows already are.
+- **The daemon runs `ada-pause.sh`, it does not write the pause file.** The CLI
+  is the one writer and the one that arms the timer; a failed run raises an
+  alert of its own (`ADA_IGNORE_PAUSE=1`, no session), because the page already
+  said "Paused". The timer is `ada-snooze-daemon.py --pause-timer`, dispatched
+  before the alert argv is parsed, and it detaches with `closerange(3, ...)`:
+  the menu bar reads its script's stderr to the end, and bats reads fd 3. It
+  also moves to `/`, because a CLI pause can run for days and would otherwise
+  keep its caller's directory, and the volume it sits on, busy. The paths are
+  made absolute before that, and the flush gets `ADA_PAUSE_FILE` explicitly, so
+  a relative pause file still resolves.
+- **`resume` counts what is held after it removes the pause file.** Counting
+  first left an alert that was held between the count and the `rm` in `held/`
+  with no pause and no flush, while `resume` said nothing had arrived.
+- **`ADA_SUMMARY_AUTO_CLOSE` is checked before anything is claimed.** A value
+  like `10m` used to abort the flush under `set -u` at the deadline arithmetic,
+  after the records were claimed and deleted, so the summary was lost. Both it
+  and `ADA_AUTO_CLOSE` now fall back (to 600 and 90) unless they are a positive
+  number of seconds.
+- **The resume command reaches the page without python3.** It is the same for
+  the whole install, and encoding it with python3 cost every alert that runs a
+  daemon one more interpreter start; `base64 | tr` gives the same bytes.
+- **Rows open by index.** The page only ever sends `open/<i>`; the targets are
+  in `ADA_SUMMARY_TARGETS`, set by the launcher and validated again by the
+  daemon, so a page cannot make the daemon `open` anything the launcher did not
+  name.
+- **A dropped alert still does not run git.** The summary resolves a repo from
+  the record's `dir` column, once per directory, for shown rows only. Under one
+  of ada's LaunchAgents (`XPC_SERVICE_NAME` starting `com.ada.`) or with
+  `ADA_STATUS_SKIP_PROTECTED=1` it skips directories under `$HOME` and
+  `/Volumes`, the status report's rule, because a LaunchAgent looking into
+  `~/Documents` can raise a privacy prompt.
+- **`setup_common` sets `ADA_PAUSE_TIMER=0`**, so a timed pause in a test
+  starts no detached timer that would outlive it. The tests that want a timer
+  turn it back on and kill it in `teardown` with `reap_processes`, by a pattern
+  that contains `BATS_TEST_TMPDIR`. One `pkill` was not enough: the timer
+  detaches with a double fork behind the `/usr/bin/python3` shim, and about one
+  run in three a timer survived its test's teardown. `reap_processes` keeps
+  killing until two checks 100ms apart find nothing.
+- **The page's pause controls use their own classes** (`pause-btn`,
+  `pause-custom`, `pause-custom-input`), never the snooze ones: the Playwright
+  specs locate the snooze row by class, page-wide, and strict mode fails on a
+  second match. `buildDurationRow()` in `alert.html` builds both rows and takes
+  the class names as arguments; `test/alert-snooze.spec.js` has a test that
+  opens both rows and fails if a pause pill ever matches a snooze locator.
+- **Folding is for this alert only.** Opening the pause row folds the snooze
+  row through `foldOthers()`, which never posts to `adaSnoozePin`: a pinned user
+  who pauses once must still see the delays on the next alert. The pause row
+  has no pin and always starts folded, so the page is never taller than a
+  pinned snooze row plus the grey row (the layout tests pin 1280x775).
+- **The summary page trusts nothing in `summaryb64`.** `readSummary()` checks
+  the version, the counts and every row field's type, and any failure shows
+  "The list could not be read" rather than part of a list. A row becomes a
+  button only when its `o` is 1 and a daemon runs, and it sends only its index.
+  `test/alert-summary.spec.js` has one test per rejected shape; add one there
+  when the payload grows a field.
+- **The summary's counts are totals.** `ask` and `fail` in the payload count
+  every held alert, taken before the 30-row cap and the 12,000-character trim,
+  because counting the rows sent undercounted exactly when there was the most
+  to report. The page prefers them, falls back to counting rows when they are
+  absent, and rejects values that are not counts, are smaller than their rows,
+  or add up to more than `n`.
+- **A press that starts in the paused note or the summary list is not a
+  dismiss.** When a drag or a cancelled row click ends outside, the browser
+  sends the click to the common ancestor, so the page's click-anywhere handler
+  closed the alert mid-selection. A capture-phase `mousedown` in `alert.html`
+  remembers where the press began and skips that one dismiss.
+- **Confirmations hold for `CONFIRM_MS` (1200) or `PAUSE_CONFIRM_MS` (2000).**
+  The pause one is longer because it names the resume command. `confirmScreen`
+  builds every line with `textContent`, since the noun and the command come
+  from the URL.
+- **Two traps met while testing this.** macOS kills a copy of `/bin/sleep` at
+  once (exit 137), so a stand-in window must be sleep run through a symlink
+  named `ada-alert`; the old copy let "a new alert closes the previous window"
+  pass without the launcher doing anything. And setting `XPC_SERVICE_NAME` by
+  hand makes the xcrun shims in `/usr/bin` (`python3`, `git`) die of SIGTRAP on
+  this machine, which is why the LaunchAgent guard above is tested through
+  `ADA_STATUS_SKIP_PROTECTED`.
+
 ## The alert history is written by the launcher only
 
 `lib/ada-history.sh` appends one tab-separated line per alert the launcher
-decides on (`shown`, `paused`, `muted`) to `$TMPDIR/ada-history.tsv`; the
-format is in its header, version first. The menu bar reads it for Recent
-Alerts. Three constraints shape where the calls sit in `ada-show-alert.sh`:
+decides on (`shown`, `paused`, `muted`, `held`) to `$TMPDIR/ada-history.tsv`;
+the format is in its header, version first, and its 14th column (`dir`) came
+after the first 13, so readers take 13 as the minimum. The menu bar reads it
+for Recent Alerts, and a pause keeps the same line as its record, which is why
+`__ada_history_build` (works with `ADA_HISTORY_MAX=0`) and
+`__ada_history_append` are separate. Three constraints shape where the calls
+sit in `ada-show-alert.sh`:
 
 - **The session and click-target assignments come before the pause and mute
   checks**, so a dropped alert's line still carries `ADA_CLICK_URL` and the
@@ -636,8 +779,10 @@ Alerts. Three constraints shape where the calls sit in `ada-show-alert.sh`:
   variable instead of printing, because eleven `$(…)` fields per alert were
   eleven forks. Only `date` and the trim's `wc` spawn.
 
-A missing `ada-history.sh` defines a no-op `__ada_history_record`, so an old
-copy of the launcher still alerts; the file is in `ADA_RUNTIME_FILES`.
+A missing `ada-history.sh` defines a no-op `__ada_history_record` and a
+`__ada_history_build` that fails, so an old copy of the launcher still alerts
+(while paused too: with no record to keep, the alert shows); the file is in
+`ADA_RUNTIME_FILES`.
 
 ## The menu bar item: a thin renderer, run as a login item
 

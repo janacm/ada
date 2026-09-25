@@ -12,7 +12,7 @@ setup() {
 # put the test's tmpdir in the label, which lands in the daemon's argv (its
 # handoff file does not: mktemp -t ignores TMPDIR on macOS).
 teardown() {
-  /usr/bin/pkill -f "ada-snooze-daemon.py .*$BATS_TEST_TMPDIR" 2>/dev/null || true
+  reap_processes "ada-snooze-daemon.py .*$BATS_TEST_TMPDIR"
 }
 
 # A test that lets the launcher spawn the loopback daemon ends it here, via the
@@ -91,6 +91,24 @@ dismiss_daemon() {
   assert_success
   wait_for_file "$ADA_PROBE_OUT"
   assert_file_contains "$ADA_PROBE_OUT" "autoclose=42"
+}
+
+# The daemon's deadline is bash arithmetic: "never" there is an unset
+# variable, fatal under set -u, and "10m" an arithmetic error that cost the
+# alert its daemon. Anything but a positive number of seconds is the default.
+@test "an ADA_AUTO_CLOSE that is not a number of seconds falls back to 90" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  export ADA_REPO="" ADA_SNOOZE_MINUTES="5"
+  local value
+  for value in never 10m 0; do
+    rm -f "$ADA_PROBE_OUT"
+    ADA_AUTO_CLOSE=$value run "$LAUNCHER" "autoclose $value $BATS_TEST_TMPDIR" "1s" 0
+    assert_success
+    wait_for_file "$ADA_PROBE_OUT" || { echo "no window for ADA_AUTO_CLOSE=$value"; false; }
+    assert_file_contains "$ADA_PROBE_OUT" "&autoclose=90&"
+    assert_file_contains "$ADA_PROBE_OUT" "&sport="
+    dismiss_daemon
+  done
 }
 
 @test "with snooze and focus disabled, the URL marks them off" {
@@ -217,13 +235,22 @@ dismiss_daemon() {
 }
 
 # Only one alert at a time: a new one closes the previous window, found through
-# the pid file. The process is a copy of sleep named ada-alert, because the
-# launcher refuses to signal anything whose command name is not ada-alert.
-@test "a new alert closes the previous ada-alert window" {
-  cp /bin/sleep "$BATS_TEST_TMPDIR/ada-alert"
+# the pid file. The process is sleep run through a symlink named ada-alert,
+# because the launcher refuses to signal anything whose command name is not
+# ada-alert. Not a copy: macOS kills a copied /bin/sleep at once (exit 137),
+# which let this test pass without the launcher doing anything.
+fake_window() {
+  ln -sf /bin/sleep "$BATS_TEST_TMPDIR/ada-alert"
   "$BATS_TEST_TMPDIR/ada-alert" 30 &
-  local old=$!
-  disown "$old"
+  window_pid=$!
+  disown "$window_pid"
+  local t=20; until kill -0 "$window_pid" 2>/dev/null || (( t-- == 0 )); do sleep 0.05; done
+  kill -0 "$window_pid" 2>/dev/null || { echo "the stand-in window did not start"; return 1; }
+}
+
+@test "a new alert closes the previous ada-alert window" {
+  fake_window
+  local old=$window_pid
   echo "$old" > "$ADA_NATIVE_PID_FILE"
   run "$LAUNCHER" "next" "1s" 0
   assert_success
@@ -342,6 +369,116 @@ dismiss_daemon() {
   rm -f "$ADA_PROBE_OUT"
   run "$LAUNCHER" "x" "1s" 0
   refute_file_appears "$ADA_PROBE_OUT"
+}
+
+# --- global pause (lib/ada-pause.sh) ----------------------------------------
+
+@test "a pause drops the alert before anything launches" {
+  "$REPO_ROOT/lib/ada-pause.sh" 30 >/dev/null
+  run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "a pause until resumed drops the alert" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+# The mute and the conversation hold come first, so what they drop is recorded
+# as theirs and never lands in the pause's summary.
+@test "a pause holds alerts from every session, but a muted one stays muted" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  export ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted"
+  "$REPO_ROOT/lib/ada-mute.sh" add claude-muted >/dev/null
+  ADA_SESSION_KEY=claude-abc run "$LAUNCHER" "x" "1s" 0
+  ADA_SESSION_KEY=claude-muted run "$LAUNCHER" "y" "1s" 0
+  refute_file_appears "$ADA_PROBE_OUT"
+  assert_equal "$(cut -f3,5 "$TMPDIR/ada-history.tsv")" $'paused\tclaude-abc\nmuted\tclaude-muted'
+  assert_equal "$(cat "$TMPDIR/ada-paused.held/"*.tsv | cut -f5)" "claude-abc"
+}
+
+@test "an expired pause lets the alert through and the launcher leaves the file" {
+  printf '1000\n' > "$TMPDIR/ada-paused"
+  run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  # Only the CLI deletes it: a launcher rm could race a new pause's rename.
+  [ -f "$TMPDIR/ada-paused" ]
+}
+
+@test "a file that is not a pause file does not pause anything" {
+  printf 'hello\n' > "$TMPDIR/ada-paused"
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_equal "$(cat "$TMPDIR/ada-paused")" "hello"
+}
+
+@test "ADA_IGNORE_PAUSE=1 shows the alert while paused" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  ADA_IGNORE_PAUSE=1 run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+}
+
+@test "ADA_PAUSE_FILE moves the pause file" {
+  export ADA_PAUSE_FILE="$BATS_TEST_TMPDIR/elsewhere/paused"
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  [ ! -e "$TMPDIR/ada-paused" ]
+  run "$LAUNCHER" "x" "1s" 0
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "a snoozed alert that wakes during a pause is held, marked as a reminder" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  ADA_SNOOZED=1 run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+  assert_equal "$(cat "$TMPDIR/ada-paused.held/"*.tsv | cut -f3,4)" $'paused\t1'
+}
+
+@test "a launcher copied without ada-pause.sh still alerts while a pause is set" {
+  local root="$BATS_TEST_TMPDIR/old"
+  mkdir -p "$root/lib"
+  cp "$REPO_ROOT/lib/ada-show-alert.sh" "$root/lib/"
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  run "$root/lib/ada-show-alert.sh" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+}
+
+# The opencode plugin can hand the launcher a stripped environment. Without
+# TMPDIR it must still find the pause and the mutes the menu bar and the alert
+# wrote, which live in the per-user Darwin temp dir, not /tmp.
+@test "with TMPDIR unset the launcher uses the per-user temp dir for pause and mute" {
+  local darwin="$BATS_TEST_TMPDIR/darwin-tmp"
+  mkdir -p "$darwin"
+  export STUB_GETCONF_TMPDIR="$darwin"
+  TMPDIR="$darwin" "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  run env -u TMPDIR "$LAUNCHER" "x" "1s" 0
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+
+  # Resuming shows the alert the pause held, which proves it was held there.
+  TMPDIR="$darwin" "$REPO_ROOT/lib/ada-pause.sh" resume >/dev/null
+  wait_for_file "$ADA_PROBE_OUT" || { echo "no summary of the held alert"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "mode=summary"
+  rm -f "$ADA_PROBE_OUT"
+  TMPDIR="$darwin" "$REPO_ROOT/lib/ada-mute.sh" add claude-abc >/dev/null
+  ADA_SESSION_KEY=claude-abc run env -u TMPDIR "$LAUNCHER" "x" "1s" 0
+  refute_file_appears "$ADA_PROBE_OUT"
+
+  ADA_SESSION_KEY=claude-def run env -u TMPDIR "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+}
+
+@test "with TMPDIR unset and no Darwin temp dir the launcher still alerts" {
+  export STUB_GETCONF_TMPDIR=fail ADA_PAUSE_FILE="$BATS_TEST_TMPDIR/p" ADA_MUTE_DIR="$BATS_TEST_TMPDIR/m"
+  run env -u TMPDIR "$LAUNCHER" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
 }
 
 # --- session-scoped snooze hold (lib/ada-mute.sh) ------------------------------
@@ -512,101 +649,413 @@ wait_for_trace() {
   dismiss_daemon
 }
 
-# --- global pause (lib/ada-pause.sh) ----------------------------------------
+# --- what a pause holds, and the summary when it ends ------------------------------
 
-@test "a pause drops the alert before anything launches" {
-  "$REPO_ROOT/lib/ada-pause.sh" 30 >/dev/null
-  run "$LAUNCHER" "x" "1s" 0
-  assert_success
-  refute_file_appears "$ADA_PROBE_OUT"
-}
+HELD_DIR() { printf '%s' "${ADA_PAUSE_FILE:-$TMPDIR/ada-paused}.held"; }
+held_count() { local d; d=$(HELD_DIR); ls "$d" 2>/dev/null | grep -c '\.tsv$'; }
 
-@test "a pause until resumed drops the alert" {
+@test "a held alert keeps one record, its history line, and one paused history line" {
   "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
-  run "$LAUNCHER" "x" "1s" 0
+  export ADA_SESSION_KEY=claude-abc ADA_CLICK_URL="claude://resume?session=abc" ADA_REPO_DIR="$BATS_TEST_TMPDIR/proj"
+  run "$LAUNCHER" "while away" "2m 0s" 0
   assert_success
   refute_file_appears "$ADA_PROBE_OUT"
+  assert_equal "$(held_count)" 1
+  local rec; rec=$(cat "$(HELD_DIR)"/*.tsv)
+  assert_equal "$(awk -F'\t' '{print NF}' <<<"$rec")" 14
+  assert_equal "$(cut -f3,5,7,13,14 <<<"$rec")" "paused	claude-abc	while away	claude://resume?session=abc	$BATS_TEST_TMPDIR/proj"
+  # The same line, once in the history.
+  assert_equal "$(cat "$TMPDIR/ada-history.tsv")" "$rec"
 }
 
-@test "a pause drops alerts from every session, muted or not" {
+@test "an alert with no session is held too" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  run "$LAUNCHER" "keyless" "1s" 0
+  refute_file_appears "$ADA_PROBE_OUT"
+  assert_equal "$(held_count)" 1
+  assert_equal "$(cut -f5,7 "$(HELD_DIR)"/*.tsv)" $'\tkeyless'
+}
+
+@test "an alert a conversation snooze holds is recorded as held, not kept for the summary" {
   "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
   export ADA_SESSION_KEY=claude-abc
-  run "$LAUNCHER" "x" "1s" 0
+  hold_session claude-abc 600
+  run "$LAUNCHER" "agent turn" "1s" 0
   refute_file_appears "$ADA_PROBE_OUT"
+  assert_equal "$(cut -f3 "$TMPDIR/ada-history.tsv")" held
+  assert_equal "$(held_count)" 0
 }
 
-@test "an expired pause lets the alert through and the launcher leaves the file" {
-  printf '1000\n' > "$TMPDIR/ada-paused"
-  run "$LAUNCHER" "x" "1s" 0
+@test "a test alert during a pause shows, says the pause is on, and is not kept" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  held_record "one" 1s 0
+  held_record "two" 1s 0
+  export ADA_IGNORE_PAUSE=1 ADA_FOCUS_APP=com.example.term ADA_AUTO_CLOSE=1
+  # Without the developer's own ada-pause, the command is this script's path.
+  PATH=$(path_without_ada_pause) run "$LAUNCHER" "test alert" "1s" 0
   assert_success
   wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
-  # Only the CLI deletes it: a launcher rm could race a new pause's rename.
+  assert_file_contains "$ADA_PROBE_OUT" "&pauseduntil=0&pauseheld=2&pauseresumeb64="
+  refute_file_contains "$ADA_PROBE_OUT" "pause=1"
+  refute_file_contains "$ADA_PROBE_OUT" "mode=summary"
+  assert_equal "$(held_count)" 2
+  local b64 q; b64=$(sed -n 's/.*[?&]pauseresumeb64=\([^&]*\).*/\1/p' "$ADA_PROBE_OUT")
+  # Quoted for a shell, as the launcher quotes it.
+  printf -v q '%q' "$REPO_ROOT/lib/ada-pause.sh"
+  assert_equal "$(summary_json -b "$b64")" "$q resume"
+  dismiss_daemon
+}
+
+@test "a test alert during a timed pause names its end" {
+  "$REPO_ROOT/lib/ada-pause.sh" until 99999999999 >/dev/null
+  ADA_IGNORE_PAUSE=1 run "$LAUNCHER" "test alert" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&pauseduntil=99999999999&pauseheld=0&pauseresumeb64="
+}
+
+# The resume command is on every alert that has a daemon and is the same for
+# the whole install, so it is encoded without starting python3. A python3 that
+# fails shows it: the command still reaches the page.
+@test "the resume command reaches the page without python3" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  local bin="$BATS_TEST_TMPDIR/nopy"; mkdir -p "$bin"
+  printf '#!/bin/bash\nexit 127\n' > "$bin/python3"; chmod +x "$bin/python3"
+  ADA_IGNORE_PAUSE=1 ADA_REPO="" PATH="$bin:$(path_without_ada_pause)" run "$LAUNCHER" "test alert" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  local b64 q; b64=$(sed -n 's/.*[?&]pauseresumeb64=\([^&]*\).*/\1/p' "$ADA_PROBE_OUT")
+  printf -v q '%q' "$REPO_ROOT/lib/ada-pause.sh"
+  assert_equal "$(summary_json -b "$b64")" "$q resume"
+}
+
+@test "something at the held path that is not a directory of ours lets the alert show" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  printf 'x\n' > "$(HELD_DIR)"
+  run "$LAUNCHER" "fail open" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "the alert was lost"; false; }
+  assert_equal "$(cut -f3 "$TMPDIR/ada-history.tsv")" shown
+  assert_equal "$(cat "$(HELD_DIR)")" x
+}
+
+@test "a symlinked held directory is neither written through nor claimed" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  mkdir -m 700 "$BATS_TEST_TMPDIR/elsewhere"
+  ln -s "$BATS_TEST_TMPDIR/elsewhere" "$(HELD_DIR)"
+  run "$LAUNCHER" "fail open" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "the alert was lost"; false; }
+  [ -z "$(ls -A "$BATS_TEST_TMPDIR/elsewhere")" ]
+  "$REPO_ROOT/lib/ada-pause.sh" resume >/dev/null
+  [ -L "$(HELD_DIR)" ]
+}
+
+@test "past 500 records the next held alert only counts, and the summary counts it" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  mkdir -m 700 "$(HELD_DIR)"
+  local i
+  for i in $(seq 1 500); do
+    printf '1\t%s\tpaused\t0\t\tk\tturn %s\t1s\t0\tr\t\t\t\t/\n' "$(( 1790000000 + i ))" "$i" > "$(HELD_DIR)/$i.1.1.tsv"
+  done
+  run "$LAUNCHER" "number 501" "1s" 0
+  refute_file_appears "$ADA_PROBE_OUT"
+  assert_equal "$(held_count)" 500
+  assert_equal "$(cat "$(HELD_DIR)/overflow")" x
+  "$REPO_ROOT/lib/ada-pause.sh" resume >/dev/null
+  wait_for_file "$ADA_PROBE_OUT" || { echo "no summary"; false; }
+  assert_equal "$(summary_json | json_get 'd["n"], len(d["items"])')" "(501, 30)"
+}
+
+# The pause's timer died, or none was started: the next alert finds records
+# with no pause on, and shows them next to itself.
+@test "an alert after the pause ended shows itself and a summary of what was held" {
+  export ADA_NATIVE_ALERT="$STUBS/counting-ada-alert"
+  held_record "left over" 1s 0
+  run "$LAUNCHER" "now" "1s" 0
+  assert_success
+  wait_for_lines "$ADA_PROBE_OUT" 2 || { echo "expected two windows:"; cat "$ADA_PROBE_OUT"; false; }
+  [ "$(grep -c 'mode=summary' "$ADA_PROBE_OUT")" -eq 1 ]
+  [ "$(grep -c 'cmd=now' "$ADA_PROBE_OUT")" -eq 1 ]
+  assert_equal "$(summary_json | json_get 'd["why"], [i["l"] for i in d["items"]]')" "('ended', ['left over'])"
+}
+
+@test "the same holds for an expired pause file, which the launcher leaves" {
+  export ADA_NATIVE_ALERT="$STUBS/counting-ada-alert"
+  printf '1790000000\n' > "$TMPDIR/ada-paused"
+  held_record "left over" 1s 0
+  run "$LAUNCHER" "now" "1s" 0
+  wait_for_lines "$ADA_PROBE_OUT" 2 || { echo "expected two windows:"; cat "$ADA_PROBE_OUT"; false; }
+  # The summary reports the planned end, read from the file.
+  assert_equal "$(summary_json | json_get 'd["end"]')" 1790000000
   [ -f "$TMPDIR/ada-paused" ]
 }
 
-@test "a file that is not a pause file does not pause anything" {
-  printf 'hello\n' > "$TMPDIR/ada-paused"
-  run "$LAUNCHER" "x" "1s" 0
-  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
-  assert_equal "$(cat "$TMPDIR/ada-paused")" "hello"
-}
+# --- flush mode (ADA_PAUSE_FLUSH) ---------------------------------------------
 
-@test "ADA_IGNORE_PAUSE=1 shows the alert while paused" {
+@test "a flush while a pause is on shows nothing and keeps the records" {
   "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
-  ADA_IGNORE_PAUSE=1 run "$LAUNCHER" "x" "1s" 0
+  held_record "waits" 1s 0
+  ADA_PAUSE_FLUSH=ended run "$LAUNCHER" '' '' 0
   assert_success
-  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
-}
-
-@test "ADA_PAUSE_FILE moves the pause file" {
-  export ADA_PAUSE_FILE="$BATS_TEST_TMPDIR/elsewhere/paused"
-  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
-  [ ! -e "$TMPDIR/ada-paused" ]
-  run "$LAUNCHER" "x" "1s" 0
   refute_file_appears "$ADA_PROBE_OUT"
+  assert_equal "$(held_count)" 1
 }
 
-@test "a snoozed alert that wakes during a pause is dropped" {
-  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
-  ADA_SNOOZED=1 run "$LAUNCHER" "x" "1s" 0
+@test "a flush with nothing held opens no window" {
+  ADA_PAUSE_FLUSH=ended run "$LAUNCHER" '' '' 0
   assert_success
   refute_file_appears "$ADA_PROBE_OUT"
 }
 
-@test "a launcher copied without ada-pause.sh still alerts while a pause is set" {
+@test "a flush without the native helper fails before claiming anything" {
+  held_record "waits" 1s 0
+  ADA_NATIVE_ALERT="$BATS_TEST_TMPDIR/nope" ADA_PAUSE_FLUSH=resumed run "$LAUNCHER" '' '' 0
+  assert_failure
+  assert_output_contains "native helper"
+  assert_equal "$(held_count)" 1
+}
+
+@test "an unknown ADA_PAUSE_FLUSH value is an ordinary alert" {
+  held_record "waits" 1s 0
+  ADA_PAUSE_FLUSH=yes run "$LAUNCHER" "plain" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "cmd=plain"
+}
+
+@test "a session muted after its alert was held is left out of the summary" {
+  export ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted"
+  held_record "muted later" 1s 0 claude-abc
+  held_record "still wanted" 1s 0 claude-def
+  "$REPO_ROOT/lib/ada-mute.sh" add claude-abc >/dev/null
+  ADA_PAUSE_FLUSH=ended run "$LAUNCHER" '' '' 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "no summary"; false; }
+  assert_equal "$(summary_json | json_get '[i["l"] for i in d["items"]], d["n"]')" "(['still wanted'], 1)"
+}
+
+# The pause timer inherits the environment of the alert whose Pause was
+# pressed, ADA_SESSION_KEY included: that session being muted or snooze-held
+# must not cost the summary of everyone else's alerts.
+@test "a flush whose environment names a muted or held session still shows the summary" {
+  export ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted"
+  held_record "from another conversation" 1s 0 claude-def
+  "$REPO_ROOT/lib/ada-mute.sh" add claude-abc >/dev/null
+  ADA_SESSION_KEY=claude-abc ADA_PAUSE_FLUSH=ended run "$LAUNCHER" '' '' 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "no summary with a muted key"; false; }
+  assert_equal "$(summary_json | json_get '[i["l"] for i in d["items"]]')" "['from another conversation']"
+  rm -f "$ADA_PROBE_OUT"
+  held_record "from a third one" 1s 0 claude-ghi
+  hold_session claude-xyz 600
+  ADA_SESSION_KEY=claude-xyz ADA_PAUSE_FLUSH=ended run "$LAUNCHER" '' '' 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "no summary with a held key"; false; }
+  assert_equal "$(summary_json | json_get '[i["l"] for i in d["items"]]')" "['from a third one']"
+  # Neither run was an alert of that session, so neither left a history line.
+  [ ! -e "$TMPDIR/ada-history.tsv" ]
+}
+
+@test "the summary URL carries the payload and nothing of the alert that led to it" {
+  export ADA_PROBE_PAUSE_OUT="$BATS_TEST_TMPDIR/probe-pause.txt"
+  held_record "🔐 Needs permission: bash" "" 0 "" "" "" 1790000003
+  held_record "make test" 5s 2 "" "" "" 1790000002
+  held_record $'line one' 1s 0 "" "" "" 1790000001
+  # What a timer or an alert that triggered the flush may have in its environment.
+  ADA_SESSION_KEY=claude-abc ADA_SNOOZED=1 ADA_CLICK_URL=claude://x ADA_REPO=repo ADA_SNOOZE_MINUTES="5 10" \
+    ADA_PAUSE_FLUSH=ended run "$LAUNCHER" "ignored label" "9s" 3
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "no summary"; false; }
+  local url; url=$(cat "$ADA_PROBE_OUT")
+  [[ "$url" == "file://$REPO_ROOT/alert.html?mode=summary&summaryb64="*"&autoclose=600&snooze=0&focus=0" ]] || { echo "url: $url"; false; }
+  refute_file_contains "$ADA_PROBE_OUT" "cmdb64"
+  refute_file_contains "$ADA_PROBE_OUT" "repob64"
+  refute_file_contains "$ADA_PROBE_OUT" "sport="
+  refute_file_contains "$ADA_PROBE_OUT" "snoozed=1"
+  refute_file_contains "$ADA_PROBE_OUT" "pause=1"
+  assert_equal "$(summary_json | json_get '[i["s"] for i in d["items"]]')" "['ask', 'fail', 'ok']"
+  assert_equal "$(cat "$ADA_PROBE_PAUSE_OUT")" "|||"
+  [ -s "$ADA_SUMMARY_PID_FILE" ]
+  [ ! -e "$ADA_NATIVE_PID_FILE" ]
+  # A summary is not an alert: it adds nothing to the history.
+  [ ! -e "$TMPDIR/ada-history.tsv" ]
+}
+
+@test "ADA_SUMMARY_AUTO_CLOSE sets how long the summary stays up" {
+  held_record "one" 1s 0
+  ADA_SUMMARY_AUTO_CLOSE=42 ADA_AUTO_CLOSE=5 ADA_PAUSE_FLUSH=ended run "$LAUNCHER" '' '' 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "no summary"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&autoclose=42&"
+}
+
+# The same check runs before the held alerts are claimed: a bad value used to
+# end the flush after the claim, which deleted them and opened no window. It
+# takes a row that opens something, the case that starts a daemon.
+@test "an ADA_SUMMARY_AUTO_CLOSE that is not a number of seconds falls back to 600, and nothing is lost" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  command -v curl >/dev/null 2>&1 || skip "curl required"
+  held_record "claude turn" 1s 0 claude-abc "claude://resume?session=abc"
+  ADA_SUMMARY_AUTO_CLOSE=never ADA_PAUSE_FLUSH=resumed run "$LAUNCHER" '' '' 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "no summary"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&autoclose=600&sport="
+  assert_equal "$(summary_json | json_get '[i["l"] for i in d["items"]]')" "['claude turn']"
+  dismiss_daemon
+}
+
+# A summary has its own window slot: a normal alert opens on top of it, and a
+# newer summary replaces it.
+@test "a normal alert leaves the summary open, and a newer summary replaces it" {
+  fake_window
+  local old=$window_pid
+  echo "$old" > "$ADA_SUMMARY_PID_FILE"
+  run "$LAUNCHER" "next" "1s" 0
+  assert_success
+  sleep 0.3
+  kill -0 "$old" 2>/dev/null || { echo "a normal alert closed the summary"; false; }
+  [ -s "$ADA_NATIVE_PID_FILE" ]
+  held_record "one" 1s 0
+  ADA_PAUSE_FLUSH=ended run "$LAUNCHER" '' '' 0
+  local tries=40
+  while kill -0 "$old" 2>/dev/null && (( tries-- > 0 )); do sleep 0.05; done
+  if kill -0 "$old" 2>/dev/null; then kill "$old"; echo "the older summary is still open"; false; fi
+}
+
+@test "a summary whose rows can open things starts a daemon for them" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  command -v curl >/dev/null 2>&1 || skip "curl required"
+  local openlog="$BATS_TEST_TMPDIR/open.log" stubbin="$BATS_TEST_TMPDIR/openbin"
+  mkdir -p "$stubbin"
+  printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$openlog" > "$stubbin/open"
+  chmod +x "$stubbin/open"
+  export PATH="$stubbin:$PATH" ADA_SNOOZE_LOG="$BATS_TEST_TMPDIR/snooze.log" ADA_SUMMARY_AUTO_CLOSE=5
+  held_record "claude turn" 1s 0 claude-abc "claude://resume?session=abc" "" 1790000001
+  held_record "terminal" 1s 0 "" "" com.mitchellh.ghostty 1790000002
+  held_record "static" 1s 0 "" "" "" 1790000003
+  ADA_PAUSE_FLUSH=ended run "$LAUNCHER" '' '' 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "no summary"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&sport="
+  assert_file_contains "$ADA_PROBE_OUT" "&snooze=0&focus=0"
+  assert_equal "$(summary_json | json_get '[i["o"] for i in d["items"]]')" "[1, 1, 0]"
+  dismiss_daemon open/1
+  wait_for_trace "focus com.mitchellh.ghostty"
+  local t=40; until grep -q ghostty "$openlog" 2>/dev/null || (( t-- == 0 )); do sleep 0.05; done
+  assert_equal "$(cat "$openlog")" "-b com.mitchellh.ghostty"
+}
+
+# --- the pause control's params -------------------------------------------------
+
+@test "an alert with a daemon offers the pause, with the snooze delays" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  export ADA_SNOOZE_MINUTES="5 30" ADA_AUTO_CLOSE=1
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&pause=1&pausemins=5,30&pauseresumeb64="
+  refute_file_contains "$ADA_PROBE_OUT" "pauseduntil"
+  dismiss_daemon
+}
+
+@test "with snooze off the pause offers the default delays, if a daemon runs" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  export ADA_MUTE_BUTTON=1 ADA_MUTE_DIR="$BATS_TEST_TMPDIR/muted" ADA_SESSION_KEY=zsh-1-2 ADA_AUTO_CLOSE=1
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&snooze=0"
+  assert_file_contains "$ADA_PROBE_OUT" "&pause=1&pausemins=5,10,30,60"
+  dismiss_daemon
+}
+
+@test "the pause alone never starts a daemon" {
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  refute_file_contains "$ADA_PROBE_OUT" "&pause"
+  refute_file_contains "$ADA_PROBE_OUT" "sport="
+}
+
+@test "ADA_PAUSE_BUTTON=0 hides the pause" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  export ADA_SNOOZE_MINUTES="5" ADA_PAUSE_BUTTON=0 ADA_AUTO_CLOSE=1
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&snooze=1"
+  refute_file_contains "$ADA_PROBE_OUT" "&pause"
+  dismiss_daemon
+}
+
+@test "a launcher copied without ada-pause.sh offers no pause" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
   local root="$BATS_TEST_TMPDIR/old"
   mkdir -p "$root/lib"
-  cp "$REPO_ROOT/lib/ada-show-alert.sh" "$root/lib/"
-  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  cp "$REPO_ROOT/lib/ada-show-alert.sh" "$REPO_ROOT/lib/ada-snooze-daemon.py" "$root/lib/"
+  export ADA_SNOOZE_MINUTES="5" ADA_AUTO_CLOSE=1
   run "$root/lib/ada-show-alert.sh" "x" "1s" 0
-  assert_success
   wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "&snooze=1"
+  refute_file_contains "$ADA_PROBE_OUT" "&pause"
+  dismiss_daemon
 }
 
-# The opencode plugin can hand the launcher a stripped environment. Without
-# TMPDIR it must still find the pause and the mutes the menu bar and the alert
-# wrote, which live in the per-user Darwin temp dir, not /tmp.
-@test "with TMPDIR unset the launcher uses the per-user temp dir for pause and mute" {
-  local darwin="$BATS_TEST_TMPDIR/darwin-tmp"
-  mkdir -p "$darwin"
-  export STUB_GETCONF_TMPDIR="$darwin"
-  TMPDIR="$darwin" "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
-  run env -u TMPDIR "$LAUNCHER" "x" "1s" 0
-  assert_success
-  refute_file_appears "$ADA_PROBE_OUT"
-
-  TMPDIR="$darwin" "$REPO_ROOT/lib/ada-pause.sh" resume >/dev/null
-  TMPDIR="$darwin" "$REPO_ROOT/lib/ada-mute.sh" add claude-abc >/dev/null
-  ADA_SESSION_KEY=claude-abc run env -u TMPDIR "$LAUNCHER" "x" "1s" 0
-  refute_file_appears "$ADA_PROBE_OUT"
-
-  ADA_SESSION_KEY=claude-def run env -u TMPDIR "$LAUNCHER" "x" "1s" 0
+@test "the resume command on the page is the one that runs on this install" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  local root="$HOME/ada"
+  mkdir -p "$root/lib"
+  cp "$REPO_ROOT"/lib/*.sh "$REPO_ROOT/lib/ada-snooze-daemon.py" "$root/lib/"
+  export ADA_SNOOZE_MINUTES="5" ADA_AUTO_CLOSE=1
+  PATH=$(path_without_ada_pause) run "$root/lib/ada-show-alert.sh" "x" "1s" 0
   wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  local b64; b64=$(sed -n 's/.*[?&]pauseresumeb64=\([^&]*\).*/\1/p' "$ADA_PROBE_OUT")
+  assert_equal "$(summary_json -b "$b64")" "~/ada/lib/ada-pause.sh resume"
+  dismiss_daemon
+
+  local bin="$BATS_TEST_TMPDIR/brew"; mkdir -p "$bin"
+  printf '#!/bin/bash\n' > "$bin/ada-pause"; chmod +x "$bin/ada-pause"
+  rm -f "$ADA_PROBE_OUT"
+  PATH="$bin:$PATH" run "$root/lib/ada-show-alert.sh" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  b64=$(sed -n 's/.*[?&]pauseresumeb64=\([^&]*\).*/\1/p' "$ADA_PROBE_OUT")
+  assert_equal "$(summary_json -b "$b64")" "ada-pause resume"
+  dismiss_daemon
 }
 
-@test "with TMPDIR unset and no Darwin temp dir the launcher still alerts" {
-  export STUB_GETCONF_TMPDIR=fail ADA_PAUSE_FILE="$BATS_TEST_TMPDIR/p" ADA_MUTE_DIR="$BATS_TEST_TMPDIR/m"
-  run env -u TMPDIR "$LAUNCHER" "x" "1s" 0
-  assert_success
+# The whole page path minus the window: the page's pause signal reaches the
+# daemon, which runs ada-pause.sh; alerts are then held, and resume shows them.
+@test "the pause signal pauses every alert, and resume shows what came in" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  command -v curl >/dev/null 2>&1 || skip "curl required"
+  export ADA_SNOOZE_MINUTES="30" ADA_AUTO_CLOSE=5 ADA_SNOOZE_LOG="$BATS_TEST_TMPDIR/snooze.log"
+  run "$LAUNCHER" "first" "1s" 0
   wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  local before; before=$(/bin/date +%s)
+  dismiss_daemon pause/30
+  wait_for_trace "pause 30m"
+  local t=60; until [ -s "$TMPDIR/ada-paused" ] || (( t-- == 0 )); do sleep 0.05; done
+  local until; until=$(cat "$TMPDIR/ada-paused")
+  (( until >= before + 1800 - 1 && until <= before + 1800 + 5 )) || { echo "until $until is not ~30m after $before"; false; }
+
+  rm -f "$ADA_PROBE_OUT"
+  ADA_SNOOZE_MINUTES="" ADA_SESSION_KEY=claude-abc run "$LAUNCHER" "keyed" "1s" 0
+  ADA_SNOOZE_MINUTES="" run "$LAUNCHER" "keyless" "1s" 0
+  refute_file_appears "$ADA_PROBE_OUT"
+  run "$REPO_ROOT/lib/ada-pause.sh" resume
+  assert_output_contains "showing the 2 alerts"
+  wait_for_file "$ADA_PROBE_OUT" || { echo "no summary"; false; }
+  assert_equal "$(summary_json | json_get 'sorted(i["l"] for i in d["items"])')" "['keyed', 'keyless']"
+}
+
+@test "a pause that could not be written raises an alert that ignores the pause" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  command -v curl >/dev/null 2>&1 || skip "curl required"
+  export ADA_PAUSE_FILE="$BATS_TEST_TMPDIR/pause-is-a-dir" ADA_PROBE_PAUSE_OUT="$BATS_TEST_TMPDIR/probe-pause.txt"
+  mkdir -p "$ADA_PAUSE_FILE"
+  export ADA_SNOOZE_MINUTES="30" ADA_AUTO_CLOSE=5 ADA_SNOOZE_LOG="$BATS_TEST_TMPDIR/snooze.log" \
+         ADA_SESSION_KEY=claude-abc ADA_SNOOZE_SCOPE=session
+  run "$LAUNCHER" "first" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  mv "$ADA_PROBE_OUT" "$BATS_TEST_TMPDIR/first-url.txt"
+  rm -f "$ADA_PROBE_PAUSE_OUT"
+  ADA_PROBE_OUT="$BATS_TEST_TMPDIR/first-url.txt" dismiss_daemon pause/30
+  wait_for_trace "pause failed"
+  wait_for_file "$ADA_PROBE_PAUSE_OUT" || { echo "no failure alert"; false; }
+  local b64; b64=$(sed -n 's/.*[?&]cmdb64=\([^&]*\).*/\1/p' "$ADA_PROBE_OUT")
+  local label; label=$(summary_json -b "$b64")
+  [[ "$label" == "⚠️ Couldn't pause alerts: $ADA_PAUSE_FILE is not a pause file; left alone" ]] || { echo "label: $label"; false; }
+  assert_equal "$(cat "$ADA_PROBE_PAUSE_OUT")" "|1||"
+  refute_file_contains "$ADA_PROBE_OUT" "snooze=1"
 }

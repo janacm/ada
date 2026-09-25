@@ -207,7 +207,10 @@ removed.
 - Pressing `Esc`, clicking for a plain dismiss, or auto-close must dismiss the
   alert without requiring a snooze.
 - Opening a new alert in native mode must close any previous native alert helper
-  process so alert windows do not stack.
+  process so alert windows do not stack. The summary of a pause is the one
+  exception: it has its own pid file (`ADA_SUMMARY_PID_FILE`, default
+  `$TMPDIR/ada-alert-summary.pid`), so an alert opens on top of it rather than
+  closing it, and a newer summary replaces an older one.
 - The alert must show a corner feedback note inviting users to reach out (to
   support the project, request a different agent integration, or report a
   misfired pop-up); its link must open in the user's default browser rather than
@@ -294,8 +297,9 @@ removed.
   day-long snooze across a daylight-saving change) the weekday. Presets outside
   1..1440 minutes must not render. A reminder after a session-wide snooze must
   say "Snooze over · this <kind> can alert again".
-- Snooze and mute confirmations must stay up long enough to read (1.2s) and
-  close at once on a click or `Esc`, without sending a second signal.
+- Snooze and mute confirmations must stay up long enough to read (1.2s; the
+  pause confirmation 2s, since it names a command) and close at once on a click
+  or `Esc`, without sending a second signal.
 - The revealed options must include a pin toggle. While pinned, every later
   alert (including snoozed relaunches) must open with the options already
   expanded; unpinning restores the collapsed default. The native helper must
@@ -344,7 +348,9 @@ removed.
 - The daemon must wait for a snooze by the wall clock in steps of at most
   `POLL_SECONDS`, rechecking its hold each step, so a released hold ends it
   early and the relaunch time matches the hold's wake time.
-- Snooze delays must be positive and no longer than 24 hours.
+- Snooze delays must be positive and no longer than 24 hours, written in ASCII
+  digits: the daemon must reject other Unicode digits (`²`, `٣`), which
+  `str.isdigit()` accepts.
 - A focus request must use the configured bundle id to bring the originating app
   forward, or, when `ADA_CLICK_URL` is set, `open` that URL instead (which both
   activates the target app and deep-links into it). The URL must take precedence
@@ -384,10 +390,12 @@ removed.
 
 ## Global Pause
 
-- A pause must silence every alert from every integration, including a pending
-  snooze relaunch that comes due while paused, until it ends or is resumed.
-- The pause check must live only in `ada-show-alert.sh`, beside the mute check
-  and before it. No integration may reimplement it.
+- A pause must hold back every alert from every integration, including a
+  pending snooze relaunch that comes due while paused and an alert with no
+  session key, until it ends or is resumed.
+- The pause check must live only in `ada-show-alert.sh`, after the mute check
+  and the conversation hold, so an alert those drop is recorded as `muted` or
+  `held` and never reaches the summary. No integration may reimplement it.
 - The pause state must be one file (`ADA_PAUSE_FILE`, default
   `$TMPDIR/ada-paused`) holding one decimal integer: the epoch second the pause
   ends, or `0` for until resumed. Writers must replace it atomically (temp file
@@ -400,25 +408,115 @@ removed.
 - Alerts the user asked for must show while paused: the terminal `ada` command,
   the installer's sample alert, `ada-paseo-watch.sh test`, and the menu bar's
   Test Alert pass `ADA_IGNORE_PAUSE=1`. zsh must pass it on the launcher's
-  command line only, never into the interactive shell.
+  command line only, never into the interactive shell. Such an alert must say
+  that a pause is on, until when, how many alerts it holds and how to resume,
+  and must not offer to pause.
 - When `TMPDIR` is unset, the launcher must use `getconf DARWIN_USER_TEMP_DIR`
   (then `/tmp`), so a stripped environment still finds the pause and the mute
   markers that terminals and launchd jobs see under the per-user temp dir.
 - `lib/ada-pause.sh <minutes>|until <epoch>|forever|resume|status` must set,
   clear and describe the pause, and Homebrew must expose it as `ada-pause`.
+  `status` and a new pause must report how many alerts are held when any are.
 - A launcher running without `ada-pause.sh` beside it must still alert, with no
   pausing.
+- An alert held back by a pause must be kept, as its history line, in one file
+  under `<pause file>.held/` (a directory created mode 700). Only a real
+  directory the user owns may be written into or claimed; anything else there
+  must be left alone and the alert must show. Past 500 records an alert must
+  only add one byte to `held/overflow`, so the count stays exact.
+- Every alert must land exactly once, on screen or in the summary, even when the
+  pause ends while it is being recorded: the launcher writes the record, checks
+  the pause again, and when it is over takes its own record back and shows the
+  alert. A failed take-back means a flush already claimed it.
+- When a pause ends, what it held must be shown as one summary alert, and no
+  window must open when nothing was held. A timed pause set through the CLI
+  must start a detached timer (`ada-snooze-daemon.py --pause-timer`) that waits
+  by the wall clock and shows the summary once the end has passed; a newer
+  pause or a resume retires it. The timer must hold no directory open (it moves
+  to `/`, with its paths made absolute first). `resume` must show the summary
+  itself, also when only an earlier pause's alerts are left, and must count
+  what is held only after it has removed the pause file, so an alert held while
+  it resumes is shown too. An alert that finds the pause
+  over with alerts still held must show them too, next to itself.
+- Showing the summary (the launcher with `ADA_PAUSE_FLUSH`) must claim the held
+  alerts with one rename, only once the pause is over (checked again right
+  before the rename, since a pause can start after the launcher's check), and
+  only after the native helper is found, so a missing helper leaves them for
+  later. A claim left by a flush that died must be shown by the next one after
+  10 minutes, taken with its own rename so that only one flush shows it. Records
+  from sessions muted since must be left out. `ADA_PAUSE_FLUSH` must be unset at
+  once, and nothing of the alert or pause that led to the flush may reach the
+  summary window or its daemon.
+- The summary must list needs-you rows first, then failed, then finished, at
+  most 30 rows (every urgent one, then the newest finished) and a URL payload
+  of at most 12,000 characters, with the total count. A row must open its own
+  alert's click target through the daemon (`open/<i>`, an index into targets
+  the launcher named), and only that. The summary must auto-close after
+  `ADA_SUMMARY_AUTO_CLOSE` seconds (default 600). A value that is not a positive
+  number of seconds must fall back to 600, checked before anything is claimed,
+  and `ADA_AUTO_CLOSE` must fall back to 90 the same way. The payload must carry
+  the failed and needs-you totals (`fail`, `ask`) counted over every held
+  alert, not only the rows sent.
+- The alert must offer "Pause all alerts" whenever a daemon runs for its other
+  controls, with the snooze delays (or `5 10 30 60` when snooze is off) and the
+  resume command that works on this install, and `ADA_PAUSE_BUTTON=0` must hide
+  it. The daemon must pause through `ada-pause.sh <minutes>` (1..1440), never by
+  writing the file itself, and must raise an alert of its own, ignoring the
+  pause and belonging to no session, when that fails.
+- On the page, "Pause all alerts" must sit in the grey row after the mute pill
+  (alone when the mute button is off) and start folded. It must unfold its own
+  row of delays and a Custom input (1..1440, invalid values rejected in place,
+  `Esc` cancelling only the input), under class names the snooze row never
+  uses. Only one of the snooze and pause rows may be open at a time, and
+  folding the snooze row that way must not change the pin.
+- The pause confirmation must give the clock time the pause ends ("tomorrow",
+  a weekday or a date when not today), say that what arrives is shown in one
+  summary, and show the resume command from `pauseresumeb64` when the launcher
+  sent one.
+- A test alert shown during a pause must show a selectable note above the
+  hint, saying until when (or "until you resume"), how many alerts are held and
+  the resume command, whose clicks do not dismiss (nor a press that starts in
+  it and ends outside, such as selecting the command), and no pause control.
+- The summary page (`mode=summary`) must check `summaryb64` completely: version
+  1, a count no smaller than the rows, a known reason, at most 50 rows, and
+  every row field's type. Anything else must show "Alerts while you were paused"
+  and "The list could not be read" instead of a partial list. A valid one must
+  show "<n> alerts while you were paused", when the pause ended or was resumed
+  with the failed and needs-you counts (the payload's totals when present and
+  consistent, else counted from the rows), and the rows in the order sent, each
+  with its time, a status mark with an accessible name, the label on one line,
+  the repo and duration, and a reminder tag for a snoozed alert, then "and <k>
+  more" when the count exceeds the rows.
+- A summary row may open its alert's target only when the payload marks it and
+  a daemon runs. It must then be a button that sends its index alone
+  (`open/<i>`) and closes the summary; the hint must say rows open only when one
+  can. A click elsewhere, `Esc` or the countdown must dismiss, and a click
+  inside the list, or a press that starts there, must not. The summary must show no command box, badges,
+  snooze, mute or pause controls, and its title must never turn red.
+- Every string the page takes from its URL (labels, the session noun, the
+  resume command, summary fields) must be inserted as text, never as markup.
+- A prompt typed into a conversation must release only that conversation's
+  hold, never the pause.
+- The pause must add no runtime file: its timer and summary live in
+  `ada-pause.sh`, `ada-snooze-daemon.py` and `ada-show-alert.sh`, which are
+  already in `ADA_RUNTIME_FILES`.
 
 ## Alert History
 
 - The launcher must append one line to the history (`ADA_HISTORY_FILE`, default
-  `$TMPDIR/ada-history.tsv`) for every alert it decides on: shown, or dropped
-  by a pause or a mute. A snooze relaunch must be flagged as one.
+  `$TMPDIR/ada-history.tsv`) for every alert it decides on: shown, held back by
+  a pause (`paused`), dropped by a mute (`muted`) or by a conversation snooze
+  (`held`). A snooze relaunch must be flagged as one. A summary is not an alert
+  and adds no line.
 - Each line must be tab-separated, version first: `1 epoch outcome snoozed key
-  kind label duration code repo focus_app focus_app_name click_url`. Tabs and
-  line breaks in a field must become spaces, and a field must be cut to 200
-  characters (the click URL to 500). Readers must skip lines of another version
-  and ignore columns past the last one they know.
+  kind label duration code repo focus_app focus_app_name click_url dir`, where
+  `dir` is `ADA_REPO_DIR` or the launcher's working directory. Tabs and line
+  breaks in a field must become spaces, and a field must be cut to 200
+  characters (the click URL and dir to 500). Readers must skip lines of another
+  version and ignore columns past the last one they know, and must accept a
+  line that ends at `click_url`.
+- Building a line must not depend on `ADA_HISTORY_MAX`, because a pause keeps
+  the same line as its record with the history off.
 - A dropped alert must not resolve the repo (that runs git), so it records
   `ADA_REPO` only when it inherited one.
 - The file must be created mode 600 and never written through a symlink or when
@@ -689,6 +787,34 @@ removed.
 
 ## Change Log
 
+- 2026-09-25: A pause no longer loses what arrives during it. The launcher keeps
+  each held alert as its history line in `<pause file>.held/` and shows them all
+  in one summary alert when the pause ends: its timer runs out (a detached
+  `ada-snooze-daemon.py --pause-timer` that `ada-pause` starts), `ada-pause
+  resume`, or the first alert after an end nobody caught. The summary lists
+  needs-you and failed rows first, opens each row's own conversation or app
+  through a new `open/<i>` daemon action, and has its own window slot. The pause
+  check moved after the mute check and the conversation hold, so muted and
+  snoozed sessions stay out of it (their history outcome is now `muted` or
+  `held` instead of `paused`). Alerts with a daemon offer "Pause all alerts"
+  (`pause/<minutes>` runs `ada-pause.sh`; `ADA_PAUSE_BUTTON=0` hides it), and
+  test alerts shown during a pause say so. `ada-pause status` and a new pause
+  report the held count, and `resume` reports what it shows. The history gains a
+  `dir` column, and building a line is split from appending it. The daemon now
+  rejects non-ASCII digits in snooze minutes. The bats test that a new alert
+  closes the previous window passed without the launcher doing anything: macOS
+  kills a copied `/bin/sleep` at once, so the stand-in window is now sleep run
+  through a symlink. On the page, the pause toggle sits beside the mute pill
+  with its own delays and Custom input, built by the same function as the snooze
+  row, and the two rows fold each other. Its confirmation holds 2s and shows the
+  resume command; a test alert during a pause carries a note saying so.
+  `mode=summary` renders the rows from a payload it checks field by field, and
+  shows "The list could not be read" for any other. From review: `resume` counts
+  what is held after removing the pause file, a stale claim is renamed before it
+  is read, both auto-close settings are checked before anything is claimed, the
+  timer moves to `/`, the payload carries the failed and needs-you totals, the
+  resume command is encoded without python3, and a drag that starts in the
+  paused note or the summary list no longer dismisses.
 - 2026-09-24: The snooze toggle names its scope ("Snooze this conversation" or
   "Snooze this alert"), and snooze confirmations give a clock time instead of
   "Back in N minutes". A click or `Esc` closes a confirmation at once.

@@ -164,7 +164,7 @@ All settings are environment variables. Set them before `ada.sh` is sourced
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ADA_THRESHOLD` | `10` | Minimum command duration, in seconds, to trigger an alert. |
-| `ADA_AUTO_CLOSE` | `90` | Seconds the alert stays up before auto-dismissing. Unset or non-positive falls back to 90. |
+| `ADA_AUTO_CLOSE` | `90` | Seconds the alert stays up before auto-dismissing. Unset, non-positive or not a number falls back to 90. |
 | `ADA_IGNORE_CMDS` | interactive tools (see below) | Space-separated list of command names to never alert on. Matched against the command's basename. |
 | `ADA_ALERT_FILE` | `alert.html` in the ada install | Path to the alert HTML page. Defaults to the page shipped with the scripts, wherever ada is installed. |
 | `ADA_NATIVE_ALERT` | _(auto)_ | Path to a specific `ada-alert` executable. Defaults to `ada-alert`, `.build/release/ada-alert`, or `.build/debug/ada-alert` in the ada install, one level above `lib/ada-show-alert.sh`. |
@@ -189,12 +189,15 @@ All settings are environment variables. Set them before `ada.sh` is sourced
 | `ADA_MUTE_BUTTON` | `1` | Set to `0` to hide the **Mute this …** button. Sessions you already muted stay muted. See [Muting a session](#muting-a-session). |
 | `ADA_MUTE_MAX_AGE` | `86400` | Seconds a mute lasts before that session alerts again. `0` keeps it until you clear it. |
 | `ADA_MUTE_DIR` | `${TMPDIR}/ada-muted` | Where the mute markers live: one file per muted session, holding the label of the alert it was muted from. |
-| `ADA_PAUSE_FILE` | `${TMPDIR}/ada-paused` | Where the [pause](#pausing-every-alert) is kept: one number, the time it ends (`0` = until resumed). |
+| `ADA_PAUSE_FILE` | `${TMPDIR}/ada-paused` | Where the [pause](#pausing-every-alert) is kept: one number, the time it ends (`0` = until resumed). The alerts it holds back wait beside it, in `ada-paused.held/`. |
 | `ADA_IGNORE_PAUSE` | _(empty)_ | `1` makes an alert show even while paused. The test alerts (`ada`, the installer's sample, `ada-paseo-watch.sh test`, the menu bar's **Test Alert**) set it. |
+| `ADA_PAUSE_BUTTON` | `1` | Set to `0` to hide **Pause all alerts** on the alert. A pause set from the menu bar or `ada-pause` still applies. |
+| `ADA_SUMMARY_AUTO_CLOSE` | `600` | Seconds the summary of what arrived during a pause stays up. Unset, non-positive or not a number falls back to 600. |
+| `ADA_PAUSE_TIMER` | `1` | `0` starts no timer for a timed pause, so its summary waits for `ada-pause resume` or the next alert after the end. The test suite sets it. |
 | `ADA_HISTORY_FILE` | `${TMPDIR}/ada-history.tsv` | The [alert history](#alert-history), one line per alert. |
 | `ADA_HISTORY_MAX` | `50` | How many alerts the history keeps. `0` keeps none. |
 | `ADA_MENUBAR_INSTALL_DIR` | `ADA_PASEO_INSTALL_DIR`, else `~/.local/share/ada` | Where `ada-menubar.sh install` copies a checkout so the login item can run it. |
-| `ADA_STATUS_SKIP_PROTECTED` | _(empty)_ | `1` makes `--status` skip checking that wired paths under `$HOME` still exist. The menu bar sets it, because a LaunchAgent may not look inside `~/Documents`. |
+| `ADA_STATUS_SKIP_PROTECTED` | _(empty)_ | `1` makes `--status` skip checking that wired paths under `$HOME` still exist. The menu bar sets it, because a LaunchAgent may not look inside `~/Documents`. A pause summary honors it too, and then shows no repo for alerts from under `$HOME`. |
 | `ADA_SESSION_KEY` | _(set by each integration)_ | Which session an alert belongs to; the integrations set it for you. Only letters, digits, `.`, `_` and `-` are accepted, and an alert without a valid key has no mute button. |
 
 The default ignore list covers common interactive / long-lived foreground tools:
@@ -475,7 +478,9 @@ ADA_PASEO_EVENTS="finish permission"
 - It auto-dismisses after `ADA_AUTO_CLOSE` seconds — the progress bar along the
   bottom shows the time remaining. Auto-dismiss is also a plain dismiss.
 - Opening a new alert first closes any previous alert window, so they don't
-  stack up.
+  stack up. The one exception is the [summary of a pause](#pausing-every-alert):
+  an alert opens on top of it instead of closing it, and dismissing the alert
+  shows the summary again. A newer summary replaces an older one.
 
 ## Snoozing the alert
 
@@ -574,19 +579,58 @@ ada-pause status           # "paused until 15:30 (42m left)" or "not paused"
 ada-pause resume
 ```
 
+An alert can start one too: **Pause all alerts**, next to the mute button,
+unfolds the snooze delays (or `5 10 30 60` when snooze is off) and **Custom**
+(1–1440 minutes). Only one of the snooze and pause rows is open at a time;
+opening one folds the other for that alert without changing **Pin open**. The
+confirmation says when alerts come back and the command that resumes early on
+your install (`ada-pause resume` under Homebrew, the script's own path from a
+checkout). It rides on the same `python3` helper as snooze and mute, so it
+shows only on alerts that have one. `ADA_PAUSE_BUTTON=0` hides it.
+
 While paused, no integration pops a window, and a snoozed alert that comes due
-is dropped too. The test alerts still show, so you can check that ada works.
-The pause is a file in `$TMPDIR`, so it lasts until it runs out, you resume,
-or macOS clears that folder (after a restart, for example); in every case
-alerts simply come back.
+waits too. What arrives isn't lost: when the pause ends, one summary alert
+lists everything that came in, needs-you and failed ones first, and clicking a
+row opens that alert's conversation or terminal, the way clicking the alert
+itself would have. The summary appears when a timed pause runs out, when you
+run `ada-pause resume`, or, if neither caught it (a logout stopped the timer,
+say), next to the first alert after the end. Nothing arrived means no summary.
+It stays up for 10 minutes (`ADA_SUMMARY_AUTO_CLOSE`), and an alert that comes
+in meanwhile opens on top of it. `ada-pause status` says how many alerts are
+waiting.
+
+Each row of the summary shows when the alert came in, a mark (**!** needs
+you, **✕** failed, **✓** finished), the command or prompt, the repo and how
+long it ran, and a *reminder* tag for a snooze that came due during the pause.
+A row that knows where its alert came from opens it; click anywhere else or
+press `Esc` to dismiss the summary. It lists at most 30 alerts (every one that
+needs you or failed, then the newest of the rest) and ends with "and N more"
+past that.
+
+A muted session stays muted during a pause, and a snoozed Claude conversation
+stays quiet, so neither ends up in the summary; mute a session while paused
+(`ada-mute add <key>`) and its held alerts drop out of the summary too. Sending
+a conversation a message ends that conversation's snooze but never the pause.
+Every alert a pause held is also in the [history](#alert-history), marked as
+paused.
+
+The test alerts still show while paused, so you can check that ada works; they
+say that a pause is on, until when, how many alerts it holds and how to
+resume. The pause is a file in `$TMPDIR`, so it lasts until it runs out, you
+resume, or macOS clears that folder (after a restart, for example); in every
+case alerts simply come back, and what that pause held is gone with the
+folder. If the Paseo watcher runs from a staged copy (`~/.local/share/ada`),
+re-run `ada-paseo-watch.sh install` after updating ada so its alerts are held
+for the summary as well.
 
 ## Alert history
 
 ada keeps the last 50 alerts it decided on (`ADA_HISTORY_MAX`), including the
-ones a pause or a mute kept off your screen, so you can find what finished
-while you were away. The menu bar's **Recent Alerts** shows them. Each line
-records when, what (the command or prompt), how long it ran, its exit code, the
-repo, and where clicking the alert would have taken you:
+ones a pause, a mute or a snoozed conversation kept off your screen, so you can
+find what finished while you were away. The menu bar's **Recent Alerts** shows
+them. Each line records when, what (the command or prompt), how long it ran,
+its exit code, the repo, where clicking the alert would have taken you, and the
+directory it came from:
 
 ```sh
 lib/ada-history.sh list    # from the ada folder; tab-separated, oldest first
