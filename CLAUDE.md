@@ -93,6 +93,50 @@ follow-up commit on `main`. `--no-formula` prints the fields instead of
 committing; `--no-push` tags locally only. Validate with `brew style
 Formula/ada.rb`, then `brew install` / `brew test janacm/ada/ada`.
 
+**Releases are automated from PR labels** (`.github/workflows/release.yml`).
+Merging a PR labelled `release:minor` (v0.4 -> v0.5) or `release:major` (v0.4 ->
+v1.0) runs the bats suite on macOS against `main` and then `./release.sh` with
+the next version; an unlabelled merge releases nothing. The label must be on the
+PR **before** the merge, because the workflow reads the close event and a re-run
+replays that same event; a forgotten label means a manual `./release.sh`. It uses
+`pull_request_target` so fork PRs still get a write token, which is only safe
+because it never checks out the PR head, only `main` after the merge.
+`release.sh` refuses to start unless HEAD is `origin/main`. If `main` moves
+after that check, the release still ships the commit the job tested (the tag
+names it) and the formula bump is replayed on the newer `main`, which the next
+labelled merge releases. `.github/workflows/test.yml` runs
+the same suite on every PR and every direct push to `main`.
+
+**A published tag is never deleted or moved.** The tag push and the formula
+push are separate, so a release can stop between them. If `main` moves in that
+window, `release.sh` replays its formula-only commit on the new `main` and
+pushes again; the tag keeps naming the code that was tested. If the job dies
+there instead, a re-run with the same version finishes a tag that is on GitHub,
+is an ancestor of `main`, and is newer than the formula's version. A local-only
+stale tag is refused (it really would release old code), and so is a tag older
+than the formula's version, because "finishing" it would downgrade every
+install.
+
+The workflow's whole job is `release.sh --auto minor|major`, kept in the script
+so bats covers it. After finishing a stranded tag it also releases the commit
+the job tested, but only when nothing but its own formula bump sits on top: a
+concurrent merge's commits are untested and wait for the next labelled merge.
+And only when the tested commit has product changes beyond `Formula/ada.rb`
+since the tag it just finished: after a recovery that died mid-way, the tested
+commit can be nothing but an earlier formula bump, which is not a release.
+It picks each version with `release.sh --next minor|major`, which counts
+from the formula's version, looks only at stable tags reachable from `HEAD`
+(`v1.0-rc1` version-sorts ahead of `v0.9`; a tag on another branch is not a
+release of `main`), and returns a published unfinished tag as is rather than
+counting past it. The bump is major when any PR merged since the formula's
+version (`release.sh --prs-since-release`) is labelled `release:major`, not only
+the PR that triggered the run, because GitHub keeps one pending run per
+concurrency group and a queued major run can be replaced by a later minor one.
+Those PRs come from GitHub's commit-to-PR lookup (`commits/<sha>/pulls`, merged
+into `main` only), not from commit subjects: a rebase-merged PR leaves no `#N`
+in any subject. Any failed lookup stops the release rather than read as "not
+major".
+
 ## Native helper is the only renderer
 
 `ada-alert` is a SwiftPM executable that opens `alert.html` in an AppKit/WebKit

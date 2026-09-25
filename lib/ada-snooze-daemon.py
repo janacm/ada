@@ -34,6 +34,7 @@
 # Set ADA_SNOOZE_LOG=/path to append a trace line per request/decision (debug).
 # =============================================================
 import os
+import socketserver
 import sys
 import time
 import subprocess
@@ -136,6 +137,21 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+class LoopbackServer(HTTPServer):
+    """HTTPServer without the reverse-DNS lookup in server_bind.
+
+    The stock server_bind resolves socket.getfqdn(host) only to fill in
+    server_name, which nothing here reads. On a machine with slow reverse DNS
+    (GitHub's macOS runners, or any Mac on a flaky network) that lookup outlasts
+    the launcher's 1.8s wait for the handoff, and the alert silently loses
+    snooze, click-to-focus and mute.
+    """
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def daemonize():
     """Double-fork + setsid so we detach from the launching terminal."""
     if os.fork() > 0:
@@ -154,7 +170,7 @@ def daemonize():
 def main():
     # Bind before detaching so the port is known and bind errors surface
     # while we still share stderr with the caller.
-    httpd = HTTPServer(("127.0.0.1", 0), Handler)
+    httpd = LoopbackServer(("127.0.0.1", 0), Handler)
     httpd.timeout = 1  # handle_request() returns after 1s of idle
     httpd.ada_done = False
     httpd.ada_result = None
