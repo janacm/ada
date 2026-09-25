@@ -661,7 +661,11 @@ and the summary JSON) is in the header of `lib/ada-show-alert.sh`.
   file after the end is `status` cleaning up, and the timer still flushes.
 - **Three triggers, one rule.** The timer, `resume` and an alert that finds the
   pause over with records left all run the launcher with `ADA_PAUSE_FLUSH`, and
-  the flush claims only when no pause is in effect. The third one covers a timer
+  the flush claims only when no pause is in effect. The summary pass checks
+  that again right before its renames (`paused()` in `__ada_pause_summary`):
+  the launcher's own check comes before python starts and the mutes are
+  scanned, and a pause set in that gap would have had its first alerts swept
+  into the previous summary, opened mid-pause. The third one covers a timer
   that died (a logout), a pause set by a writer that armed none (the menu bar
   writing the file itself would be one), and the alert racing the end.
 - **Claim after the helper check.** Flush mode claims only once

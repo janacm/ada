@@ -437,13 +437,14 @@ removed.
   it resumes is shown too. An alert that finds the pause
   over with alerts still held must show them too, next to itself.
 - Showing the summary (the launcher with `ADA_PAUSE_FLUSH`) must claim the held
-  alerts with one rename, only once the pause is over, and only after the
-  native helper is found, so a missing helper leaves them for later. A claim
-  left by a flush that died must be shown by the next one after 10 minutes,
-  taken with its own rename so that only one flush shows it.
-  Records from sessions muted since must be left out. `ADA_PAUSE_FLUSH` must be
-  unset at once, and nothing of the alert or pause that led to the flush may
-  reach the summary window or its daemon.
+  alerts with one rename, only once the pause is over (checked again right
+  before the rename, since a pause can start after the launcher's check), and
+  only after the native helper is found, so a missing helper leaves them for
+  later. A claim left by a flush that died must be shown by the next one after
+  10 minutes, taken with its own rename so that only one flush shows it. Records
+  from sessions muted since must be left out. `ADA_PAUSE_FLUSH` must be unset at
+  once, and nothing of the alert or pause that led to the flush may reach the
+  summary window or its daemon.
 - The summary must list needs-you rows first, then failed, then finished, at
   most 30 rows (every urgent one, then the newest finished) and a URL payload
   of at most 12,000 characters, with the total count. A row must open its own

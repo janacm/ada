@@ -472,6 +472,37 @@ summary() {
   bash -c ". '$REPO_ROOT/lib/ada-pause.sh'; __ada_pause_summary \"\$@\"" _ "$@"
 }
 
+# The launcher asks whether a pause is on before it flushes, but the claim comes
+# later, after python starts and the mutes are scanned. A pause set in between
+# owns what is held by then, so the summary pass asks again before renaming.
+@test "the summary pass claims nothing while a pause is on, timed or until resumed" {
+  held_record "held for the new pause" 1m 0
+  "$PAUSE" 30 >/dev/null
+  run summary ended ""
+  assert_success
+  assert_equal "$output" ""
+  [ -n "$(ls "$TMPDIR/ada-paused.held"/*.tsv 2>/dev/null)" ]
+  "$PAUSE" forever >/dev/null
+  run summary ended ""
+  assert_equal "$output" ""
+  [ -n "$(ls "$TMPDIR/ada-paused.held"/*.tsv 2>/dev/null)" ]
+  # Once it is over, the same records are claimed and shown.
+  "$PAUSE" resume >/dev/null 2>&1 || true
+  [ ! -e "$TMPDIR/ada-paused" ]
+  held_record "held for the new pause" 1m 0
+  run summary ended ""
+  assert_success
+  [ -n "$output" ]
+}
+
+@test "a file at the pause path that is not a pause does not stop the claim" {
+  held_record "shown" 1m 0
+  printf 'hello\n' > "$TMPDIR/ada-paused"
+  run summary ended ""
+  assert_success
+  [ -n "$output" ]
+}
+
 @test "the summary lists needs-you, then failed, then finished, oldest first in each" {
   held_record "done early" 1m 0 "" "" "" 1790000001
   held_record "🔐 Needs permission: bash" "" 0 "" "" "" 1790000004

@@ -271,6 +271,31 @@ def ours(path):
     return stat.S_ISDIR(st.st_mode) and st.st_uid == uid
 
 
+def paused():
+    # __ada_is_paused again, by its rule (a regular file holding one decimal: 0
+    # for until resumed, else the end), checked right before the rename. The
+    # launcher asked before starting this, but a pause set since, during python
+    # startup or the mute scan, owns what is held now: claiming it would open a
+    # summary mid-pause and take that pause's first alerts from its own.
+    try:
+        fd = os.open(base, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return False
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return False
+        first = os.read(fd, 64).split(b"\n", 1)[0].decode("ascii", "replace")
+    finally:
+        os.close(fd)
+    if not re.fullmatch(r"[0-9]{1,15}", first):
+        return False
+    until = int(first)
+    return until == 0 or int(time.time()) < until
+
+
+if paused():
+    sys.exit(0)
+
 # Claims a flush left behind when it died, then this flush's own. A stale
 # claim is taken with its own rename, as held/ is, so of two flushes that both
 # list it only one shows it. Its new name carries this flush's epoch: if this
