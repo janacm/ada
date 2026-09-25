@@ -62,34 +62,18 @@ jobs:
       - name: Run the bats suite
         run: bats test/
 
-      # release.sh --next picks it: stable tags only (a v1.0-rc1 must not be the
-      # base), and a tag an earlier run pushed without finishing is returned as
-      # is, so a re-run finishes that version instead of skipping past it.
-      #
-      # Major if ANY PR merged since the last release asked for it, not just
-      # this one: GitHub keeps one pending run per concurrency group, so a
-      # queued release:major run can be replaced by a later release:minor one.
-      - name: Pick the next version
-        id: version
+      # release.sh --auto does the rest, and bats covers it: the bump is major
+      # if this PR or any PR since the last release asked for it (GitHub keeps
+      # one pending run per concurrency group, so a queued major run can be
+      # replaced by a later minor one); --next picks the version (stable tags
+      # only, and an earlier run's pushed-but-unfinished tag is finished rather
+      # than skipped); and after finishing such a tag, the tested main is
+      # released too.
+      - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
           BUMP: ${{ contains(github.event.pull_request.labels.*.name, 'release:major') && 'major' || 'minor' }}
         run: |
-          bump=$BUMP
-          for pr in $(./release.sh --prs-since-release); do
-            if gh pr view "$pr" --json labels --jq '.labels[].name' | grep -qx 'release:major'; then
-              echo "#$pr asked for a major release"
-              bump=major
-            fi
-          done
-          version=$(./release.sh --next "$bump")
-          echo "Releasing $version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Release
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          ./release.sh "$VERSION"
+          ./release.sh --auto "$BUMP"

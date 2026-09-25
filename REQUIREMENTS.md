@@ -82,6 +82,9 @@ removed.
   `vX.Y.Z`), never from a pre-release tag, and never from below the version
   the formula already installs. A re-run of a version older than the
   formula's must be refused rather than downgrade the formula.
+- A run that finishes a stranded tag must also release the commit it tested,
+  so the triggering merge is not left unreleased. It must not release commits
+  it did not test.
 - A release must be major when any PR merged since the last release carries
   `release:major`, even if the run that survives GitHub's one-pending-run
   concurrency limit was triggered by a `release:minor` merge.

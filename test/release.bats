@@ -46,6 +46,15 @@ fi
 printf 'fake tarball for %s' "${!#}"
 SH
   chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+  # gh stub for --auto: `gh pr view <n> ...` prints release:major for the PR
+  # numbers listed in STUB_GH_MAJOR, and nothing for any other PR.
+  cat > "$BATS_TEST_TMPDIR/bin/gh" <<'SH'
+#!/bin/bash
+[ "$1 $2" = "pr view" ] || exit 1
+for n in ${STUB_GH_MAJOR:-}; do [ "$n" = "$3" ] && echo "release:major"; done
+echo "enhancement"
+SH
+  chmod +x "$BATS_TEST_TMPDIR/bin/gh"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
 
@@ -366,4 +375,75 @@ finished_release() {
   assert_success
   refute_output_contains "finishing"
   assert_equal "$output" "v0.5"
+}
+
+# --- --auto: the release workflow's whole job ---------------------------------
+
+# A finished v0.4 on origin, then a merged PR on top: the state the workflow
+# sees after a labelled merge.
+released_v04_then_pr() {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #${1:-20} from janacm/feature"
+  git -C "$WORK" push -q origin main --tags
+}
+
+@test "--auto minor releases the tested main as the next minor" {
+  released_v04_then_pr
+  tested=$(git -C "$WORK" rev-parse HEAD)
+  run "$RELEASE" --auto minor
+  assert_success
+  assert_equal "$(git -C "$ORIGIN" rev-parse 'v0.5^{commit}')" "$tested"
+  assert_file_contains "$WORK/Formula/ada.rb" "refs/tags/v0.5.tar.gz"
+}
+
+@test "--auto goes major when an earlier PR since the release asked for it" {
+  released_v04_then_pr 20
+  git -C "$WORK" commit -q --allow-empty -m "A later minor change (#21)"
+  git -C "$WORK" push -q origin main
+  export STUB_GH_MAJOR="20"
+  run "$RELEASE" --auto minor
+  assert_success
+  assert_output_contains "#20 asked for a major release"
+  run git -C "$ORIGIN" tag -l v1.0
+  assert_equal "$output" "v1.0"
+}
+
+@test "--auto finishes a stranded tag, then releases the tested main too" {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #19 from janacm/earlier"
+  git -C "$WORK" tag -a v0.5 -m v0.5          # an earlier run died after this push
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #20 from janacm/feature"
+  git -C "$WORK" push -q origin main --tags
+  stranded=$(git -C "$WORK" rev-parse 'v0.5^{commit}')
+  run "$RELEASE" --auto minor
+  assert_success
+  assert_output_contains "finishing v0.5"
+  assert_output_contains "now releasing the tested main"
+  assert_equal "$(git -C "$ORIGIN" rev-parse 'v0.5^{commit}')" "$stranded"
+  run git -C "$ORIGIN" tag -l v0.6
+  assert_equal "$output" "v0.6"
+  run git -C "$ORIGIN" log --format=%s -3 main
+  assert_equal "${lines[0]}" "Homebrew: point formula at v0.6"
+  assert_equal "${lines[1]}" "Homebrew: point formula at v0.5"
+  assert_equal "${lines[2]}" "Merge pull request #20 from janacm/feature"
+}
+
+@test "--auto leaves untested commits from a concurrent merge for the next release" {
+  finished_release v0.4
+  git -C "$WORK" tag -a v0.5 -m v0.5
+  git -C "$WORK" commit -q --allow-empty -m "Merge pull request #20 from janacm/feature"
+  git -C "$WORK" push -q origin main --tags
+  export STUB_CURL_ADVANCE="$ORIGIN"
+  run "$RELEASE" --auto minor
+  assert_success
+  assert_output_contains "finishing v0.5"
+  assert_output_contains "newer commits ship with the next labelled merge"
+  run git -C "$ORIGIN" tag -l v0.6
+  assert_equal "$output" ""
+}
+
+@test "--auto rejects anything but minor or major" {
+  run "$RELEASE" --auto patch
+  assert_failure
+  assert_output_contains "usage: release.sh --auto minor|major"
 }

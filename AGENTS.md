@@ -113,7 +113,11 @@ stale tag is refused (it really would release old code), and so is a tag older
 than the formula's version, because "finishing" it would downgrade every
 install.
 
-The workflow picks the version with `release.sh --next minor|major`. It counts
+The workflow's whole job is `release.sh --auto minor|major`, kept in the script
+so bats covers it. After finishing a stranded tag it also releases the commit
+the job tested, but only when nothing but its own formula bump sits on top: a
+concurrent merge's commits are untested and wait for the next labelled merge.
+It picks each version with `release.sh --next minor|major`, which counts
 from the formula's version, looks only at stable tags reachable from `HEAD`
 (`v1.0-rc1` version-sorts ahead of `v0.9`; a tag on another branch is not a
 release of `main`), and returns a published unfinished tag as is rather than

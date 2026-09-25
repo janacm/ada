@@ -128,6 +128,7 @@ release by hand, run from an up-to-date `main`:
 ```sh
 ./release.sh vX.Y            # tags, pushes, and commits the formula bump to main
 ./release.sh --next minor    # the version the workflow would cut next
+./release.sh --auto minor    # what the workflow runs: pick the version and release it
 ```
 
 A release that stopped after pushing its tag (the formula bump never landed)

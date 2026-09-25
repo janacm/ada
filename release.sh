@@ -13,7 +13,9 @@
 #   ./release.sh v1.0.0 --no-formula   # tag + push, print fields, don't commit
 #   ./release.sh --next minor|major    # print the version to release next
 #   ./release.sh --prs-since-release   # PR numbers merged since the formula's
-#                                      # version (the workflow reads their labels)
+#                                      # version
+#   ./release.sh --auto minor|major    # what the release workflow runs: pick
+#                                      # the version and release it (see below)
 #
 # Because the two steps are separate pushes, a release can stop halfway: the
 # tag is on GitHub but main never got the formula bump. Re-running with the same
@@ -90,11 +92,50 @@ if [[ "${1:-}" == --next ]]; then
   exit 0
 fi
 
+# --auto <bump>: the release workflow's whole job, here so bats can cover it.
+#   1. The bump is major if the triggering PR asked for it OR any PR merged
+#      since the formula's version is labelled release:major (gh reads the
+#      labels). GitHub keeps one pending run per concurrency group, so a queued
+#      release:major run can be replaced by a later release:minor one.
+#   2. --next picks the version, and it is released.
+#   3. If that was a tag an earlier run pushed but never finished, only its
+#      older commit shipped. Release the commit this job tested as well, but
+#      only when nothing but our own formula bump sits on top of it: newer
+#      commits from a concurrent merge are untested, and the next labelled
+#      merge releases them.
+if [[ "${1:-}" == --auto ]]; then
+  trigger=${2:-}
+  [[ "$trigger" == minor || "$trigger" == major ]] \
+    || { echo "usage: release.sh --auto minor|major" >&2; exit 1; }
+  self="${BASH_SOURCE[0]}"
+  tested=$(git -C "$dir" rev-parse HEAD)
+  __pick() {
+    local bump=$trigger pr
+    for pr in $("$self" --prs-since-release); do
+      if gh pr view "$pr" --json labels --jq '.labels[].name' 2>/dev/null | grep -qx 'release:major'; then
+        echo "release: #$pr asked for a major release" >&2
+        bump=major
+      fi
+    done
+    "$self" --next "$bump"
+  }
+  version=$(__pick)
+  "$self" "$version"
+  if [[ "$(git -C "$dir" rev-parse "refs/tags/$version^{commit}")" != "$tested" ]]; then
+    if [[ "$(git -C "$dir" rev-parse -q --verify HEAD~1 || true)" == "$tested" ]]; then
+      echo "release: finished the stranded $version; now releasing the tested main"
+      version=$(__pick)
+      "$self" "$version"
+    else
+      echo "release: main moved during the release; its newer commits ship with the next labelled merge"
+    fi
+  fi
+  exit 0
+fi
+
 # Every PR merged since the formula's version, from merge-commit subjects
 # ("Merge pull request #12 from ...") and squash subjects ("Title (#12)").
-# The release workflow reads their labels because GitHub keeps only one pending
-# run per concurrency group: a queued release:major replaced by a newer
-# release:minor run must still make the release major.
+# --auto reads their labels.
 if [[ "${1:-}" == --prs-since-release ]]; then
   [[ -f "$formula" ]] || { echo "release: missing $formula" >&2; exit 1; }
   current=$(__formula_version)
