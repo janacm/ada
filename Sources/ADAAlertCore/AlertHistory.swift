@@ -26,7 +26,9 @@ public enum ClickTarget: Equatable {
 /// One alert the launcher decided on, from a line of `lib/ada-history.sh`'s file.
 public struct HistoryEntry: Equatable {
     public enum Outcome: String {
-        case shown, paused, muted
+        /// `held`: dropped because a snooze on that conversation was holding
+        /// its alerts (the snooze hold in lib/ada-mute.sh).
+        case shown, paused, muted, held
     }
 
     public let date: Date

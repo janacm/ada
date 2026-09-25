@@ -111,6 +111,7 @@ public enum MenuModel {
         switch entry.outcome {
         case .paused: title += " (while paused)"
         case .muted: title += " (muted)"
+        case .held: title += " (while snoozed)"
         case .shown: if entry.snoozed { title += " (snoozed)" }
         }
         return title
@@ -120,6 +121,7 @@ public enum MenuModel {
         switch entry.outcome {
         case .paused: return "pause.circle"
         case .muted: return "bell.slash"
+        case .held: return "alarm"
         case .shown: return entry.failed ? "xmark.circle" : "checkmark.circle"
         }
     }
