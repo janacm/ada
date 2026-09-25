@@ -88,7 +88,8 @@ removed.
 - A release must be major when any PR merged since the last release carries
   `release:major`, even if the run that survives GitHub's one-pending-run
   concurrency limit was triggered by a `release:minor` merge. A PR whose labels
-  can't be read must stop the release rather than count as not major.
+  can't be read must stop the release rather than count as not major, and
+  the PRs must be found for every merge method (merge commit, squash, rebase).
 - Every PR and every direct push to the default branch must run the bats suite
   on macOS with the native helper built, so no test skips for lack of it.
 

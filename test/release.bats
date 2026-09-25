@@ -48,8 +48,21 @@ SH
   chmod +x "$BATS_TEST_TMPDIR/bin/curl"
   # gh stub for --auto: `gh pr view <n> ...` prints release:major for the PR
   # numbers listed in STUB_GH_MAJOR, and nothing for any other PR.
+  #
+  # `gh api repos/.../commits/<sha>/pulls` answers with the PR a commit came
+  # from: the #N in a merge or squash subject, or a "<subject><TAB><N>" line in
+  # $BATS_TEST_TMPDIR/pr-map for a rebase-merged commit whose subject has none.
+  export STUB_REPO="$WORK"
   cat > "$BATS_TEST_TMPDIR/bin/gh" <<'SH'
 #!/bin/bash
+if [ "$1" = api ]; then
+  [ -n "${STUB_GH_API_FAIL:-}" ] && { echo "HTTP 502" >&2; exit 1; }
+  sha=$(printf '%s' "$2" | sed -nE 's|.*/commits/([0-9a-f]+)/pulls$|\1|p')
+  subj=$(git -C "$STUB_REPO" log -1 --format=%s "$sha")
+  printf '%s\n' "$subj" | sed -nE -e 's/^Merge pull request #([0-9]+) .*/\1/p' -e 's/.*\(#([0-9]+)\)$/\1/p'
+  [ -f "$BATS_TEST_TMPDIR/pr-map" ] && awk -F'\t' -v s="$subj" '$1 == s { print $2 }' "$BATS_TEST_TMPDIR/pr-map"
+  exit 0
+fi
 [ "$1 $2" = "pr view" ] || exit 1
 for n in ${STUB_GH_MAJOR:-}; do [ "$n" = "$3" ] && echo "release:major"; done
 echo "enhancement"
@@ -451,13 +464,53 @@ released_v04_then_pr() {
 
 @test "--auto stops rather than guess when a PR's labels can't be read" {
   released_v04_then_pr 20
-  cat > "$BATS_TEST_TMPDIR/bin/gh" <<'SH'
+  # the commit-to-PR lookup works; only reading the labels fails
+  mv "$BATS_TEST_TMPDIR/bin/gh" "$BATS_TEST_TMPDIR/bin/gh-ok"
+  cat > "$BATS_TEST_TMPDIR/bin/gh" <<SH
 #!/bin/bash
+[ "\$1" = api ] && exec "$BATS_TEST_TMPDIR/bin/gh-ok" "\$@"
 echo "HTTP 502" >&2; exit 1
 SH
+  chmod +x "$BATS_TEST_TMPDIR/bin/gh"
   run "$RELEASE" --auto minor
   assert_failure
   assert_output_contains "could not read the labels of #20; not releasing"
+  run git -C "$ORIGIN" tag -l v0.5
+  assert_equal "$output" ""
+}
+
+@test "--prs-since-release finds a rebase-merged PR whose subjects carry no number" {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "Part one of the big change"
+  git -C "$WORK" commit -q --allow-empty -m "Part two of the big change"
+  printf 'Part one of the big change\t30\nPart two of the big change\t30\n' > "$BATS_TEST_TMPDIR/pr-map"
+  run "$RELEASE" --prs-since-release
+  assert_success
+  assert_equal "$output" "30"
+}
+
+@test "--auto goes major for a rebase-merged release:major PR" {
+  finished_release v0.4
+  git -C "$WORK" commit -q --allow-empty -m "Breaking rework"
+  git -C "$WORK" commit -q --allow-empty -m "A later minor change (#31)"
+  git -C "$WORK" push -q origin main --tags
+  printf 'Breaking rework\t30\n' > "$BATS_TEST_TMPDIR/pr-map"
+  export STUB_GH_MAJOR="30"
+  run "$RELEASE" --auto minor
+  assert_success
+  assert_output_contains "#30 asked for a major release"
+  run git -C "$ORIGIN" tag -l v1.0
+  assert_equal "$output" "v1.0"
+}
+
+@test "a failed commit-to-PR lookup stops the release" {
+  released_v04_then_pr 20
+  export STUB_GH_API_FAIL=1
+  run "$RELEASE" --prs-since-release
+  assert_failure
+  assert_output_contains "could not look up the PR for"
+  run "$RELEASE" --auto minor
+  assert_failure
   run git -C "$ORIGIN" tag -l v0.5
   assert_equal "$output" ""
 }

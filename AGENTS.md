@@ -125,6 +125,10 @@ counting past it. The bump is major when any PR merged since the formula's
 version (`release.sh --prs-since-release`) is labelled `release:major`, not only
 the PR that triggered the run, because GitHub keeps one pending run per
 concurrency group and a queued major run can be replaced by a later minor one.
+Those PRs come from GitHub's commit-to-PR lookup (`commits/<sha>/pulls`, merged
+into `main` only), not from commit subjects: a rebase-merged PR leaves no `#N`
+in any subject. Any failed lookup stops the release rather than read as "not
+major".
 
 ## Native helper is the only renderer
 

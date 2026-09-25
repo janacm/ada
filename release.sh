@@ -24,6 +24,7 @@
 # =============================================================
 set -euo pipefail
 
+repo="janacm/ada"
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 formula="$dir/Formula/ada.rb"
 
@@ -112,8 +113,10 @@ if [[ "${1:-}" == --auto ]]; then
   # A label lookup that fails must stop the release, not read as "no major
   # label": a release published as minor can't be taken back.
   __pick() {
-    local bump=$trigger pr labels
-    for pr in $("$self" --prs-since-release); do
+    local bump=$trigger pr prs labels
+    # Captured first: a failure inside a `for` list would not trip set -e.
+    prs=$("$self" --prs-since-release) || return 1
+    for pr in $prs; do
       labels=$(gh pr view "$pr" --json labels --jq '.labels[].name') \
         || { echo "release: could not read the labels of #$pr; not releasing" >&2; return 1; }
       if grep -qx 'release:major' <<<"$labels"; then
@@ -142,9 +145,12 @@ if [[ "${1:-}" == --auto ]]; then
   exit 0
 fi
 
-# Every PR merged since the formula's version, from merge-commit subjects
-# ("Merge pull request #12 from ...") and squash subjects ("Title (#12)").
-# --auto reads their labels.
+# Every PR merged into main since the formula's version. GitHub is asked which
+# PR each commit came from, because commit subjects only say so for merge
+# commits ("Merge pull request #12 ...") and squashes ("Title (#12)"): a
+# rebase-merged PR leaves its original subjects untouched. Only merged PRs into
+# main count; an open PR branched from main "contains" old main commits too.
+# A lookup that fails fails the listing. --auto reads their labels.
 if [[ "${1:-}" == --prs-since-release ]]; then
   [[ -f "$formula" ]] || { echo "release: missing $formula" >&2; exit 1; }
   current=$(__formula_version)
@@ -152,9 +158,14 @@ if [[ "${1:-}" == --prs-since-release ]]; then
   if [[ -n "$current" ]] && git -C "$dir" rev-parse -q --verify "refs/tags/$current" >/dev/null; then
     range="$current..HEAD"
   fi
-  git -C "$dir" log --format=%s "$range" \
-    | sed -nE -e 's/^Merge pull request #([0-9]+) .*/\1/p' -e 's/.*\(#([0-9]+)\)$/\1/p' \
-    | sort -un
+  prs=""
+  for sha in $(git -C "$dir" rev-list "$range"); do
+    found=$(gh api "repos/$repo/commits/$sha/pulls" \
+      --jq '.[] | select(.merged_at != null and .base.ref == "main") | .number') \
+      || { echo "release: could not look up the PR for ${sha:0:12}" >&2; exit 1; }
+    prs+="$found"$'\n'
+  done
+  printf '%s' "$prs" | grep -E '^[0-9]+$' | sort -un || true
   exit 0
 fi
 
@@ -172,7 +183,6 @@ done
 [[ -n "$version" ]] || { echo "usage: release.sh vX.Y.Z [--no-push] [--no-formula]" >&2; exit 1; }
 [[ "$version" == v* ]] || { echo "release: version must start with 'v' (e.g. v1.0.0)" >&2; exit 1; }
 
-repo="janacm/ada"
 tarball="https://github.com/${repo}/archive/refs/tags/${version}.tar.gz"
 [[ -f "$formula" ]] || { echo "release: missing $formula" >&2; exit 1; }
 
