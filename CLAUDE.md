@@ -561,6 +561,48 @@ before anything spawns when the key is muted.
   erase unrelated old files on every alert if someone pointed it at a real
   directory.
 
+## A snooze on a Claude conversation holds the whole conversation
+
+A plain snooze re-queues the one alert you clicked. That was not enough for
+Claude Code, because the hook also fires for turns the agent opens itself (see
+[UserPromptSubmit is not only what the user typed](#userpromptsubmit-is-not-only-what-the-user-typed)).
+Reported 2026-09-24: a `/goal` alert snoozed for 30 minutes at 14:24:49, and
+the same conversation alerted again at 14:28:10 for a background-task
+notification turn. The snoozed alert itself was still asleep on schedule.
+
+How it works: the Claude hook passes `ADA_SNOOZE_SCOPE=session` (a user-set
+value wins). The launcher then names `ADA_SNOOZE_HOLD_FILE`
+(`$TMPDIR/ada-snoozed/<key>`) for the daemon, which writes `<wake epoch>
+<token>` when you pick a snooze. Until the wake time `lib/ada-show-alert.sh`
+drops every alert for that key, right after the mute check. The daemon removes
+its marker before it relaunches the reminder.
+Hold markers follow the mute-marker rule: only a plain file is read or
+deleted, and the daemon writes a temp file with `O_EXCL | O_NOFOLLOW` and
+renames it over the marker.
+
+- **Only an integration that can release the hold may opt in.** A prompt you
+  send ends the snooze: the UserPromptSubmit branch calls
+  `__ada_snooze_release`, and the daemon sees its marker gone and skips the
+  reminder. Without that, a hold swallows the alert for a turn you started
+  after coming back. The zsh hook, opencode and Paseo therefore keep the
+  default `alert` scope; the Paseo watcher only sees status changes, so it has
+  no way to tell your turns from the agent's.
+- **"You sent it" is decided by `injected()`, the same function `label_for()`
+  uses**, so the label and the release can't disagree. A slash command and a
+  paste-only prompt count as yours; a task notification, CI event or system
+  reminder does not.
+- **The daemon waits by the wall clock in `POLL_SECONDS` steps**, rechecking
+  the marker each step, so the reminder fires at the marker's wake time and a
+  released hold ends the daemon within one step.
+  `test/snooze_daemon_check.py` drives it with a fake `Clock` that patches
+  `time.time` and `time.sleep` together; patching only `sleep` makes the loop
+  spin until the real wake time.
+- **`mktemp -t` ignores `TMPDIR` on macOS** (checked on this machine: it wrote
+  to the per-user `/var/folders/.../T/` with `TMPDIR` pointing elsewhere). So
+  the daemon's handoff file is never under `$BATS_TEST_TMPDIR`, and a test
+  cannot find its daemon by that path. The launcher test that leaves a daemon
+  asleep puts a unique label in the daemon's argv and kills it by that.
+
 ## The feedback note opens links via the adaOpen bridge
 
 The alert carries a small feedback note in its corner (`#feedbackBox` in

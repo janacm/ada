@@ -49,7 +49,8 @@ setup_common() {
   # Every integration now passes a session key, and a key alone would spawn the
   # daemon for the mute button. Tests that exercise the button turn it back on.
   export ADA_MUTE_BUTTON=0
-  unset ADA_SESSION_KEY ADA_SESSION_KIND ADA_MUTE_DIR ADA_MUTE_MAX_AGE ADA_MUTE_FILE
+  unset ADA_SESSION_KEY ADA_SESSION_KIND ADA_MUTE_DIR ADA_MUTE_MAX_AGE ADA_MUTE_FILE \
+        ADA_SNOOZE_SCOPE ADA_SNOOZE_HOLD_FILE ADA_SNOOZE_LOG
 
   export ADA_ALERT_FILE="$REPO_ROOT/alert.html"
 

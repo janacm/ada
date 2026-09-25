@@ -9,4 +9,6 @@
 [ -n "${ADA_PROBE_ENV_OUT:-}" ] && printf 'ADA_CLICK_URL=%s\n' "${ADA_CLICK_URL:-}" > "$ADA_PROBE_ENV_OUT"
 # The session identity the integration passed, for the mute-key assertions.
 [ -n "${ADA_PROBE_SESSION_OUT:-}" ] && printf '%s %s\n' "${ADA_SESSION_KEY:-}" "${ADA_SESSION_KIND:-}" > "$ADA_PROBE_SESSION_OUT"
+# And whether a snooze of this alert would hold the rest of the session.
+[ -n "${ADA_PROBE_SCOPE_OUT:-}" ] && printf '%s\n' "${ADA_SNOOZE_SCOPE:-}" > "$ADA_PROBE_SCOPE_OUT"
 exit 0

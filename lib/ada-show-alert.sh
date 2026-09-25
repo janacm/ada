@@ -23,6 +23,9 @@
 #                       terminal (default "session")
 #   ADA_MUTE_BUTTON     0 hides the mute button (existing mutes still apply)
 #   ADA_MUTE_DIR / ADA_MUTE_MAX_AGE  see lib/ada-mute.sh
+#   ADA_SNOOZE_SCOPE    "session": snoozing also holds the session's later
+#                       alerts until the snooze wakes. Default "alert" re-shows
+#                       only the snoozed alert. See lib/ada-mute.sh.
 #   ADA_SNOOZED         set by the snooze daemon when re-arming an alert
 #   ADA_NATIVE_ALERT    path to ada-alert native helper
 # =============================================================
@@ -42,15 +45,24 @@ selfdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # a missing alert.
 session_key=${ADA_SESSION_KEY:-}
 mute_file=""
+hold_file=""
 if [[ -f "$selfdir/ada-mute.sh" ]]; then
   # shellcheck source=lib/ada-mute.sh
   . "$selfdir/ada-mute.sh"
   __ada_mute_prune
   if [[ -n "$session_key" ]]; then
     __ada_is_muted "$session_key" && exit 0
+    # A session-scoped snooze holds the session's alerts until it wakes. The
+    # daemon lifts the hold before its own relaunch, so the reminder gets out.
+    __ada_snooze_held "$session_key" && exit 0
     # ADA_MUTE_BUTTON=0 hides the button; existing mutes still apply.
     if [[ "${ADA_MUTE_BUTTON:-1}" == 1 ]]; then
       mute_file=$(__ada_mute_file "$session_key") || mute_file=""
+    fi
+    # Only an integration that can tell your prompts from the agent's own turns
+    # opts in, because it is also the one that releases the hold when you type.
+    if [[ "${ADA_SNOOZE_SCOPE:-alert}" == session ]]; then
+      hold_file=$(__ada_snooze_hold_file "$session_key") || hold_file=""
     fi
   fi
 fi
@@ -184,7 +196,8 @@ if [[ "$needs_daemon" == 1 ]] && command -v python3 >/dev/null 2>&1 \
    && [[ -f "$selfdir/ada-snooze-daemon.py" ]]; then
   handoff=$(mktemp -t ada-snooze.XXXXXX 2>/dev/null) || handoff="${TMPDIR:-/tmp}/ada-snooze.$$"
   deadline=$(( ${auto_close%%.*} + 15 )); (( deadline > 0 )) || deadline=105
-  ADA_MUTE_FILE="$mute_file" python3 "$selfdir/ada-snooze-daemon.py" "$handoff" "$deadline" \
+  ADA_MUTE_FILE="$mute_file" ADA_SNOOZE_HOLD_FILE="$hold_file" \
+    python3 "$selfdir/ada-snooze-daemon.py" "$handoff" "$deadline" \
     "$selfdir/ada-show-alert.sh" "$cmd" "$duration" "$code" \
     "$alert_file" "$auto_close" "$snooze_minutes" "$focus_app" "$click_url" >/dev/null 2>&1 &
   for _ in {1..60}; do

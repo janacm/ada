@@ -14,7 +14,10 @@
 # to a handoff file and bakes them into the alert URL. The page
 # then signals a decision with a no-cors fetch:
 #
-#   GET /<token>/snooze/<minutes>  -> sleep, then relaunch the alert
+#   GET /<token>/snooze/<minutes>  -> sleep, then relaunch the alert. With
+#                                     $ADA_SNOOZE_HOLD_FILE set, also hold the
+#                                     session's other alerts until then, and
+#                                     skip the relaunch if the hold is released
 #   GET /<token>/focus             -> `open` the click URL if one was provided
 #                                     (e.g. claude://resume?session=…), else
 #                                     focus the source app; no relaunch
@@ -58,6 +61,13 @@ click_url = sys.argv[11] if len(sys.argv) > 11 else os.environ.get("ADA_CLICK_UR
 # The marker the "Mute this …" button creates. ada-show-alert.sh resolves and
 # validates it (lib/ada-mute.sh owns the naming rule), so it is used verbatim.
 mute_file = os.environ.get("ADA_MUTE_FILE", "")
+# The session hold a snooze writes when the integration opted into
+# ADA_SNOOZE_SCOPE=session (see the snooze hold section of lib/ada-mute.sh).
+# Resolved and validated by the launcher as well, so also used verbatim.
+hold_file = os.environ.get("ADA_SNOOZE_HOLD_FILE", "")
+
+# How often a snoozing daemon wakes to check the clock and its hold marker.
+POLL_SECONDS = 10.0
 
 try:
     deadline = float(deadline_s)
@@ -147,6 +157,49 @@ class LoopbackServer(HTTPServer):
         self.server_name, self.server_port = self.server_address[:2]
 
 
+def write_hold(wake):
+    """Publish the session hold for this snooze. False when there is none to
+    write or it could not be written, which leaves a plain one-alert snooze."""
+    if not hold_file:
+        return False
+    try:
+        os.makedirs(os.path.dirname(hold_file), exist_ok=True)
+        # Written beside the marker and renamed over it, so the launcher never
+        # reads half a line. O_EXCL | O_NOFOLLOW: nothing already sitting at
+        # the temp name, a symlink included, is ever written through.
+        tmp = "%s.%s.tmp" % (hold_file, token)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, "w") as f:
+            f.write("%d %s\n" % (wake, token))
+        os.replace(tmp, hold_file)
+        return True
+    except OSError:
+        return False
+
+
+def hold_is_ours():
+    try:
+        fd = os.open(hold_file, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd) as f:
+            return f.read().split()[1:2] == [token]
+    except OSError:
+        return False
+
+
+def wait_until(wake, holding):
+    """Sleep in short steps until the wall-clock wake time, which is what the
+    hold marker records; one long time.sleep() is not guaranteed to line up
+    with it across a Mac that slept with its lid shut. Returns False as soon as
+    the session's hold is gone, i.e. the user went back to the session."""
+    while True:
+        if holding and not hold_is_ours():
+            return False
+        left = wake - time.time()
+        if left <= 0:
+            return True
+        time.sleep(min(left, POLL_SECONDS))
+
+
 def daemonize():
     """Double-fork + setsid so we detach from the launching terminal."""
     if os.fork() > 0:
@@ -232,8 +285,19 @@ def main():
         trace("exit without snooze: %r" % (result,))
         return
 
-    trace("snooze %dm -> relaunch after sleep" % result[1])
-    time.sleep(result[1] * 60)
+    wake = int(time.time() + result[1] * 60)
+    holding = write_hold(wake)
+    trace("snooze %dm -> relaunch after sleep%s"
+          % (result[1], " (holding %s)" % hold_file if holding else ""))
+    if not wait_until(wake, holding):
+        trace("snooze released early: %s" % hold_file)
+        return
+    if holding:
+        # Lift the hold first, or the launcher would drop this very relaunch.
+        try:
+            os.remove(hold_file)
+        except OSError:
+            pass
     env = dict(os.environ)
     env["ADA_SNOOZED"] = "1"
     env["ADA_ALERT_FILE"] = alert_file

@@ -45,6 +45,9 @@
 #   ADA_SKIP_OWN_TERMINAL silence when terminal is frontmost (default 1)
 #   ADA_SKIP_WHEN_ACTIVE  extra frontmost apps to stay silent for
 #   ADA_CLAUDE_STALE_MAX  max age (s) of a fallback start stamp (default 21600)
+#   ADA_SNOOZE_SCOPE      "session" (default here): a snooze also holds the
+#                         conversation's later alerts until it wakes or you
+#                         send a prompt; "alert" re-shows only the snoozed one
 #   ADA_DEBUG_LOG         when set, log each payload for debugging (default off)
 # =============================================================
 set -u
@@ -134,29 +137,35 @@ def unpaste(p):
         parts, paste_only = pastes, True
     return PASTED_TAG.sub(" ", " ".join(parts)).strip(), paste_only
 
-def label_for(prompt):
-    # A turn label a human can read on a maximized window.
+SLASH_COMMAND = re.compile(r"<command-name>\s*(.*?)\s*</command-name>", re.S)
+
+def injected(prompt):
+    # Returns (text, is_injected): the prompt with pastes collapsed, and whether
+    # it is wholly a block the agent injected rather than something you sent.
     #
     # Not every UserPromptSubmit carries something you typed. The agent fires
     # the same hook for messages IT injects into the conversation -- a
     # background task finishing, a slash command, a system reminder, a CI event
-    # -- and those arrive as raw markup. Rendering one verbatim fills the alert
-    # with task ids and file paths, so recover the human part instead.
+    # -- and those arrive as raw markup.
     p, paste_only = unpaste((prompt or "").strip())
 
     # A prompt that is only a paste is something you sent, even when what you
     # pasted is itself harness markup (a copied <task-notification> block). The
-    # injected-block rules below would relabel it as an agent event.
-    if paste_only:
-        return one_line(p)
-
-    # Machine-generated only when the prompt is WHOLLY markup: it opens with a
-    # hyphenated custom tag and closes on a tag. So neither
+    # injected-block rules would relabel it as an agent event.
+    #
+    # Otherwise machine-generated only when the prompt is WHOLLY markup: it
+    # opens with a hyphenated custom tag and closes on a tag. So neither
     # "<div>foo</div> is not centering" nor a pasted
     # "<details><summary>log</summary>...</details> why does this fail?" is
     # touched. Both are realistic prompts that the weaker starts-with-< rule
     # mangled.
-    if not (INJECTED_OUTER_TAG.match(p) and p.endswith(">")):
+    return p, not paste_only and bool(INJECTED_OUTER_TAG.match(p)) and p.endswith(">")
+
+def label_for(p, is_injected):
+    # A turn label a human can read on a maximized window, from what injected()
+    # returned. Rendering an injected block verbatim fills the alert with task
+    # ids and file paths, so recover the human part instead.
+    if not is_injected:
         return one_line(p)
 
     # The regexes below backtrack superlinearly on large or malformed markup
@@ -167,7 +176,7 @@ def label_for(prompt):
 
     # A slash command: show the command and its arguments, which IS what the
     # user typed, just wrapped in markup by the agent.
-    m = re.search(r"<command-name>\s*(.*?)\s*</command-name>", p, re.S)
+    m = SLASH_COMMAND.search(p)
     if m:
         args = re.search(r"<command-args>\s*(.*?)\s*</command-args>", p, re.S)
         return one_line(m.group(1) + " " + (args.group(1) if args else ""))
@@ -194,18 +203,22 @@ sid = d.get("session_id", "") or ""
 cwd = clean(d.get("cwd", ""))
 tp  = clean(d.get("transcript_path", ""))
 pr  = clean(d.get("prompt", ""))
-lb  = label_for(d.get("prompt", ""))
+text, is_injected = injected(d.get("prompt", ""))
+lb  = label_for(text, is_injected)
+# Did you send this prompt, as opposed to the agent injecting it? A slash
+# command is wrapped in markup but still something you typed.
+by  = "0" if is_injected and not SLASH_COMMAND.search(text[:8192]) else "1"
 # Fields are joined with US (\x1f), a NON-whitespace delimiter, so an empty field
 # (e.g. a payload with no transcript_path) is preserved instead of collapsing the
 # way adjacent IFS-whitespace tabs would — which used to shift the prompt into
 # transcript_path and drop it. The RAW prompt stays LAST so read -r keeps it
 # whole; it is only used for the debug breadcrumb, while the label is what gets
 # stamped and displayed.
-print(ev + "\x1f" + sid + "\x1f" + cwd + "\x1f" + tp + "\x1f" + lb + "\x1f" + pr)
+print(ev + "\x1f" + sid + "\x1f" + cwd + "\x1f" + tp + "\x1f" + by + "\x1f" + lb + "\x1f" + pr)
 ' 2>/dev/null)
 [[ -z "$fields" ]] && exit 0
 
-IFS=$'\x1f' read -r event session_id cwd transcript_path label prompt <<<"$fields"
+IFS=$'\x1f' read -r event session_id cwd transcript_path by_user label prompt <<<"$fields"
 [[ -z "$event" ]] && exit 0
 
 # Opt-in breadcrumb for debugging Codex-vs-Claude payload shapes. Triggered by
@@ -260,6 +273,14 @@ case "$event" in
     mkdir -p "$state_dir"
     date +%s            > "$state_dir/$session_id.start"
     printf '%s' "$label" > "$state_dir/$session_id.prompt"
+    # A prompt you sent ends a snooze on this conversation: you're back, so this
+    # turn's alert should fire and the pending reminder is stale. Turns the agent
+    # opens itself (a background task finishing, a CI event) keep the hold.
+    if [[ "$by_user" == 1 && -f "$dir/ada-mute.sh" ]]; then
+      # shellcheck source=lib/ada-mute.sh
+      . "$dir/ada-mute.sh"
+      __ada_snooze_release "claude-$session_id"
+    fi
     ;;
 
   Stop)
@@ -326,10 +347,14 @@ case "$event" in
     # plain dismiss). ADA_FOCUS_APP_NAME labels the click hint ("…return to Claude").
     # ADA_SESSION_KEY lets the alert's "Mute this conversation" button silence
     # this session; the launcher drops alerts for a muted key (lib/ada-mute.sh).
+    # ADA_SNOOZE_SCOPE=session makes a snooze hold the conversation's later
+    # alerts too, since the agent keeps opening turns of its own; the
+    # UserPromptSubmit branch above lifts the hold when you type.
     # __ada_notify (lib/ada-notify.sh) owns the frontmost-app suppression, the
     # duration formatting and the launcher call, shared with the opencode plugin.
     ADA_REPO_DIR="$cwd" ADA_CLICK_URL="$click_url" ADA_FOCUS_APP_NAME="$focus_name" \
     ADA_SESSION_KEY="claude-$resolved_sid" ADA_SESSION_KIND=conversation \
+    ADA_SNOOZE_SCOPE="${ADA_SNOOZE_SCOPE:-session}" \
       __ada_notify "$label" "$elapsed" 0 >/dev/null 2>&1 &
     ;;
 esac
