@@ -80,6 +80,18 @@
     margin-top: -1.75rem;
   }
 
+  .confirm-note + .confirm-note { margin-top: 0.5rem; }
+
+  /* A command to run (the pause's resume), inside a note. inline-block, so it
+     moves to the next line whole rather than breaking at its space. */
+  .confirm-note code,
+  .paused-note code {
+    display: inline-block;
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 0.9em;
+    color: #c7d2fe;
+  }
+
   .cmd-box {
     background: rgba(39, 39, 42, 0.8);
     border: 1px solid rgba(63, 63, 70, 0.6);
@@ -175,7 +187,8 @@
 
   .snooze[hidden] { display: none; }
 
-  .snooze-toggle {
+  .snooze-toggle,
+  .pause-toggle {
     appearance: none;
     cursor: pointer;
     font: inherit;
@@ -199,9 +212,20 @@
     background: rgba(99, 102, 241, 0.1);
   }
 
-  .snooze-toggle svg { width: 15px; height: 15px; }
-  .snooze-toggle .snooze-chevron { width: 13px; height: 13px; transition: transform 0.15s ease; }
-  .snooze.is-open .snooze-chevron { transform: rotate(180deg); }
+  .snooze-toggle svg,
+  .pause-toggle svg { width: 15px; height: 15px; }
+  .snooze-toggle .snooze-chevron,
+  .pause-toggle .pause-chevron { width: 13px; height: 13px; transition: transform 0.15s ease; }
+  .snooze.is-open .snooze-chevron,
+  .pause-toggle[aria-expanded="true"] .pause-chevron { transform: rotate(180deg); }
+
+  /* The pause toggle stays in the grey of the row it sits in. */
+  .pause-toggle:hover,
+  .pause-toggle[aria-expanded="true"] {
+    color: #e4e4e7;
+    background: rgba(63, 63, 70, 0.5);
+    border-color: rgba(113, 113, 122, 0.8);
+  }
 
   .snooze-options {
     display: none;
@@ -212,6 +236,22 @@
   }
 
   .snooze.is-open .snooze-options {
+    display: flex;
+    animation: snooze-reveal 0.15s ease-out;
+  }
+
+  /* The pause durations: their own row under the grey one, opened by the pause
+     toggle with a class, like the snooze row. */
+  .pause-options {
+    display: none;
+    margin-top: 0.9rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+
+  .pause-options.is-open {
     display: flex;
     animation: snooze-reveal 0.15s ease-out;
   }
@@ -263,12 +303,16 @@
 
   .snooze-toggle:focus-visible,
   .snooze-pin:focus-visible,
-  .snooze-btn:focus-visible {
+  .snooze-btn:focus-visible,
+  .pause-toggle:focus-visible,
+  .pause-btn:focus-visible,
+  .summary-row:focus-visible {
     outline: 2px solid rgba(129, 140, 248, 0.8);
     outline-offset: 2px;
   }
 
-  .snooze-btn {
+  .snooze-btn,
+  .pause-btn {
     appearance: none;
     cursor: pointer;
     font: inherit;
@@ -287,20 +331,24 @@
     border-color: rgba(129, 140, 248, 0.7);
   }
 
-  .snooze-btn:active { transform: scale(0.95); }
+  .snooze-btn:active,
+  .pause-btn:active { transform: scale(0.95); }
 
   /* Custom-duration field: hidden until the "Custom" pill is clicked. Note the
      base rule sets display:none so the [hidden]-vs-display pitfall (see .badge.repo)
      can't apply — visibility is toggled with the .is-open class instead. */
-  .snooze-custom {
+  .snooze-custom,
+  .pause-custom {
     display: none;
     align-items: center;
     gap: 0.4rem;
   }
 
-  .snooze-custom.is-open { display: inline-flex; }
+  .snooze-custom.is-open,
+  .pause-custom.is-open { display: inline-flex; }
 
-  .snooze-custom-input {
+  .snooze-custom-input,
+  .pause-custom-input {
     appearance: none;
     -webkit-appearance: none;
     width: 5rem;
@@ -320,42 +368,173 @@
     transition: border-color 0.15s ease;
   }
 
-  .snooze-custom-input::placeholder { color: #71717a; font-weight: 500; }
+  .snooze-custom-input::placeholder,
+  .pause-custom-input::placeholder { color: #71717a; font-weight: 500; }
   .snooze-custom-input:focus { border-color: rgba(129, 140, 248, 0.8); }
 
-  .snooze-custom-input.invalid {
+  .pause-custom-input {
+    background: rgba(63, 63, 70, 0.25);
+    border-color: rgba(82, 82, 91, 0.5);
+  }
+
+  .pause-custom-input:focus { border-color: rgba(161, 161, 170, 0.8); }
+
+  .snooze-custom-input.invalid,
+  .pause-custom-input.invalid {
     border-color: rgba(239, 68, 68, 0.7);
     animation: snooze-shake 0.3s ease;
   }
 
   /* Strip the number-input spinners so it reads as a pill, not a form field. */
   .snooze-custom-input::-webkit-inner-spin-button,
-  .snooze-custom-input::-webkit-outer-spin-button {
+  .snooze-custom-input::-webkit-outer-spin-button,
+  .pause-custom-input::-webkit-inner-spin-button,
+  .pause-custom-input::-webkit-outer-spin-button {
     -webkit-appearance: none;
     margin: 0;
   }
 
-  /* "Mute this conversation": its own row under the snooze bar, a quieter grey
-     pill than the snooze ones. Shown with a class for the same reason as
-     .badge.repo — a display rule would beat the [hidden] UA rule. */
+  /* "Mute this conversation" and "Pause all alerts": their own row under the
+     snooze bar, quieter grey pills than the snooze ones. Shown with a class for
+     the same reason as .badge.repo: a display rule would beat the [hidden] UA
+     rule. The pause pills share the mute pill's grey. */
   .mute {
     margin-top: 1rem;
     display: none;
     justify-content: center;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
   }
 
   .mute.is-visible { display: flex; }
 
-  .snooze-btn.mute-btn {
+  .snooze-btn.mute-btn,
+  .pause-btn {
     color: #a1a1aa;
     background: rgba(63, 63, 70, 0.25);
     border-color: rgba(82, 82, 91, 0.5);
   }
 
-  .snooze-btn.mute-btn:hover {
+  .snooze-btn.mute-btn:hover,
+  .pause-btn:hover {
     color: #e4e4e7;
     background: rgba(63, 63, 70, 0.5);
     border-color: rgba(113, 113, 122, 0.8);
+  }
+
+  /* A test alert shown during a pause says so above the hint. Selectable, so
+     the resume command can be copied; clicks on it don't dismiss. */
+  .paused-note {
+    max-width: min(48rem, 90vw);
+    margin: -1rem auto 1.25rem;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #a1a1aa;
+    cursor: text;
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  /* The summary of a pause: a scrolling list where the command box sits on a
+     normal alert, in the same zinc panel. */
+  .summary-list {
+    width: min(44rem, 90vw);
+    max-height: min(40vh, 22rem);
+    overflow-y: auto;
+    margin: 0 auto 2rem;
+    padding: 0.35rem;
+    text-align: left;
+    background: rgba(39, 39, 42, 0.8);
+    border: 1px solid rgba(63, 63, 70, 0.6);
+    border-radius: 12px;
+    backdrop-filter: blur(6px);
+    cursor: default;
+  }
+
+  .summary-row {
+    appearance: none;
+    font: inherit;
+    color: inherit;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.75rem;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    text-align: left;
+  }
+
+  button.summary-row { cursor: pointer; }
+  button.summary-row:hover { background: rgba(99, 102, 241, 0.12); }
+
+  .summary-time {
+    flex: none;
+    min-width: 4.75rem;
+    white-space: nowrap;
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    color: #71717a;
+  }
+
+  .summary-mark {
+    flex: none;
+    width: 1.4rem;
+    height: 1.4rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    border: 1px solid transparent;
+  }
+
+  .status-ask .summary-mark { color: #c7d2fe; background: rgba(99, 102, 241, 0.18); border-color: rgba(99, 102, 241, 0.45); }
+  .status-fail .summary-mark { color: #f87171; background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.4); }
+  .status-ok .summary-mark { color: #4ade80; background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.35); }
+
+  .summary-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  .summary-label {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: #e4e4e7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .summary-meta { font-size: 0.8rem; color: #71717a; }
+
+  .summary-tag {
+    flex: none;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid rgba(82, 82, 91, 0.6);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #a1a1aa;
+  }
+
+  .summary-open { flex: none; width: 14px; height: 14px; color: #52525b; }
+  button.summary-row:hover .summary-open,
+  button.summary-row:focus-visible .summary-open { color: #c7d2fe; }
+
+  .summary-more {
+    padding: 0.55rem 0.75rem;
+    font-size: 0.85rem;
+    color: #71717a;
   }
 
   @keyframes snooze-shake {
@@ -425,9 +604,12 @@
   @media (prefers-reduced-motion: reduce) {
     .icon { animation: none; }
     .container { animation: none; }
-    .snooze-custom-input.invalid { animation: none; }
-    .snooze.is-open .snooze-options { animation: none; }
-    .snooze-chevron { transition: none; }
+    .snooze-custom-input.invalid,
+    .pause-custom-input.invalid { animation: none; }
+    .snooze.is-open .snooze-options,
+    .pause-options.is-open { animation: none; }
+    .snooze-chevron,
+    .pause-chevron { transition: none; }
   }
 </style>
 </head>
@@ -475,7 +657,23 @@
   </div>
 
   <div class="mute" id="muteBar"></div>
+  <div class="pause-options" id="pauseOptions"></div>
 </div>
+
+<!-- "Pause all alerts", cloned into #muteBar when the launcher offers it. -->
+<template id="pauseToggleTemplate">
+  <button type="button" class="pause-toggle" id="pauseToggle" aria-expanded="false" aria-controls="pauseOptions"
+          title="Silence every alert from every session until the time you pick. What arrives meanwhile is shown in one summary when the pause ends.">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+    <span>Pause all alerts</span>
+    <svg class="pause-chevron" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+  </button>
+</template>
+
+<!-- A summary row that can open its alert's target ends in this arrow. -->
+<template id="summaryOpenTemplate">
+  <svg class="summary-open" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+</template>
 
 <div class="feedback" id="feedbackBox">
   <p class="feedback-title">Feedback</p>
@@ -486,6 +684,9 @@
 
 <script>
   const params = new URLSearchParams(location.search);
+  // mode=summary: what arrived while alerts were paused, in one window (see
+  // renderSummary below), with no snooze, mute or pause controls.
+  const summaryMode = params.get('mode') === 'summary';
 
   function decodeBase64Url(value) {
     if (!value) return null;
@@ -518,7 +719,9 @@
 
   const cmd = textParam('cmdb64', 'cmd') || '—';
   const duration = params.get('duration') || '—';
-  const code = params.get('code');
+  // A summary is no one command's result: no exit status, and its title never
+  // turns red.
+  const code = summaryMode ? null : params.get('code');
 
   document.getElementById('cmdDisplay').textContent = cmd;
   document.getElementById('durationDisplay').textContent = duration;
@@ -538,7 +741,7 @@
   const sessionKind = textParam('mutekindb64', 'mutekind') || 'session';
   const snoozeHoldsSession = params.get('snoozescope') === 'session';
 
-  if (params.get('snoozed') === '1') {
+  if (!summaryMode && params.get('snoozed') === '1') {
     document.querySelector('.subtitle').textContent = snoozeHoldsSession
       ? 'Snooze over · this ' + sessionKind + ' can alert again'
       : 'Snoozed reminder · the terminal is ready for you';
@@ -570,18 +773,39 @@
   const sport = params.get('sport');
   const stoken = params.get('stoken');
   const daemonEnabled = Boolean(sport && stoken);
-  const snoozeEnabled = params.get('snooze') === '1' && daemonEnabled;
-  const focusEnabled = params.get('focus') === '1' && daemonEnabled;
-  const muteEnabled = params.get('mute') === '1' && daemonEnabled;
+  const snoozeEnabled = !summaryMode && params.get('snooze') === '1' && daemonEnabled;
+  const focusEnabled = !summaryMode && params.get('focus') === '1' && daemonEnabled;
+  const muteEnabled = !summaryMode && params.get('mute') === '1' && daemonEnabled;
+  // A test alert shown during a pause carries pauseduntil (0 = until resumed):
+  // it says the pause is on instead of offering another one.
+  const pausedUntil = summaryMode ? null : params.get('pauseduntil');
+  const pauseEnabled = !summaryMode && pausedUntil === null && params.get('pause') === '1' && daemonEnabled;
+  // The command that ends a pause on this install, worked out by the launcher.
+  const pauseResume = decodeBase64Url(params.get('pauseresumeb64')) || '';
 
-  if (focusEnabled) {
-    const focusName = textParam('focusnameb64', 'focusname');
-    const hint = document.getElementById('dismissHint');
-    hint.textContent = 'Click anywhere to return' + (focusName ? ' to ' + focusName : '') + ' or press ';
+  const hint = document.getElementById('dismissHint');
+  // "<lead> or press Esc to dismiss", with the key in a <kbd>.
+  function setHint(lead) {
+    hint.textContent = lead + ' or press ';
     const kbd = document.createElement('kbd');
     kbd.textContent = 'Esc';
     hint.appendChild(kbd);
     hint.appendChild(document.createTextNode(' to dismiss'));
+  }
+
+  if (focusEnabled) {
+    const focusName = textParam('focusnameb64', 'focusname');
+    setHint('Click anywhere to return' + (focusName ? ' to ' + focusName : ''));
+  }
+
+  // A new element with its class and text (set with textContent), appended to
+  // parent.
+  function addEl(parent, tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text) el.textContent = text;
+    parent.appendChild(el);
+    return el;
   }
 
   function signal(path) {
@@ -620,32 +844,52 @@
     closeWindow();
   }
 
-  // "2:30 PM", "2:30 PM tomorrow", or "2:30 PM Saturday". A snooze is at most
-  // 1440 minutes, but across a daylight-saving change that can still land two
-  // calendar days out, so tomorrow is checked rather than assumed.
-  function clockIn(mins) {
-    const at = new Date(Date.now() + mins * 60000);
+  // "2:30 PM", "2:30 PM tomorrow", "2:30 PM yesterday", "2:30 PM Saturday"
+  // within a week either way, else "2:30 PM on Oct 2". A snooze is at most 1440
+  // minutes, but across a daylight-saving change that can still land two
+  // calendar days out, so the days are counted rather than assumed. A pause
+  // can last longer, and a summary names a time in the past.
+  function clockAt(ms) {
+    const at = new Date(ms);
     const time = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    const today = new Date();
-    if (at.toDateString() === today.toDateString()) return time;
-    const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-    if (at.toDateString() === tomorrow.toDateString()) return time + ' tomorrow';
-    return time + ' ' + at.toLocaleDateString([], { weekday: 'long' });
+    const now = new Date();
+    const days = Math.round((new Date(at.getFullYear(), at.getMonth(), at.getDate()) -
+      new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+    if (days === 0) return time;
+    if (days === 1) return time + ' tomorrow';
+    if (days === -1) return time + ' yesterday';
+    if (Math.abs(days) < 7) return time + ' ' + at.toLocaleDateString([], { weekday: 'long' });
+    return time + ' on ' + at.toLocaleDateString([], {
+      month: 'short', day: 'numeric',
+      year: at.getFullYear() === now.getFullYear() ? undefined : 'numeric',
+    });
   }
 
-  // Replace the alert with a short confirmation. Text goes in with textContent,
-  // since the session noun comes from the URL.
-  function confirmScreen(icon, title, subtitle, note) {
+  function clockIn(mins) {
+    return clockAt(Date.now() + mins * 60000);
+  }
+
+  // How long a confirmation stays up: long enough to read two lines, and the
+  // pause's resume command too. A click or Esc closes it sooner.
+  const CONFIRM_MS = 1200;
+  const PAUSE_CONFIRM_MS = 2000;
+
+  // Replace the alert with a short confirmation. notes is one line or a list
+  // of them under the subtitle; a line given as { text, code } shows code in
+  // monospace after text. Text goes in with textContent, since the session noun
+  // and the resume command come from the URL.
+  function confirmScreen(icon, title, subtitle, notes, holdMs = CONFIRM_MS) {
     const app = document.getElementById('app');
-    app.innerHTML =
-      '<span class="icon"></span><p class="title"></p><p class="subtitle"></p>' +
-      (note ? '<p class="confirm-note"></p>' : '');
-    app.querySelector('.icon').textContent = icon;
-    app.querySelector('.title').textContent = title;
-    app.querySelector('.subtitle').textContent = subtitle;
-    if (note) app.querySelector('.confirm-note').textContent = note;
-    // Long enough to read two lines; a click or Esc closes it sooner.
-    setTimeout(closeWindow, 1200);
+    app.textContent = '';
+    addEl(app, 'span', 'icon', icon);
+    addEl(app, 'p', 'title', title);
+    addEl(app, 'p', 'subtitle', subtitle);
+    for (const line of Array.isArray(notes) ? notes : [notes]) {
+      if (!line) continue;
+      if (typeof line === 'string') { addEl(app, 'p', 'confirm-note', line); continue; }
+      addEl(addEl(app, 'p', 'confirm-note', line.text), 'code', '', line.code);
+    }
+    setTimeout(closeWindow, holdMs);
   }
 
   function snooze(mins) {
@@ -673,21 +917,173 @@
     confirmScreen('🔕', 'Muted', 'No more alerts from this ' + kind, '');
   }
 
+  // Pause every alert, from every session. The daemon runs ada-pause.sh, which
+  // also starts the timer that shows the summary when the pause ends; if that
+  // run fails, the daemon raises an alert of its own, since this page has
+  // already said "Paused".
+  function pause(mins) {
+    if (decided || dismissed) return;
+    decided = true;
+    signal(`pause/${mins}`);
+    confirmScreen('⏸️', 'Paused', 'All alerts are paused until ' + clockIn(mins), [
+      'What arrives meanwhile is shown in one summary when the pause ends',
+      pauseResume && { text: 'Resume early: ', code: pauseResume },
+    ], PAUSE_CONFIRM_MS);
+  }
+
+  // Delays the launcher passed, in minutes. The daemon ignores a delay outside
+  // 1..1440, so such a preset would only confirm a snooze or a pause that never
+  // happens.
+  function durations(name) {
+    return (params.get(name) || '5,10,30,60')
+      .split(',').map(n => parseInt(n, 10)).filter(n => Number.isFinite(n) && n > 0 && n <= 1440);
+  }
+
+  // One row of delay pills: a pill per preset, then "Custom", a pill that
+  // reveals a minutes input only once clicked. Snooze and pause each build one,
+  // with their own class names, so a page-wide locator for one row never
+  // matches the other (Playwright's strict mode). Returns cancelCustom, which
+  // closes the input when the row folds.
+  function buildDurationRow({ container, before = null, mins, btnClass, wrapClass, inputClass,
+                              inputLabel, presetLabel, onPick }) {
+    function pill(text, onClick) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = btnClass;
+      btn.textContent = text;
+      btn.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+      return btn;
+    }
+    for (const m of mins) {
+      const btn = pill(m + 'm', () => onPick(m));
+      if (presetLabel) btn.setAttribute('aria-label', presetLabel(m));
+      container.insertBefore(btn, before);
+    }
+
+    // The daemon accepts 1..1440 minutes (see ada-snooze-daemon.py), so mirror
+    // that range here and reject anything outside it.
+    const customBtn = pill('Custom', openCustom);
+
+    const customWrap = document.createElement('span');
+    customWrap.className = wrapClass;
+
+    const customInput = document.createElement('input');
+    customInput.type = 'number';
+    customInput.min = '1';
+    customInput.max = '1440';
+    customInput.inputMode = 'numeric';
+    customInput.className = inputClass;
+    customInput.placeholder = 'min';
+    customInput.setAttribute('aria-label', inputLabel);
+
+    const customSet = pill('Set', submitCustom);
+
+    function openCustom() {
+      customBtn.style.display = 'none';
+      customWrap.classList.add('is-open');
+      customInput.value = '';
+      customInput.focus();
+    }
+    function cancelCustom() {
+      customWrap.classList.remove('is-open');
+      customInput.classList.remove('invalid');
+      customBtn.style.display = '';
+    }
+    function submitCustom() {
+      const v = parseInt(customInput.value, 10);
+      if (Number.isFinite(v) && v > 0 && v <= 1440) { onPick(v); return; }
+      // Out of range / empty: flash the field, keep it open for another try.
+      customInput.classList.remove('invalid');
+      void customInput.offsetWidth; // restart the shake animation
+      customInput.classList.add('invalid');
+      customInput.focus();
+      customInput.select();
+    }
+
+    customInput.addEventListener('keydown', (e) => {
+      // Keep keystrokes off the global Esc-to-dismiss handler while typing.
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); submitCustom(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancelCustom(); }
+    });
+
+    customWrap.appendChild(customInput);
+    customWrap.appendChild(customSet);
+    container.insertBefore(customBtn, before);
+    container.insertBefore(customWrap, before);
+    return cancelCustom;
+  }
+
+  // Snooze and pause each unfold a row of delays, one at a time, so the page is
+  // never taller than a pinned snooze row plus the grey row. Folding the snooze
+  // row this way is for this alert only: the pin is left alone.
+  const unfolding = [];
+  function foldOthers(keep) {
+    for (const row of unfolding) if (row !== keep) row.setOpen(false);
+  }
+
+  const muteBar = document.getElementById('muteBar');
   if (muteEnabled) {
     const kind = sessionKind;
-    const bar = document.getElementById('muteBar');
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'snooze-btn mute-btn';
     btn.id = 'muteBtn';
     btn.textContent = '🔕 Mute this ' + kind;
     btn.addEventListener('click', (e) => { e.stopPropagation(); mute(kind); });
-    bar.appendChild(btn);
-    bar.addEventListener('click', (e) => e.stopPropagation());
-    bar.classList.add('is-visible');
+    muteBar.appendChild(btn);
   }
 
-  document.addEventListener('click', () => dismiss(focusEnabled ? 'focus' : 'dismiss'));
+  // "Pause all alerts", beside the mute pill. Its delays are the snooze ones
+  // (the launcher sends 5 10 30 60 when snooze is off), and it has no pin: the
+  // row always starts folded.
+  if (pauseEnabled) {
+    const toggle = document.getElementById('pauseToggleTemplate').content.firstElementChild.cloneNode(true);
+    const options = document.getElementById('pauseOptions');
+    const row = {
+      setOpen(open) {
+        options.classList.toggle('is-open', open);
+        toggle.setAttribute('aria-expanded', String(open));
+        if (!open) cancelCustom();
+      },
+    };
+    const cancelCustom = buildDurationRow({
+      container: options,
+      mins: durations('pausemins'),
+      btnClass: 'pause-btn',
+      wrapClass: 'pause-custom',
+      inputClass: 'pause-custom-input',
+      inputLabel: 'Custom pause minutes',
+      presetLabel: (m) => 'Pause all alerts for ' + m + (m === 1 ? ' minute' : ' minutes'),
+      onPick: pause,
+    });
+    unfolding.push(row);
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = toggle.getAttribute('aria-expanded') !== 'true';
+      if (open) foldOthers(row);
+      row.setOpen(open);
+    });
+    options.addEventListener('click', (e) => e.stopPropagation());
+    muteBar.appendChild(toggle);
+  }
+
+  if (muteEnabled || pauseEnabled) {
+    muteBar.addEventListener('click', (e) => e.stopPropagation());
+    muteBar.classList.add('is-visible');
+  }
+
+  // A press that began in the selectable paused note or in the summary list is
+  // a selection, or a row click let go elsewhere, even when it ends outside:
+  // the browser sends that click to the common ancestor, which is no dismiss.
+  let pressKept = false;
+  document.addEventListener('mousedown', (e) => {
+    pressKept = Boolean(e.target.closest && e.target.closest('#pausedNote, #summaryList'));
+  }, true);
+  document.addEventListener('click', () => {
+    if (pressKept) { pressKept = false; return; }
+    dismiss(focusEnabled ? 'focus' : 'dismiss');
+  });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') dismiss('dismiss');
   });
@@ -738,6 +1134,8 @@
       toggle.setAttribute('aria-expanded', String(open));
       if (!open) cancelCustom();
     }
+    const row = { setOpen };
+    unfolding.push(row);
     function renderPin() {
       pinBtn.setAttribute('aria-pressed', String(pinned));
       pinLabel.textContent = pinned ? 'Pinned open' : 'Pin open';
@@ -751,83 +1149,22 @@
       try { window.webkit?.messageHandlers?.adaSnoozePin?.postMessage(pinned); } catch (e) {}
     }
 
-    // The daemon ignores anything outside 1..1440, so such a preset would only
-    // show a confirmation for a snooze that never happens.
-    const mins = (params.get('snoozemins') || '5,10,30,60')
-      .split(',').map(n => parseInt(n, 10)).filter(n => Number.isFinite(n) && n > 0 && n <= 1440);
-    for (const m of mins) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'snooze-btn';
-      btn.textContent = m + 'm';
-      btn.addEventListener('click', (e) => { e.stopPropagation(); snooze(m); });
-      options.insertBefore(btn, pinBtn);
-    }
-
-    // Custom duration: a pill that reveals a number input only once clicked.
-    // The daemon accepts 1..1440 minutes (see ada-snooze-daemon.py), so mirror
-    // that range here and reject anything outside it.
-    const customBtn = document.createElement('button');
-    customBtn.type = 'button';
-    customBtn.className = 'snooze-btn';
-    customBtn.textContent = 'Custom';
-
-    const customWrap = document.createElement('span');
-    customWrap.className = 'snooze-custom';
-
-    const customInput = document.createElement('input');
-    customInput.type = 'number';
-    customInput.min = '1';
-    customInput.max = '1440';
-    customInput.inputMode = 'numeric';
-    customInput.className = 'snooze-custom-input';
-    customInput.placeholder = 'min';
-    customInput.setAttribute('aria-label', 'Custom snooze minutes');
-
-    const customSet = document.createElement('button');
-    customSet.type = 'button';
-    customSet.className = 'snooze-btn';
-    customSet.textContent = 'Set';
-
-    function openCustom() {
-      customBtn.style.display = 'none';
-      customWrap.classList.add('is-open');
-      customInput.value = '';
-      customInput.focus();
-    }
-    function cancelCustom() {
-      customWrap.classList.remove('is-open');
-      customInput.classList.remove('invalid');
-      customBtn.style.display = '';
-    }
-    function submitCustom() {
-      const v = parseInt(customInput.value, 10);
-      if (Number.isFinite(v) && v > 0 && v <= 1440) { snooze(v); return; }
-      // Out of range / empty: flash the field, keep it open for another try.
-      customInput.classList.remove('invalid');
-      void customInput.offsetWidth; // restart the shake animation
-      customInput.classList.add('invalid');
-      customInput.focus();
-      customInput.select();
-    }
-
-    customBtn.addEventListener('click', (e) => { e.stopPropagation(); openCustom(); });
-    customSet.addEventListener('click', (e) => { e.stopPropagation(); submitCustom(); });
-    customInput.addEventListener('keydown', (e) => {
-      // Keep keystrokes off the global Esc-to-dismiss handler while typing.
-      e.stopPropagation();
-      if (e.key === 'Enter') { e.preventDefault(); submitCustom(); }
-      else if (e.key === 'Escape') { e.preventDefault(); cancelCustom(); }
+    const cancelCustom = buildDurationRow({
+      container: options,
+      before: pinBtn,
+      mins: durations('snoozemins'),
+      btnClass: 'snooze-btn',
+      wrapClass: 'snooze-custom',
+      inputClass: 'snooze-custom-input',
+      inputLabel: 'Custom snooze minutes',
+      onPick: snooze,
     });
-
-    customWrap.appendChild(customInput);
-    customWrap.appendChild(customSet);
-    options.insertBefore(customBtn, pinBtn);
-    options.insertBefore(customWrap, pinBtn);
 
     toggle.addEventListener('click', (e) => {
       e.stopPropagation();
-      setOpen(!bar.classList.contains('is-open'));
+      const open = !bar.classList.contains('is-open');
+      if (open) foldOthers(row);
+      setOpen(open);
     });
     pinBtn.addEventListener('click', (e) => { e.stopPropagation(); setPinned(!pinned); });
 
@@ -837,6 +1174,131 @@
     setOpen(pinned);
     bar.hidden = false;
   }
+
+  // A test alert shown during a pause says so above the hint: until when, how
+  // many alerts wait, and the command that resumes. It takes the place of the
+  // pause toggle (pauseEnabled is false with pauseduntil).
+  if (pausedUntil !== null) {
+    const until = /^[0-9]{1,11}$/.test(pausedUntil) ? Number(pausedUntil) : null;
+    const held = params.get('pauseheld') || '';
+    let text = 'All alerts are paused';
+    if (until === 0) text += ' until you resume';
+    else if (until !== null) text += ' until ' + clockAt(until * 1000);
+    if (/^[0-9]{1,9}$/.test(held)) text += Number(held) ? ' · ' + Number(held) + ' held' : ' · none held yet';
+    const note = document.createElement('p');
+    note.className = 'paused-note';
+    note.id = 'pausedNote';
+    note.textContent = text + (pauseResume ? '. Resume: ' : '');
+    if (pauseResume) addEl(note, 'code', '', pauseResume);
+    // Selectable, so the command can be copied: a click here is not a dismiss,
+    // nor a drag that starts here and ends outside (see the click handler).
+    note.addEventListener('click', (e) => e.stopPropagation());
+    hint.parentNode.insertBefore(note, hint);
+  }
+
+  // --- the summary of a pause ---------------------------------------------------
+  // The launcher's payload (summaryb64; the format is in the header of
+  // lib/ada-show-alert.sh) is checked field by field, and a payload that fails
+  // any check shows a fallback instead of a half-drawn list. Every string goes
+  // in with textContent.
+  const STATUS = {
+    ask: { mark: '!', name: 'Needs you' },
+    fail: { mark: '✕', name: 'Failed' },
+    ok: { mark: '✓', name: 'Finished' },
+  };
+  const isCount = (v) => Number.isInteger(v) && v >= 0;
+  const isEpoch = (v) => isCount(v) && v < 1e11;
+  const isText = (v) => typeof v === 'string';
+
+  function readSummary() {
+    let data = null;
+    try { data = JSON.parse(decodeBase64Url(params.get('summaryb64'))); } catch (e) { return null; }
+    if (!data || typeof data !== 'object' || data.v !== 1) return null;
+    if (!isCount(data.n) || !isEpoch(data.end) || !['ended', 'resumed'].includes(data.why)) return null;
+    if (!Array.isArray(data.items) || data.items.length > 50 || data.n < data.items.length) return null;
+    const rowOk = (it) => Boolean(it) && typeof it === 'object' && isEpoch(it.t) &&
+      [it.l, it.d, it.c, it.r, it.k, it.a].every(isText) &&
+      ['ask', 'fail', 'ok'].includes(it.s) && (it.z === 0 || it.z === 1) && (it.o === 0 || it.o === 1);
+    if (!data.items.every(rowOk)) return null;
+    // The needs-you and failed totals, which like n can exceed the rows sent.
+    // Each is no smaller than its own rows, and the two fit in n. A payload
+    // without them has its rows counted instead.
+    for (const s of ['ask', 'fail']) {
+      const rowsOf = data.items.filter((it) => it.s === s).length;
+      if (data[s] === undefined) data[s] = rowsOf;
+      else if (!isCount(data[s]) || data[s] < rowsOf) return null;
+    }
+    return data.ask + data.fail <= data.n ? data : null;
+  }
+
+  // A row's time: "2:04 PM", with the date in front when it was not today.
+  function rowTime(ms) {
+    const at = new Date(ms);
+    const time = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (at.toDateString() === new Date().toDateString()) return time;
+    return at.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time;
+  }
+
+  function renderSummary() {
+    const app = document.getElementById('app');
+    const title = document.querySelector('.title');
+    const subtitle = document.querySelector('.subtitle');
+    const cmdBox = document.querySelector('.cmd-box');
+    statusIcon.textContent = '🔔';
+    // Their display rules would beat the hidden attribute (see .badge.repo).
+    cmdBox.style.display = 'none';
+    document.querySelector('.meta').style.display = 'none';
+
+    const data = readSummary();
+    if (!data) {
+      title.textContent = 'Alerts while you were paused';
+      subtitle.textContent = 'The list could not be read';
+      return;
+    }
+    const failed = data.fail;
+    const asking = data.ask;
+    title.textContent = data.n === 1 ? '1 alert while you were paused' : data.n + ' alerts while you were paused';
+    subtitle.textContent = (data.why === 'resumed' ? 'Resumed at ' : 'Pause ended at ') + clockAt(data.end * 1000) +
+      (failed ? ' · ' + failed + ' failed' : '') +
+      (asking ? ' · ' + asking + (asking === 1 ? ' needs you' : ' need you') : '');
+
+    const list = document.createElement('div');
+    list.className = 'summary-list';
+    list.id = 'summaryList';
+    // Scrolling, or clicking a row that opens nothing, is not a dismiss.
+    list.addEventListener('click', (e) => e.stopPropagation());
+    let anyOpens = false;
+    data.items.forEach((item, i) => {
+      // The page sends only the row's index; the daemon opens the target the
+      // launcher named for it. Without a daemon a row opens nothing.
+      const opens = item.o === 1 && daemonEnabled;
+      const row = document.createElement(opens ? 'button' : 'div');
+      row.className = 'summary-row status-' + item.s;
+      if (opens) {
+        anyOpens = true;
+        row.type = 'button';
+        row.title = item.a ? 'Open in ' + item.a : 'Open where it came from';
+        row.addEventListener('click', (e) => { e.stopPropagation(); dismiss('open/' + i); });
+      }
+      addEl(row, 'span', 'summary-time', rowTime(item.t * 1000));
+      const mark = addEl(row, 'span', 'summary-mark', STATUS[item.s].mark);
+      mark.setAttribute('role', 'img');
+      mark.setAttribute('aria-label', STATUS[item.s].name);
+      const body = addEl(row, 'span', 'summary-body', '');
+      addEl(body, 'span', 'summary-label', item.l || '—').title = item.l;
+      // A permission prompt's duration is the word "permission", not a time.
+      const meta = [item.r, item.d === 'permission' ? '' : item.d].filter(Boolean).join(' · ');
+      if (meta) addEl(body, 'span', 'summary-meta', meta);
+      if (item.z === 1) addEl(row, 'span', 'summary-tag', 'reminder');
+      if (opens) row.appendChild(document.getElementById('summaryOpenTemplate').content.firstElementChild.cloneNode(true));
+      list.appendChild(row);
+    });
+    if (data.n > data.items.length) addEl(list, 'div', 'summary-more', 'and ' + (data.n - data.items.length) + ' more');
+    app.insertBefore(list, cmdBox);
+    if (anyOpens) setHint('Click an alert to open it, click anywhere else');
+  }
+
+  if (summaryMode) renderSummary();
 
   let remaining = parseInt(params.get('autoclose'), 10);
   if (!Number.isFinite(remaining) || remaining <= 0) remaining = 90;

@@ -43,9 +43,9 @@ brew install bats-core   # one-time
 
 The suite is hermetic. `test/test_helper.bash` gives every test a private
 `TMPDIR`, PID file, and `HOME`, clears any `ADA_*` knobs that could bleed in from
-your shell, disables the snooze daemon and click-to-focus, and wires in
-`test/stubs/fake-ada-alert` so an "alert" just records the `file://` URL it would
-open instead of spawning a window. Install-path tests point `HOME` at a temp dir
+your shell, disables the snooze daemon, click-to-focus and the pause timer, and
+wires in `test/stubs/fake-ada-alert` so an "alert" just records the `file://` URL
+it would open instead of spawning a window. Install-path tests point `HOME` at a temp dir
 so they never touch your real `~/.zshrc`, `~/.claude/settings.json`, or
 `~/.codex/hooks.json`. `test/stubs/` also doubles `lsappinfo`, `launchctl`,
 `pgrep`, `pkill`, and `date` (the last lets `STUB_NOW` pin the clock so
@@ -56,7 +56,8 @@ The Python components are covered by component tests driven from bats: the
 snooze daemon's loopback token trust boundary (`test/ada-snooze-daemon.bats`,
 spawns the real daemon on a loopback port with a short deadline), everything
 past that boundary in-process (`test/snooze_daemon_check.py`: snooze relaunch,
-focus, preflight, failure paths), the Paseo poll/diff loop
+focus, pause and summary-row actions, the pause timer, preflight, failure
+paths), the Paseo poll/diff loop
 (`test/paseo_diff_check.py`, monkeypatches `run_json`/`fire`/the clock to assert
 finish/fail/seeding/dedupe/event-subset behavior), and the helpers that file
 fakes (`test/paseo_helpers_check.py`, against stub `paseo`/`lsappinfo`). The
@@ -66,8 +67,9 @@ into it through a pseudo-terminal (`test/pty_run.py`).
 ## Page Tests
 
 `alert.html`'s in-page behavior (query-string decoding, success/failure states,
-dismissal, the snooze bar, the feedback link) is covered by Playwright specs in
-`test/*.spec.js`, which load the page off disk with the native bridge stubbed:
+dismissal, the snooze bar, the pause control, the summary of a pause, the
+feedback link) is covered by Playwright specs in `test/*.spec.js`, which load
+the page off disk with the native bridge stubbed:
 
 ```sh
 npm install && npx playwright install chromium   # one-time

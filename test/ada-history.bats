@@ -23,12 +23,12 @@ field() {
 @test "a shown alert records every field, in the documented order" {
   export ADA_SESSION_KEY=claude-abc ADA_SESSION_KIND=conversation ADA_REPO=myrepo \
          ADA_FOCUS_APP=com.example.term ADA_FOCUS_APP_NAME="Example Term" \
-         ADA_CLICK_URL="claude://resume?session=abc"
+         ADA_CLICK_URL="claude://resume?session=abc" ADA_REPO_DIR="$BATS_TEST_TMPDIR/proj"
   run "$LAUNCHER" "make test" "2m 3s" 1
   assert_success
   wait_for_file "$ADA_PROBE_OUT"
   [ "$(wc -l < "$HISTORY")" -eq 1 ]
-  assert_equal "$(tail -n 1 "$HISTORY" | awk -F'\t' '{print NF}')" 13
+  assert_equal "$(tail -n 1 "$HISTORY" | awk -F'\t' '{print NF}')" 14
   assert_equal "$(field 1)" 1
   [[ "$(field 2)" =~ ^[0-9]{10}$ ]]
   assert_equal "$(field 3)" shown
@@ -42,6 +42,16 @@ field() {
   assert_equal "$(field 11)" com.example.term
   assert_equal "$(field 12)" "Example Term"
   assert_equal "$(field 13)" "claude://resume?session=abc"
+  assert_equal "$(field 14)" "$BATS_TEST_TMPDIR/proj"
+}
+
+# The directory is what lets a pause summary name the repo of an alert that
+# never resolved it: the launcher's own cwd when the caller names none.
+@test "without ADA_REPO_DIR the dir column is the launcher's cwd" {
+  mkdir -p "$BATS_TEST_TMPDIR/here"
+  (cd "$BATS_TEST_TMPDIR/here" && "$LAUNCHER" "x" "1s" 0)
+  wait_for_file "$ADA_PROBE_OUT"
+  assert_equal "$(field 14)" "$BATS_TEST_TMPDIR/here"
 }
 
 @test "the history file is private" {
@@ -55,10 +65,18 @@ field() {
   run "$LAUNCHER" $'one\ttwo\nthree\r'"$long" "1s" 0
   wait_for_file "$ADA_PROBE_OUT"
   [ "$(wc -l < "$HISTORY")" -eq 1 ]
-  assert_equal "$(tail -n 1 "$HISTORY" | awk -F'\t' '{print NF}')" 13
+  assert_equal "$(tail -n 1 "$HISTORY" | awk -F'\t' '{print NF}')" 14
   local label; label=$(field 7)
   [[ "$label" == "one two three yyy"* ]] || { echo "label: $label"; false; }
   assert_equal "${#label}" 200
+}
+
+@test "an alert held by a pause records its directory for the summary" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  ADA_REPO_DIR="$REPO_ROOT" run "$LAUNCHER" "while away" "1s" 0
+  refute_file_appears "$ADA_PROBE_OUT"
+  assert_equal "$(field 3)" paused
+  assert_equal "$(field 14)" "$REPO_ROOT"
 }
 
 @test "a paused alert is recorded as paused, with its click target but no repo lookup" {
@@ -116,6 +134,41 @@ field() {
   assert_equal "$(field 10)" "${top##*/}"
 }
 
+# A pause keeps the line as its record even with the history off, so building a
+# line and appending it are separate steps.
+@test "__ada_history_build works with ADA_HISTORY_MAX=0, and append then writes nothing" {
+  run bash -c ". '$REPO_ROOT/lib/ada-history.sh'
+    ADA_HISTORY_MAX=0 __ada_history_build paused k conversation 'the label' 1s 0 repo app App url /some/dir
+    ADA_HISTORY_MAX=0 __ada_history_append
+    printf '%s' \"\$__ada_history_line\""
+  assert_success
+  [ ! -e "$HISTORY" ]
+  # Every field is non-empty here: read collapses a run of tabs.
+  local f; IFS=$'\t' read -r -a f <<<"$output"
+  assert_equal "${#f[@]}" 14
+  assert_equal "${f[0]}" 1
+  [[ "${f[1]}" =~ ^[0-9]{10}$ ]]
+  assert_equal "${f[2]}" paused
+  assert_equal "${f[6]}" "the label"
+  assert_equal "${f[13]}" /some/dir
+}
+
+@test "__ada_history_record still builds and appends the same line" {
+  run bash -c ". '$REPO_ROOT/lib/ada-history.sh'
+    __ada_history_record shown k kind label 2s 1 repo app App url /d"
+  assert_success
+  assert_equal "$(wc -l < "$HISTORY" | tr -d ' ')" 1
+  assert_equal "$(field 3)" shown
+  assert_equal "$(field 9)" 1
+  assert_equal "$(field 14)" /d
+}
+
+@test "a record without the dir argument ends in an empty dir column" {
+  run bash -c ". '$REPO_ROOT/lib/ada-history.sh'; __ada_history_record shown k kind label 2s 0 '' '' '' ''"
+  assert_equal "$(tail -n 1 "$HISTORY" | awk -F'\t' '{print NF}')" 14
+  assert_equal "$(field 14)" ""
+}
+
 @test "ADA_HISTORY_MAX=0 keeps no history" {
   ADA_HISTORY_MAX=0 run "$LAUNCHER" "x" "1s" 0
   wait_for_file "$ADA_PROBE_OUT"
@@ -146,7 +199,7 @@ field() {
   for i in $(seq 1 20); do "$LAUNCHER" "parallel $i" "1s" 0 & done
   wait
   [ "$(wc -l < "$HISTORY")" -eq 20 ]
-  assert_equal "$(awk -F'\t' '{print NF}' "$HISTORY" | sort -u)" 13
+  assert_equal "$(awk -F'\t' '{print NF}' "$HISTORY" | sort -u)" 14
   assert_equal "$(cut -f7 "$HISTORY" | sort -u | wc -l | tr -d ' ')" 20
 }
 
@@ -208,4 +261,5 @@ field() {
   assert_output_contains "try list, clear"
   run "$REPO_ROOT/lib/ada-history.sh" help
   assert_output_contains "ada-history.sh clear"
+  assert_output_contains "ADA_HISTORY_MAX"
 }

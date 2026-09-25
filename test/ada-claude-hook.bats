@@ -642,6 +642,18 @@ hold_conversation() {
   [ ! -e "$TMPDIR/ada-snoozed/claude-sess-h4" ]
 }
 
+# Coming back to one conversation is not coming back to everything: the global
+# pause ends only by its timer or resume.
+@test "a prompt you type during a pause ends that conversation's snooze, not the pause" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  cp "$TMPDIR/ada-paused" "$BATS_TEST_TMPDIR/paused-before"
+  hold_conversation sess-p1
+  run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-p1","prompt":"back now"}'
+  assert_success
+  [ ! -e "$TMPDIR/ada-snoozed/claude-sess-p1" ]
+  cmp "$TMPDIR/ada-paused" "$BATS_TEST_TMPDIR/paused-before"
+}
+
 @test "typing in one conversation leaves another's snooze in place" {
   hold_conversation sess-h5
   run_hook '{"hook_event_name":"UserPromptSubmit","session_id":"sess-h6","prompt":"hello"}'

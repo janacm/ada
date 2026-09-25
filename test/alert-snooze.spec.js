@@ -244,6 +244,23 @@ test('preset buttons still emit snooze/<n>', async ({ page }) => {
   expect(await signals(page)).toEqual(['snooze/5']);
 });
 
+// The pause row (alert-pause.spec.js) has the same delays, Custom and Set, under
+// its own class names, so every locator above still resolves to one element.
+test('with the pause offered too, each snooze locator still matches one element', async ({ page }) => {
+  await openExpanded(page, { pause: '1', pausemins: '5,10,30' });
+  await page.locator('#pauseToggle').click();
+  await toggle(page).click();
+  for (const label of ['5m', '10m', '30m']) await expect(preset(page, label)).toHaveCount(1);
+  await expect(customBtn(page)).toHaveCount(1);
+  await expect(setBtn(page)).toHaveCount(1);
+  await expect(input(page)).toHaveCount(1);
+  await expect(page.locator('.snooze-custom')).toHaveCount(1);
+  await customBtn(page).click();
+  await input(page).fill('7');
+  await setBtn(page).click();
+  expect(await signals(page)).toEqual(['snooze/7']);
+});
+
 test('snooze controls stay hidden when the daemon is disabled', async ({ page }) => {
   // No sport/stoken => daemonEnabled is false => the whole bar must not render.
   await open(page, { snooze: '0', sport: '', stoken: '' });

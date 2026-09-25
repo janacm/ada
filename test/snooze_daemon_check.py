@@ -10,6 +10,7 @@ the relaunch goes to a recorder script. Exits non-zero on any failure.
 """
 import http.client
 import importlib.util
+import json
 import os
 import stat
 import sys
@@ -17,6 +18,7 @@ import tempfile
 import subprocess
 import threading
 import time
+import types
 
 MOD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "..", "lib", "ada-snooze-daemon.py")
@@ -402,6 +404,304 @@ check("the relaunch still happens after replacing it", wait_file(out))
 if os.path.lexists(hold):
     os.remove(hold)
 os.environ.pop("ADA_SNOOZE_HOLD_FILE", None)
+
+# --- request parsing: which paths become a decision ---------------------------------------
+class Request:
+    """Just enough of a handler for do_GET: a path, and a server to decide on."""
+    def __init__(self, path):
+        self.path = path
+        self.server = types.SimpleNamespace(ada_result=None, ada_done=False)
+
+    def _respond(self, *_):
+        pass
+
+
+def decision(mod, path):
+    req = Request("/%s/%s" % (mod.token, path))
+    mod.Handler.do_GET(req)
+    return req.server.ada_result
+
+
+pause_cli = os.path.join(TMP, "pause-cli")
+with open(pause_cli, "w") as fh:
+    fh.write("#!/bin/bash\n")
+TARGETS = '[{"url":"claude://resume?session=x"},{"app":"com.mitchellh.ghostty"},null]'
+mod, _ = load(argv(os.path.join(TMP, "p0")), env={"ADA_PAUSE_CLI": pause_cli,
+                                                  "ADA_SUMMARY_TARGETS": TARGETS})
+check("pause/30 is a decision when the launcher named the pause CLI",
+      decision(mod, "pause/30") == ("pause", 30), decision(mod, "pause/30"))
+check("pause/1 and pause/1440 are the bounds",
+      (decision(mod, "pause/1"), decision(mod, "pause/1440")) == (("pause", 1), ("pause", 1440)))
+bad = [p for p in ("pause/0", "pause/1441", "pause/²", "pause/٣", "pause/12a",
+                   "pause/30/x", "pause/", "pause", "snooze/²", "snooze/٣",
+                   "open/3", "open/2", "open/-1", "open/1/x", "open/007", "open/")
+       if decision(mod, p) is not None]
+check("malformed pause, snooze and open paths decide nothing", bad == [], bad)
+check("open/0 and open/1 are the rows with a target",
+      (decision(mod, "open/0"), decision(mod, "open/1")) == (("open", 0), ("open", 1)))
+check("the targets parse index-aligned, URL and app",
+      mod.targets == [("claude://resume?session=x", ""), ("", "com.mitchellh.ghostty"), None],
+      mod.targets)
+check("minutes() takes ASCII 1..1440 only",
+      [mod.minutes(x) for x in ("5", "1440", "0", "1441", "²", "٣", "12a", "", None, "00005")]
+      == [5, 1440, None, None, None, None, None, None, None, None])
+
+mod, _ = load(argv(os.path.join(TMP, "p0")), env={"ADA_PAUSE_CLI": os.path.join(TMP, "nope"),
+                                                  "ADA_SUMMARY_TARGETS": "not json"})
+check("a pause CLI that is not a file is ignored", mod.pause_cli == "" and
+      decision(mod, "pause/30") is None, mod.pause_cli)
+check("malformed targets JSON opens nothing", mod.targets == [] and decision(mod, "open/0") is None)
+for text, want in (('{"url":"claude://x"}', []),
+                   ('[{"url":"claude://x\\ny"},{"url":"no scheme"},{"app":"bad id!"},'
+                    '{"url":"-x:y"},{"app":"com.a","url":7},"str",5]',
+                    [None, None, None, None, ("", "com.a"), None, None]),
+                   (json.dumps([{"url": "a:" + "x" * 2047}]), [None]),
+                   (json.dumps([None] * 60), [None] * 50)):
+    got = mod.parse_targets(text)
+    check("targets %s... parse to %s" % (text[:24], want[:3]), got == want, got)
+os.environ.pop("ADA_PAUSE_CLI", None)
+os.environ.pop("ADA_SUMMARY_TARGETS", None)
+
+# --- pause/<n>: run the pause CLI ------------------------------------------------------------
+cli_out = os.path.join(TMP, "pause-cli.out")
+with open(pause_cli, "w") as fh:
+    fh.write('#!/bin/bash\nprintf "%%s|%%s|%%s\\n" "$#" "$1" "${ADA_PAUSE_FILE:-}" > %s\n' % cli_out)
+handoff = os.path.join(TMP, "p1")
+script, out = recorder("pause-ok")
+log = os.path.join(TMP, "pause-ok.log")
+mod, _ = load(argv(handoff, script=script),
+              env={"ADA_PAUSE_CLI": pause_cli, "ADA_PAUSE_FILE": "/some/paused", "ADA_SNOOZE_LOG": log})
+status = drive(mod, handoff, "GET", lambda tok: "/%s/pause/30" % tok)
+check("a pause request runs the pause CLI with the minutes and the daemon's env",
+      status == 200 and open(cli_out).read() == "1|30|/some/paused\n",
+      open(cli_out).read() if os.path.exists(cli_out) else "(never ran)")
+check("a pause is traced and raises no alert when it worked",
+      "pause 30m" in open(log).read() and not wait_file(out, 0.3), open(log).read())
+os.environ.pop("ADA_PAUSE_FILE")
+os.environ.pop("ADA_SNOOZE_LOG")
+
+handoff = os.path.join(TMP, "p2")
+log = os.path.join(TMP, "pause-ignored.log")
+mod, _ = load(argv(handoff, deadline="1"), env={"ADA_PAUSE_CLI": None, "ADA_SNOOZE_LOG": log})
+status = drive(mod, handoff, "GET", lambda tok: "/%s/pause/30" % tok)
+os.environ.pop("ADA_SNOOZE_LOG")
+check("pause is ignored when the launcher named no pause CLI",
+      status == 200 and "exit without snooze: None" in open(log).read(), open(log).read())
+
+
+def failure_recorder(name):
+    out = os.path.join(TMP, name + ".out")
+    path = os.path.join(TMP, name)
+    with open(path, "w") as fh:
+        fh.write('#!/bin/bash\n'
+                 'printf "%%s|%%s|%%s|%%s|ignore=%%s key=%%s scope=%%s url=%%s snoozed=%%s mins=%%s repo=%%s\\n" '
+                 '"$#" "$1" "$2" "$3" "$ADA_IGNORE_PAUSE" "${ADA_SESSION_KEY-unset}" '
+                 '"${ADA_SNOOZE_SCOPE-unset}" "${ADA_CLICK_URL-unset}" "${ADA_SNOOZED-unset}" '
+                 '"$ADA_SNOOZE_MINUTES" "${ADA_REPO-unset}" > %s\n' % out)
+    os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+    return path, out
+
+
+with open(pause_cli, "w") as fh:
+    fh.write('#!/bin/bash\necho "ada-pause: /x is not a pause file; left alone" >&2\n'
+             'echo "second line" >&2\nexit 1\n')
+handoff = os.path.join(TMP, "p3")
+script, out = failure_recorder("pause-failed")
+mod, _ = load(argv(handoff, script=script),
+              env={"ADA_PAUSE_CLI": pause_cli, "ADA_SESSION_KEY": "claude-abc",
+                   "ADA_SNOOZE_SCOPE": "session", "ADA_CLICK_URL": "claude://x",
+                   "ADA_SNOOZED": "1", "ADA_REPO": "repo"})
+drive(mod, handoff, "GET", lambda tok: "/%s/pause/30" % tok)
+for k in ("ADA_SESSION_KEY", "ADA_SNOOZE_SCOPE", "ADA_CLICK_URL", "ADA_SNOOZED", "ADA_REPO"):
+    os.environ.pop(k)
+check("a failed pause raises an alert that ignores the pause and belongs to no session",
+      wait_file(out) and open(out).read() ==
+      "3|⚠️ Couldn't pause alerts: /x is not a pause file; left alone||0|ignore=1 "
+      "key=unset scope=unset url=unset snoozed=unset mins= repo=\n",
+      open(out).read() if os.path.exists(out) else "(no alert)")
+
+with open(pause_cli, "w") as fh:
+    fh.write("#!/bin/bash\nexit 3\n")
+handoff = os.path.join(TMP, "p4")
+script, out = failure_recorder("pause-silent")
+mod, _ = load(argv(handoff, script=script), env={"ADA_PAUSE_CLI": pause_cli})
+drive(mod, handoff, "GET", lambda tok: "/%s/pause/5" % tok)
+check("a pause CLI that fails without a word still raises the alert",
+      wait_file(out) and "Couldn't pause alerts: exit status 3|" in open(out).read(),
+      open(out).read() if os.path.exists(out) else "(no alert)")
+
+handoff = os.path.join(TMP, "p4b")
+mod, _ = load(argv(handoff, script=os.path.join(TMP, "no-such-launcher")),
+              env={"ADA_PAUSE_CLI": pause_cli})
+real_run = mod.subprocess.run
+
+
+def timeout_run(*a, **kw):
+    raise subprocess.TimeoutExpired("ada-pause.sh", 10)
+
+
+mod.subprocess.run = timeout_run
+status = drive(mod, handoff, "GET", lambda tok: "/%s/pause/5" % tok)
+subprocess.run = real_run
+check("a pause CLI that hangs, with no launcher to report it, does not raise", status == 200, status)
+os.environ.pop("ADA_PAUSE_CLI", None)
+
+# --- open/<i>: a summary row -----------------------------------------------------------------
+for i, want in ((1, ["open", "-b", "com.mitchellh.ghostty"]), (0, ["open", "claude://resume?session=x"])):
+    handoff = os.path.join(TMP, "p10-%d" % i)
+    mod, _ = load(argv(handoff, focus="com.other.app", url="claude://other"),
+                  env={"ADA_SUMMARY_TARGETS": TARGETS})
+    opened = []
+    mod.subprocess.Popen = lambda cmd, **kw: opened.append(cmd)
+    status = drive(mod, handoff, "GET", lambda tok, i=i: "/%s/open/%d" % (tok, i))
+    subprocess.Popen = REAL_POPEN
+    check("open/%d opens that row's own target, not the alert's" % i, opened == [want], opened)
+os.environ.pop("ADA_SUMMARY_TARGETS", None)
+
+# --- the pause file, read by lib/ada-pause.sh's rule -------------------------------------------
+pf = os.path.join(TMP, "paused")
+
+
+def put(text):
+    if os.path.lexists(pf):
+        os.remove(pf)
+    with open(pf, "w") as fh:
+        fh.write(text)
+
+
+reads = []
+for text in ("1790000000\n", "0000000002089\n", "0", "", "soon\n", "12 34\n", "1" * 16 + "\n"):
+    put(text)
+    reads.append(mod.read_pause_until(pf))
+check("read_pause_until reads a decimal first line and nothing else",
+      reads == [1790000000, 2089, 0, None, None, None, None], reads)
+os.remove(pf)
+os.symlink(os.path.join(TMP, "link-target"), pf)
+check("a symlink is not a pause file", mod.read_pause_until(pf) is None)
+os.remove(pf)
+os.mkdir(pf)
+check("a directory is not a pause file", mod.read_pause_until(pf) is None)
+os.rmdir(pf)
+check("no file is no pause", mod.read_pause_until(pf) is None)
+
+# --- the pause timer ----------------------------------------------------------------------------
+def timer_recorder(name):
+    out = os.path.join(TMP, name + ".out")
+    path = os.path.join(TMP, name)
+    with open(path, "w") as fh:
+        fh.write('#!/bin/bash\nprintf "%%s|%%s|%%s flush=%%s\\n" "$1" "$2" "$3" "$ADA_PAUSE_FLUSH" > %s\n' % out)
+    os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+    return path, out
+
+
+def run_timer(minutes_left, on_sleep=None, launcher=None, record=True, until=None):
+    """pause_timer() on a fake clock. Returns (clock, launches); a launch is
+    recorded instead of run unless record is False."""
+    clock = Clock(on_sleep)
+    mod.time.time, mod.time.sleep = clock.time, clock.sleep
+    if until is None:
+        until = int(clock.time()) + minutes_left * 60
+    launches = []
+    if record:
+        mod.subprocess.Popen = lambda cmd, **kw: launches.append((cmd, kw["env"].get("ADA_PAUSE_FLUSH")))
+    try:
+        mod.pause_timer(until, pf, launcher or "/usr/bin/true")
+    finally:
+        time.time, time.sleep = REAL_TIME, REAL_SLEEP
+        subprocess.Popen = REAL_POPEN
+    return clock, launches, until
+
+
+clock = Clock()
+put("%d\n" % (int(clock.time()) + 300))
+launcher, out = timer_recorder("timer")
+mod, _ = load(argv(os.path.join(TMP, "t0")))
+clock, launches, _ = run_timer(0, launcher=launcher, record=False,
+                               until=int(open(pf).read()))
+check("the timer runs the launcher in flush mode once the pause is over",
+      wait_file(out) and open(out).read() == "||0 flush=ended\n",
+      open(out).read() if os.path.exists(out) else "(never ran)")
+check("the timer never sleeps longer than its poll step, and waits the whole pause",
+      clock.sleeps and max(clock.sleeps) <= mod.POLL_SECONDS and sum(clock.sleeps) >= 299,
+      (len(clock.sleeps), sum(clock.sleeps)))
+
+
+def rewrite(clock, seconds):
+    if clock.offset >= 60:
+        put("%d\n" % (int(clock.time()) + 3600))
+
+
+put("%d\n" % (int(REAL_TIME()) + 300))
+clock, launches, _ = run_timer(0, rewrite, until=int(open(pf).read()))
+check("a newer pause retires the old timer without a summary", launches == [] and
+      clock.offset < 60 + 2 * mod.POLL_SECONDS, (launches, clock.offset))
+
+
+def resume(clock, seconds):
+    if clock.offset >= 60 and os.path.exists(pf):
+        os.remove(pf)
+
+
+put("%d\n" % (int(REAL_TIME()) + 300))
+clock, launches, _ = run_timer(0, resume, until=int(open(pf).read()))
+check("a resume before the end retires the timer (resume shows the summary itself)",
+      launches == [], launches)
+
+
+def status_cleanup(clock, seconds):
+    # `ada-pause status` deletes an expired pause file: here, during the sleep
+    # that carries the timer past the end.
+    if clock.time() + seconds >= seen["until"] and os.path.exists(pf):
+        os.remove(pf)
+
+
+seen["until"] = int(REAL_TIME()) + 60
+put("%d\n" % seen["until"])
+clock, launches, _ = run_timer(0, status_cleanup, until=seen["until"])
+check("the timer still flushes once when the expired file was cleaned up meanwhile",
+      launches == [(["/usr/bin/true", "", "", "0"], "ended")] and not os.path.exists(pf),
+      launches)
+
+if os.path.lexists(pf):
+    os.remove(pf)
+os.symlink(os.path.join(TMP, "link-target"), pf)
+clock, launches, _ = run_timer(0, until=int(REAL_TIME()) + 300)
+check("a symlink at the pause path is no pause of ours, so the timer leaves it",
+      launches == [] and clock.sleeps == [], (launches, clock.sleeps))
+os.remove(pf)
+
+
+def lid(clock, seconds):
+    if len(clock.sleeps) == 1:
+        clock.offset += 7200
+
+
+put("%d\n" % (int(REAL_TIME()) + 1800))
+clock, launches, _ = run_timer(0, lid, until=int(open(pf).read()))
+check("a Mac that slept through the end flushes after one more step",
+      len(launches) == 1 and len(clock.sleeps) == 1, (launches, clock.sleeps))
+
+put("%d\n" % (int(REAL_TIME()) + 1))
+mod.subprocess.Popen = no_open
+clock = Clock()
+mod.time.time, mod.time.sleep = clock.time, clock.sleep
+try:
+    mod.pause_timer(int(open(pf).read()), pf, "/nonexistent")
+    check("a launcher that cannot start does not raise out of the timer", True)
+except Exception as exc:  # noqa: BLE001
+    check("a launcher that cannot start does not raise out of the timer", False, exc)
+finally:
+    time.time, time.sleep = REAL_TIME, REAL_SLEEP
+    subprocess.Popen = REAL_POPEN
+os.remove(pf)
+
+# --pause-timer is its own mode; bad arguments exit 2 before it detaches.
+codes = [subprocess.run([sys.executable, MOD_PATH, "--pause-timer"] + args,
+                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, timeout=10).returncode
+         for args in (["soon", pf, "/l"], ["0", pf, "/l"], ["5", "", "/l"], ["5", pf, ""],
+                      ["5", pf], ["5", pf, "/l", "extra"])]
+check("--pause-timer refuses malformed arguments with exit 2", codes == [2] * 6, codes)
 
 # --- failure paths in main() ---------------------------------------------------------------
 mod, _ = load(argv(os.path.join(TMP, "missing-dir", "handoff")))
