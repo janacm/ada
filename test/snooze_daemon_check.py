@@ -248,6 +248,24 @@ check("mute does not follow a symlink named like the marker",
       os.stat(target).st_mtime)
 os.environ.pop("ADA_MUTE_FILE", None)
 
+# --- binding never waits on reverse DNS ----------------------------------------------------
+import socket
+real_getfqdn = socket.getfqdn
+def no_dns(*_):
+    raise AssertionError("server_bind did a reverse-DNS lookup")
+socket.getfqdn = no_dns
+try:
+    mod, _ = load(argv(os.path.join(TMP, "h12")))
+    srv = mod.LoopbackServer(("127.0.0.1", 0), mod.Handler)
+    check("binding the loopback server does no reverse-DNS lookup",
+          srv.server_name == "127.0.0.1" and srv.server_port == srv.server_address[1],
+          (srv.server_name, srv.server_port))
+    srv.server_close()
+except AssertionError as exc:
+    check("binding the loopback server does no reverse-DNS lookup", False, exc)
+finally:
+    socket.getfqdn = real_getfqdn
+
 # --- failure paths in main() ---------------------------------------------------------------
 mod, _ = load(argv(os.path.join(TMP, "missing-dir", "handoff")))
 mod.daemonize = lambda: None

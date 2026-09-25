@@ -11,8 +11,168 @@
 #   ./release.sh v1.0.0
 #   ./release.sh v1.0.0 --no-push      # tag locally only, change nothing else
 #   ./release.sh v1.0.0 --no-formula   # tag + push, print fields, don't commit
+#   ./release.sh --next minor|major    # print the version to release next
+#   ./release.sh --prs-since-release   # PR numbers merged since the formula's
+#                                      # version
+#   ./release.sh --auto minor|major    # what the release workflow runs: pick
+#                                      # the version and release it (see below)
+#
+# Because the two steps are separate pushes, a release can stop halfway: the
+# tag is on GitHub but main never got the formula bump. Re-running with the same
+# version finishes it, and --next returns that version again instead of
+# skipping past it.
 # =============================================================
 set -euo pipefail
+
+repo="janacm/ada"
+dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+formula="$dir/Formula/ada.rb"
+
+# The newest stable tag (vX.Y or vX.Y.Z) reachable from HEAD. A pre-release
+# such as v1.0-rc1 version-sorts ahead of v0.9, and a tag on another branch is
+# not a release of main, so neither may set the next number.
+__latest_stable_tag() {
+  git -C "$dir" tag --list 'v*' --merged HEAD --sort=-v:refname \
+    | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?$' | head -1 || true
+}
+
+# True when the local tag $1 is the one already on GitHub, i.e. it was
+# published and its tarball may already be in someone's cache.
+__tag_is_published() {
+  local remote
+  remote=$(git -C "$dir" ls-remote --tags origin "refs/tags/$1" | awk '{print $1}')
+  [[ -n "$remote" && "$remote" == "$(git -C "$dir" rev-parse "refs/tags/$1")" ]]
+}
+
+# True when the formula on this checkout already installs $1's tarball.
+__formula_points_at() {
+  grep -qF "refs/tags/$1.tar.gz\"" "$formula"
+}
+
+# The version the formula installs now (v0.4), or nothing.
+__formula_version() {
+  sed -nE 's|^[[:space:]]*url "[^"]*/refs/tags/(v[^"]*)\.tar\.gz"|\1|p' "$formula" | head -1
+}
+
+# True when version $1 is newer than $2, comparing vX.Y[.Z] numerically.
+__version_gt() {
+  local a b i
+  IFS=. read -r -a a <<<"${1#v}"
+  IFS=. read -r -a b <<<"${2#v}"
+  for i in 0 1 2; do
+    (( 10#${a[i]:-0} > 10#${b[i]:-0} )) && return 0
+    (( 10#${a[i]:-0} < 10#${b[i]:-0} )) && return 1
+  done
+  return 1
+}
+
+if [[ "${1:-}" == --next ]]; then
+  bump=${2:-}
+  [[ "$bump" == minor || "$bump" == major ]] \
+    || { echo "usage: release.sh --next minor|major" >&2; exit 1; }
+  [[ -f "$formula" ]] || { echo "release: missing $formula" >&2; exit 1; }
+  last=$(__latest_stable_tag)
+  current=$(__formula_version)
+  # Only a PUBLISHED tag NEWER than what the formula installs can be an
+  # unfinished release. An older one is history ("finishing" it would
+  # downgrade), and a local-only one was never released.
+  if [[ -n "$last" ]] && ! __formula_points_at "$last" &&
+     { [[ -z "$current" ]] || __version_gt "$last" "$current"; } &&
+     __tag_is_published "$last"; then
+    echo "release: $last is tagged but the formula never pointed at it; finishing $last" >&2
+    echo "$last"
+    exit 0
+  fi
+  # Count from what the formula installs; the tags only matter when it names
+  # no version at all.
+  base=${current:-$last}
+  IFS=. read -r maj min _ <<<"${base#v}"
+  maj=${maj:-0} min=${min:-0}
+  if [[ "$bump" == major ]]; then maj=$((maj + 1)); min=0; else min=$((min + 1)); fi
+  echo "v$maj.$min"
+  exit 0
+fi
+
+# --auto <bump>: the release workflow's whole job, here so bats can cover it.
+#   1. The bump is major if the triggering PR asked for it OR any PR merged
+#      since the formula's version is labelled release:major (gh reads the
+#      labels). GitHub keeps one pending run per concurrency group, so a queued
+#      release:major run can be replaced by a later release:minor one.
+#   2. --next picks the version, and it is released.
+#   3. If that was a tag an earlier run pushed but never finished, only its
+#      older commit shipped. Release the commit this job tested as well, but
+#      only when nothing but our own formula bump sits on top of it: newer
+#      commits from a concurrent merge are untested, and the next labelled
+#      merge releases them.
+if [[ "${1:-}" == --auto ]]; then
+  trigger=${2:-}
+  [[ "$trigger" == minor || "$trigger" == major ]] \
+    || { echo "usage: release.sh --auto minor|major" >&2; exit 1; }
+  self="${BASH_SOURCE[0]}"
+  tested=$(git -C "$dir" rev-parse HEAD)
+  # A label lookup that fails must stop the release, not read as "no major
+  # label": a release published as minor can't be taken back.
+  __pick() {
+    local bump=$trigger pr prs labels
+    # Captured first: a failure inside a `for` list would not trip set -e.
+    prs=$("$self" --prs-since-release) || return 1
+    for pr in $prs; do
+      labels=$(gh pr view "$pr" --json labels --jq '.labels[].name') \
+        || { echo "release: could not read the labels of #$pr; not releasing" >&2; return 1; }
+      if grep -qx 'release:major' <<<"$labels"; then
+        echo "release: #$pr asked for a major release" >&2
+        bump=major
+      fi
+    done
+    "$self" --next "$bump"
+  }
+  version=$(__pick)
+  "$self" "$version"
+  if [[ "$(git -C "$dir" rev-parse "refs/tags/$version^{commit}")" != "$tested" ]]; then
+    # Only product changes justify another version. The tested commit can be
+    # nothing but an earlier release's formula bump on top of that tag, when a
+    # previous recovery died after pushing its tag.
+    if git -C "$dir" diff --quiet "refs/tags/$version^{commit}" "$tested" -- . ':(exclude)Formula/ada.rb'; then
+      echo "release: nothing but the formula changed since $version; no further release"
+    elif [[ "$(git -C "$dir" rev-parse -q --verify HEAD~1 || true)" == "$tested" ]]; then
+      echo "release: finished the stranded $version; now releasing the tested main"
+      version=$(__pick)
+      # HEAD is now the stranded release's formula bump, so tag the commit the
+      # suite actually ran on and publish it; the normal re-run path then
+      # finishes that published tag with its own formula bump.
+      git -C "$dir" tag -a "$version" -m "$version" "$tested"
+      git -C "$dir" push origin "$version"
+      "$self" "$version"
+    else
+      echo "release: main moved during the release; its newer commits ship with the next labelled merge"
+    fi
+  fi
+  exit 0
+fi
+
+# Every PR merged into main since the formula's version. GitHub is asked which
+# PR each commit came from, because commit subjects only say so for merge
+# commits ("Merge pull request #12 ...") and squashes ("Title (#12)"): a
+# rebase-merged PR leaves its original subjects untouched. Only merged PRs into
+# main count; an open PR branched from main "contains" old main commits too.
+# A lookup that fails fails the listing. --auto reads their labels.
+if [[ "${1:-}" == --prs-since-release ]]; then
+  [[ -f "$formula" ]] || { echo "release: missing $formula" >&2; exit 1; }
+  current=$(__formula_version)
+  range=HEAD
+  if [[ -n "$current" ]] && git -C "$dir" rev-parse -q --verify "refs/tags/$current" >/dev/null; then
+    range="$current..HEAD"
+  fi
+  prs=""
+  for sha in $(git -C "$dir" rev-list "$range"); do
+    found=$(gh api "repos/$repo/commits/$sha/pulls" \
+      --jq '.[] | select(.merged_at != null and .base.ref == "main") | .number') \
+      || { echo "release: could not look up the PR for ${sha:0:12}" >&2; exit 1; }
+    prs+="$found"$'\n'
+  done
+  printf '%s' "$prs" | grep -E '^[0-9]+$' | sort -un || true
+  exit 0
+fi
 
 version=${1:-}
 push=1
@@ -28,10 +188,7 @@ done
 [[ -n "$version" ]] || { echo "usage: release.sh vX.Y.Z [--no-push] [--no-formula]" >&2; exit 1; }
 [[ "$version" == v* ]] || { echo "release: version must start with 'v' (e.g. v1.0.0)" >&2; exit 1; }
 
-repo="janacm/ada"
 tarball="https://github.com/${repo}/archive/refs/tags/${version}.tar.gz"
-dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-formula="$dir/Formula/ada.rb"
 [[ -f "$formula" ]] || { echo "release: missing $formula" >&2; exit 1; }
 
 # A dirty tree means the tag would not describe what gets released.
@@ -55,17 +212,33 @@ if [[ "$(git -C "$dir" rev-parse HEAD)" != "$(git -C "$dir" rev-parse origin/mai
 fi
 
 if tagged=$(git -C "$dir" rev-parse -q --verify "refs/tags/$version^{commit}"); then
-  # Re-running is supported, but only for a tag that still describes main: HEAD
-  # itself, or HEAD's parent when HEAD is this release's own formula bump.
+  # Re-running is supported for a tag that still describes main: HEAD itself,
+  # or HEAD's parent when HEAD is this release's own formula bump.
   head=$(git -C "$dir" rev-parse HEAD)
   parent=$(git -C "$dir" rev-parse -q --verify HEAD~1 || true)
-  if [[ "$tagged" != "$head" ]] &&
-     ! [[ "$tagged" == "$parent" && "$(git -C "$dir" log -1 --format=%s)" == "Homebrew: point formula at $version" ]]; then
+  if [[ "$tagged" == "$head" ]] ||
+     [[ "$tagged" == "$parent" && "$(git -C "$dir" log -1 --format=%s)" == "Homebrew: point formula at $version" ]]; then
+    echo "release: tag $version already exists"
+  # A published tag that main has since moved past: either a release that
+  # stopped before its formula bump (finish it), or one that finished and whose
+  # bump was rebased onto later work (nothing to do). Either way the tarball is
+  # the tagged code, and only the formula on main is missing or already right.
+  elif __tag_is_published "$version" && git -C "$dir" merge-base --is-ancestor "$tagged" HEAD; then
+    if __formula_points_at "$version"; then
+      echo "release: $version is already released and the formula points at it"
+      exit 0
+    fi
+    current=$(__formula_version)
+    if [[ -n "$current" ]] && ! __version_gt "$version" "$current"; then
+      echo "release: $version is older than the formula's $current; refusing to downgrade" >&2
+      exit 1
+    fi
+    echo "release: finishing $version: the tag is published but the formula never pointed at it"
+  else
     echo "release: tag $version points at ${tagged:0:12}, not HEAD (${head:0:12})." >&2
     echo "  Delete it (git tag -d $version) or pick a new version." >&2
     exit 1
   fi
-  echo "release: tag $version already exists"
 else
   git -C "$dir" tag -a "$version" -m "$version"
   echo "Tagged $version"
@@ -113,7 +286,30 @@ if [[ -z "$(git -C "$dir" status --porcelain -- Formula/ada.rb)" ]]; then
 else
   git -C "$dir" add Formula/ada.rb
   git -C "$dir" commit -q -m "Homebrew: point formula at $version"
-  git -C "$dir" push -q origin main
+  # The tag is already public, so main moving during the tarball download must
+  # not strand it. The bump touches only the formula: replay it on the new main
+  # and push again. A conflict means someone else changed the formula; stop.
+  #
+  # Giving up drops the unpushed bump and puts main back on origin/main, so the
+  # suggested re-run passes the HEAD == origin/main check and finishes the tag.
+  # --keep refuses rather than discard anything but that one commit (the tree
+  # was clean when this started).
+  __give_up() {
+    git -C "$dir" fetch -q origin main || true
+    git -C "$dir" reset -q --keep origin/main || true
+    echo "release: $1; re-run ./release.sh $version to finish" >&2
+    exit 1
+  }
+  for attempt in 1 2 3; do
+    git -C "$dir" push -q origin main && break
+    (( attempt < 3 )) || __give_up "could not push the formula bump"
+    echo "release: main moved; replaying the formula bump on origin/main"
+    git -C "$dir" fetch -q origin main
+    if ! git -C "$dir" rebase -q origin/main; then
+      git -C "$dir" rebase --abort 2>/dev/null || true
+      __give_up "the formula bump conflicts with origin/main"
+    fi
+  done
   echo "Committed and pushed the formula bump to main"
 fi
 

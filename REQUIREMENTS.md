@@ -68,6 +68,31 @@ removed.
   committed formula `url` and `sha256` must match the released GitHub tarball,
   and the formula on the default branch (the tap tip) is the version users
   install.
+- Merging a PR labelled `release:minor` or `release:major` into the default
+  branch must cut the next minor or major version through `release.sh`, after
+  the bats suite passes on the merged default branch. An unlabelled merge must
+  not release. The release workflow must never check out or run the PR's head,
+  only the default branch after the merge, because it holds a write token.
+- A tag that has been pushed must never be deleted or re-pointed. If the
+  default branch moves between the tag push and the formula push, the formula
+  bump must be replayed on the new tip; a re-run of the same version must
+  finish a published tag the formula doesn't point at yet, and the workflow's
+  next-version pick must return that version rather than skip it.
+- The next version must be computed from stable tags only (`vX.Y` or
+  `vX.Y.Z`), never from a pre-release tag, and never from below the version
+  the formula already installs. A re-run of a version older than the
+  formula's must be refused rather than downgrade the formula.
+- A run that finishes a stranded tag must also release the commit it tested,
+  and tag that commit itself, so the triggering merge is not left unreleased.
+  It must not release commits it did not test, nor a commit that differs from
+  the finished tag only in `Formula/ada.rb`.
+- A release must be major when any PR merged since the last release carries
+  `release:major`, even if the run that survives GitHub's one-pending-run
+  concurrency limit was triggered by a `release:minor` merge. A PR whose labels
+  can't be read must stop the release rather than count as not major, and
+  the PRs must be found for every merge method (merge commit, squash, rebase).
+- Every PR and every direct push to the default branch must run the bats suite
+  on macOS with the native helper built, so no test skips for lack of it.
 
 ## Onboarding Installer
 
@@ -233,6 +258,9 @@ removed.
   another app later.
 - The daemon must bind only to `127.0.0.1`, publish a random token to the alert
   URL, and ignore requests without that token.
+- Binding the daemon must not wait on DNS. The launcher gives the handoff 1.8s,
+  and the stock `HTTPServer.server_bind` spends that on a reverse lookup of
+  `127.0.0.1` wherever reverse DNS is slow.
 - A snooze request must close the current alert and relaunch the same alert after
   the chosen delay.
 - Snooze delays must be positive and no longer than 24 hours.
@@ -500,6 +528,11 @@ removed.
 
 ## Change Log
 
+- 2026-09-24: The snooze daemon no longer does a reverse-DNS lookup when it
+  binds. `HTTPServer.server_bind` calls `socket.getfqdn("127.0.0.1")` only to
+  fill in a name nothing reads, and on GitHub's macOS runners that outlasted
+  the launcher's 1.8s wait for the handoff, so alerts came up without snooze,
+  click-to-focus or mute. The new `test` workflow found it on its first run.
 - 2026-09-24: Alerts can mute their session. A **Mute this conversation** (or
   session, agent, terminal) button under the snooze row silences every later
   alert for that Claude Code / Codex conversation, opencode session, Paseo agent
@@ -550,6 +583,11 @@ removed.
   id="c339"> hey …`. Each paste now collapses to `[pasted text]` beside typed
   text, and a paste-only prompt shows the pasted text without the injected-block
   rules. Tags are paired in one linear pass, so unclosed tags can't stall the hook.
+- 2026-09-22: Releases are automated. Merging a PR labelled `release:minor` or
+  `release:major` runs the bats suite and `release.sh` with the next version, and
+  a new `test` workflow runs the suite on every PR and push to `main`. A release
+  that stops between its tag push and its formula push is finished rather than
+  skipped, and pre-release tags never set the next version.
 - 2026-09-17: Claude Code / Codex alert labels are now derived from the prompt
   rather than printing it verbatim. `UserPromptSubmit` also fires for messages
   the agent injects, so a turn that began with a background-task notification
