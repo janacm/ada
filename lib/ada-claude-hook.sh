@@ -163,13 +163,21 @@ def injected(prompt):
 
 SCHEDULING_TOOLS = ("CronCreate", "ScheduleWakeup")
 
-def scheduled(forms, tp):
+# An autonomous /loop schedules a sentinel instead of a prompt, and Claude Code
+# fires it as resolved instructions. In 2.1.281 those open with one of these
+# headings, on the first tick after a one-time preamble and a "---" rule, so
+# the heading is matched at any line start. If a later release rewords them, a
+# tick counts as typed again: the hold is released, never an alert lost.
+LOOP_SENTINELS = ("<<autonomous-loop>>", "<<autonomous-loop-dynamic>>",
+                  "<<loop.md>>", "<<loop.md-dynamic>>")
+LOOP_TICK_HEADING = re.compile(r"^# (Autonomous loop tick|/loop tick)\b", re.M)
+
+def scheduled(forms, raw, tp):
     # A /loop tick or a CronCreate job re-submits, as plain text, a prompt the
     # agent scheduled earlier in this conversation, and nothing in the hook
     # payload tells it from one you typed. The transcript does: the tool call
-    # that scheduled the prompt is already in it. A loop scheduled with an
-    # <<autonomous-loop...>> sentinel fires resolved text that matches nothing
-    # here, so it still counts as yours.
+    # that scheduled the prompt is already in it. forms are the prompt as one
+    # line and as its label; raw keeps its line breaks for the heading match.
     if not tp:
         return False
     try:
@@ -190,8 +198,10 @@ def scheduled(forms, tp):
         for block in content if isinstance(content, list) else []:
             if (isinstance(block, dict) and block.get("type") == "tool_use"
                     and block.get("name") in SCHEDULING_TOOLS):
-                prompt = ((block.get("input") or {}).get("prompt") or "")
+                prompt = ((block.get("input") or {}).get("prompt") or "").strip()
                 if one_line(prompt) in forms:
+                    return True
+                if prompt in LOOP_SENTINELS and LOOP_TICK_HEADING.search(raw):
                     return True
     return False
 
@@ -243,7 +253,7 @@ lb  = label_for(text, is_injected)
 # A slash command is wrapped in markup but still something you typed, unless it
 # is one the agent scheduled (compared both raw and as "/name args").
 by  = "0" if is_injected and not SLASH_COMMAND.search(text[:8192]) else "1"
-if by == "1" and ev == "UserPromptSubmit" and scheduled({one_line(text), lb}, tp):
+if by == "1" and ev == "UserPromptSubmit" and scheduled({one_line(text), lb}, text, tp):
     by = "0"
 # Fields are joined with US (\x1f), a NON-whitespace delimiter, so an empty field
 # (e.g. a payload with no transcript_path) is preserved instead of collapsing the
