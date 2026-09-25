@@ -244,7 +244,9 @@ idle() { printf '{"type":"event","event":{"type":"session.idle","properties":{"s
   ]}'
   assert_success
   wait_for_file "$ADA_PROBE_OUT"
-  assert_file_contains "$ADA_PROBE_OUT" "repo=ada"
+  # The launcher names the git toplevel, which is not "ada" in a worktree.
+  local top; top=$(git -C "$REPO_ROOT" rev-parse --show-toplevel)
+  assert_file_contains "$ADA_PROBE_OUT" "repo=${top##*/}"
 }
 
 @test "a multi-part prompt uses only its text parts" {

@@ -238,3 +238,25 @@ skip_active() {
   assert_success
   [[ "$output" =~ ^zsh-[0-9]+-[0-9]+$ && "$output" != "zsh-1-1" ]] || { echo "got: $output"; false; }
 }
+
+# --- global pause -------------------------------------------------------------
+
+@test "while paused a long command stays quiet, but the manual ada trigger fires" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  run zsh -c "
+    source '$REPO_ROOT/ada.sh' >/dev/null 2>&1
+    __ada_should_skip_active() { return 1; }
+    ADA_THRESHOLD=1 __ada_cmd='make' __ada_start_time=\$(( EPOCHREALTIME - 5 ))
+    __ada_precmd
+    sleep 0.5
+    [[ -e '$ADA_PROBE_OUT' ]] && print -r -- LEAKED
+    ada still here
+    print -r -- \"after=\${ADA_IGNORE_PAUSE-unset}\"
+  "
+  assert_success
+  refute_output_contains "LEAKED"
+  # The bypass rides on the launcher's command line only, never into the shell.
+  assert_output_contains "after=unset"
+  wait_for_file "$ADA_PROBE_OUT" || { echo "manual trigger never fired"; false; }
+  assert_file_contains "$ADA_PROBE_OUT" "cmd=still%20here"
+}

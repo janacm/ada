@@ -511,3 +511,102 @@ wait_for_trace() {
   refute_file_contains "$ADA_PROBE_OUT" "snoozescope"
   dismiss_daemon
 }
+
+# --- global pause (lib/ada-pause.sh) ----------------------------------------
+
+@test "a pause drops the alert before anything launches" {
+  "$REPO_ROOT/lib/ada-pause.sh" 30 >/dev/null
+  run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "a pause until resumed drops the alert" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "a pause drops alerts from every session, muted or not" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  export ADA_SESSION_KEY=claude-abc
+  run "$LAUNCHER" "x" "1s" 0
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "an expired pause lets the alert through and the launcher leaves the file" {
+  printf '1000\n' > "$TMPDIR/ada-paused"
+  run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  # Only the CLI deletes it: a launcher rm could race a new pause's rename.
+  [ -f "$TMPDIR/ada-paused" ]
+}
+
+@test "a file that is not a pause file does not pause anything" {
+  printf 'hello\n' > "$TMPDIR/ada-paused"
+  run "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+  assert_equal "$(cat "$TMPDIR/ada-paused")" "hello"
+}
+
+@test "ADA_IGNORE_PAUSE=1 shows the alert while paused" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  ADA_IGNORE_PAUSE=1 run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+}
+
+@test "ADA_PAUSE_FILE moves the pause file" {
+  export ADA_PAUSE_FILE="$BATS_TEST_TMPDIR/elsewhere/paused"
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  [ ! -e "$TMPDIR/ada-paused" ]
+  run "$LAUNCHER" "x" "1s" 0
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "a snoozed alert that wakes during a pause is dropped" {
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  ADA_SNOOZED=1 run "$LAUNCHER" "x" "1s" 0
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "a launcher copied without ada-pause.sh still alerts while a pause is set" {
+  local root="$BATS_TEST_TMPDIR/old"
+  mkdir -p "$root/lib"
+  cp "$REPO_ROOT/lib/ada-show-alert.sh" "$root/lib/"
+  "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  run "$root/lib/ada-show-alert.sh" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+}
+
+# The opencode plugin can hand the launcher a stripped environment. Without
+# TMPDIR it must still find the pause and the mutes the menu bar and the alert
+# wrote, which live in the per-user Darwin temp dir, not /tmp.
+@test "with TMPDIR unset the launcher uses the per-user temp dir for pause and mute" {
+  local darwin="$BATS_TEST_TMPDIR/darwin-tmp"
+  mkdir -p "$darwin"
+  export STUB_GETCONF_TMPDIR="$darwin"
+  TMPDIR="$darwin" "$REPO_ROOT/lib/ada-pause.sh" forever >/dev/null
+  run env -u TMPDIR "$LAUNCHER" "x" "1s" 0
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+
+  TMPDIR="$darwin" "$REPO_ROOT/lib/ada-pause.sh" resume >/dev/null
+  TMPDIR="$darwin" "$REPO_ROOT/lib/ada-mute.sh" add claude-abc >/dev/null
+  ADA_SESSION_KEY=claude-abc run env -u TMPDIR "$LAUNCHER" "x" "1s" 0
+  refute_file_appears "$ADA_PROBE_OUT"
+
+  ADA_SESSION_KEY=claude-def run env -u TMPDIR "$LAUNCHER" "x" "1s" 0
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+}
+
+@test "with TMPDIR unset and no Darwin temp dir the launcher still alerts" {
+  export STUB_GETCONF_TMPDIR=fail ADA_PAUSE_FILE="$BATS_TEST_TMPDIR/p" ADA_MUTE_DIR="$BATS_TEST_TMPDIR/m"
+  run env -u TMPDIR "$LAUNCHER" "x" "1s" 0
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "helper was never launched"; false; }
+}

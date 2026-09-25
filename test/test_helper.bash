@@ -51,6 +51,8 @@ setup_common() {
   export ADA_MUTE_BUTTON=0
   unset ADA_SESSION_KEY ADA_SESSION_KIND ADA_MUTE_DIR ADA_MUTE_MAX_AGE ADA_MUTE_FILE \
         ADA_SNOOZE_SCOPE ADA_SNOOZE_HOLD_FILE ADA_SNOOZE_LOG
+  # A pause or history file from the developer's shell must not leak in either.
+  unset ADA_PAUSE_FILE ADA_IGNORE_PAUSE ADA_HISTORY_FILE ADA_HISTORY_MAX
 
   export ADA_ALERT_FILE="$REPO_ROOT/alert.html"
 
