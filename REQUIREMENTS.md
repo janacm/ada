@@ -73,6 +73,14 @@ removed.
   the bats suite passes on the merged default branch. An unlabelled merge must
   not release. The release workflow must never check out or run the PR's head,
   only the default branch after the merge, because it holds a write token.
+- The next version must count from the version the formula on the default
+  branch points at (`release.sh --next minor|major`), not from the newest tag,
+  and only stable `vX.Y[.Z]` tags count when the formula names none, so a
+  pre-release tag such as `v1.0-rc1` can't outrank the current release.
+- When the formula push fails after the tag was pushed (the default branch
+  moved mid-release), `release.sh` must delete that tag locally and on the
+  remote and undo its formula commit, so a re-run cuts the same version from
+  the new tip rather than skipping one.
 - Every PR and every direct push to the default branch must run the bats suite
   on macOS with the native helper built, so no test skips for lack of it.
 

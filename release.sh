@@ -11,8 +11,33 @@
 #   ./release.sh v1.0.0
 #   ./release.sh v1.0.0 --no-push      # tag locally only, change nothing else
 #   ./release.sh v1.0.0 --no-formula   # tag + push, print fields, don't commit
+#   ./release.sh --next minor|major    # print the version to cut next, and exit
 # =============================================================
 set -euo pipefail
+
+repo="janacm/ada"
+dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+formula="$dir/Formula/ada.rb"
+
+# The version a release:minor or release:major merge should cut. "Previous" is
+# the version the formula points at, which is what is actually released: a tag
+# pushed by a run whose formula push then failed is not a release, and counting
+# it would skip a version. Without a version in the formula, the newest stable
+# tag, matched like the formula's livecheck regex so v1.0-rc1 can't outrank v0.4.
+if [[ "${1:-}" == --next ]]; then
+  bump=${2:-}
+  [[ "$bump" == minor || "$bump" == major ]] || { echo "usage: release.sh --next minor|major" >&2; exit 1; }
+  stable='^v[0-9]+(\.[0-9]+)+$'
+  previous=$(sed -n 's|^[[:space:]]*url[[:space:]]*"[^"]*/archive/refs/tags/\([^"/]*\)\.tar\.gz".*|\1|p' "$formula" 2>/dev/null | head -1 || true)
+  if ! [[ "$previous" =~ $stable ]]; then
+    previous=$(git -C "$dir" tag --list 'v[0-9]*' --sort=-v:refname | grep -E "$stable" | head -1 || true)
+  fi
+  IFS=. read -r maj min _ <<<"${previous#v}"
+  maj=${maj:-0} min=${min:-0}
+  if [[ "$bump" == major ]]; then maj=$((10#$maj + 1)); min=0; else min=$((10#$min + 1)); fi
+  echo "v$maj.$min"
+  exit 0
+fi
 
 version=${1:-}
 push=1
@@ -28,10 +53,7 @@ done
 [[ -n "$version" ]] || { echo "usage: release.sh vX.Y.Z [--no-push] [--no-formula]" >&2; exit 1; }
 [[ "$version" == v* ]] || { echo "release: version must start with 'v' (e.g. v1.0.0)" >&2; exit 1; }
 
-repo="janacm/ada"
 tarball="https://github.com/${repo}/archive/refs/tags/${version}.tar.gz"
-dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-formula="$dir/Formula/ada.rb"
 [[ -f "$formula" ]] || { echo "release: missing $formula" >&2; exit 1; }
 
 # A dirty tree means the tag would not describe what gets released.
@@ -62,7 +84,7 @@ if tagged=$(git -C "$dir" rev-parse -q --verify "refs/tags/$version^{commit}"); 
   if [[ "$tagged" != "$head" ]] &&
      ! [[ "$tagged" == "$parent" && "$(git -C "$dir" log -1 --format=%s)" == "Homebrew: point formula at $version" ]]; then
     echo "release: tag $version points at ${tagged:0:12}, not HEAD (${head:0:12})." >&2
-    echo "  Delete it (git tag -d $version) or pick a new version." >&2
+    echo "  Delete it (git tag -d $version && git push origin :refs/tags/$version) or pick a new version." >&2
     exit 1
   fi
   echo "release: tag $version already exists"
@@ -113,7 +135,21 @@ if [[ -z "$(git -C "$dir" status --porcelain -- Formula/ada.rb)" ]]; then
 else
   git -C "$dir" add Formula/ada.rb
   git -C "$dir" commit -q -m "Homebrew: point formula at $version"
-  git -C "$dir" push -q origin main
+  if ! git -C "$dir" push -q origin main; then
+    # main moved after the check above (another merge landed while the tarball
+    # downloaded). The tag is pushed but no formula names it, so it is not a
+    # release. Take it back, so a re-run cuts the same version from the new
+    # main instead of counting this tag as released and skipping a version.
+    # The reset drops only the commit made just above: the tree was clean.
+    git -C "$dir" reset -q --hard HEAD~1
+    if ! git -C "$dir" push -q origin ":refs/tags/$version"; then
+      echo "release: could not delete the pushed tag; do it with: git push origin :refs/tags/$version" >&2
+    fi
+    git -C "$dir" tag -d "$version" >/dev/null
+    echo "release: pushing the formula bump to main failed (did main move?)." >&2
+    echo "  Removed tag $version; re-run to release $version from the new main." >&2
+    exit 1
+  fi
   echo "Committed and pushed the formula bump to main"
 fi
 

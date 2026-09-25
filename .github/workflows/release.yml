@@ -57,17 +57,19 @@ jobs:
       - name: Run the bats suite
         run: bats test/
 
+      # The next version counts from the one the formula on main points at, not
+      # the newest tag, and skips pre-release tags (release.sh --next). If main
+      # moves after release.sh pushed the tag, its formula push fails and it
+      # deletes that tag, so re-running this job cuts the same version again
+      # instead of treating the orphaned tag as released and skipping one.
       - name: Pick the next version
         id: version
         env:
-          MAJOR: ${{ contains(github.event.pull_request.labels.*.name, 'release:major') }}
+          BUMP: ${{ contains(github.event.pull_request.labels.*.name, 'release:major') && 'major' || 'minor' }}
         run: |
-          last=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -1)
-          IFS=. read -r maj min _ <<<"${last#v}"
-          maj=${maj:-0} min=${min:-0}
-          if [[ "$MAJOR" == true ]]; then maj=$((maj + 1)); min=0; else min=$((min + 1)); fi
-          echo "Releasing v$maj.$min (previous: ${last:-none})"
-          echo "version=v$maj.$min" >> "$GITHUB_OUTPUT"
+          version=$(./release.sh --next "$BUMP")
+          echo "Releasing $version ($BUMP)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Release
         env:

@@ -98,7 +98,12 @@ replays that same event; a forgotten label means a manual `./release.sh`. It use
 `pull_request_target` so fork PRs still get a write token, which is only safe
 because it never checks out the PR head, only `main` after the merge. If `main`
 moves while the job runs, `release.sh` refuses (HEAD != origin/main) and
-re-running the job releases the newer `main`. `.github/workflows/test.yml` runs
+re-running the job releases the newer `main`. If it moves after the tag is
+pushed, the formula push fails and `release.sh` deletes that tag (remote and
+local) and its own formula commit, so the re-run cuts the same version. The
+next version comes from `release.sh --next minor|major`, which counts from the
+version the formula points at rather than the newest tag, so neither such an
+orphaned tag nor a pre-release tag like `v1.0-rc1` can push the number ahead. `.github/workflows/test.yml` runs
 the same suite on every PR and every direct push to `main`.
 
 ## Native helper is the only renderer

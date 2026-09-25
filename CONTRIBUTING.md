@@ -121,7 +121,8 @@ must be committed to `main`.
 
 Releases are cut automatically: label a PR `release:minor` or `release:major`
 **before** merging it, and the `release` workflow runs the test suite and cuts
-the next version (v0.4 -> v0.5, or v0.4 -> v1.0). Unlabelled merges release
+the next version (v0.4 -> v0.5, or v0.4 -> v1.0), counted from the version the
+formula points at (`./release.sh --next minor` prints it). Unlabelled merges release
 nothing. A label added after the merge is not seen, so in that case, or to
 release by hand, run from an up-to-date `main`:
 
