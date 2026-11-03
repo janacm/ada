@@ -353,8 +353,9 @@ undo by accident:
 **The loop relaunches itself when its script is replaced.** Observed
 2026-11-03: after `brew upgrade` from 0.4 to 0.5, the LaunchAgent kept running
 0.4's Python out of the deleted 0.4 Cellar directory, because a process keeps
-the code it started with. The rule is the menu bar's `RelaunchWatcher`, in
-Python (`RelaunchWatcher` in `lib/ada-paseo-watch.py`):
+the code it started with. The rule follows the menu bar's `RelaunchWatcher`,
+in Python (`RelaunchWatcher` in `lib/ada-paseo-watch.py`), except for a missing
+script:
 
 - **Only under launchd.** On when `XPC_SERVICE_NAME` is `com.ada.paseo-watch`
   (launchd sets it to the label; checked on the live job), or forced with
@@ -368,14 +369,26 @@ Python (`RelaunchWatcher` in `lib/ada-paseo-watch.py`):
   the `opt` link, and a realpath would keep watching the old keg, which still
   exists when the link moves. A different `(st_dev, st_ino)` means exit 75;
   checking after the poll means whatever the old code saw is already alerted.
-- **Missing two polls in a row means uninstalled: exit 0.** One missing poll is
-  tolerated, because an upgrade deletes and recreates the `opt` link. A path
-  that can't be stat'ed at startup turns the rule off rather than stop a
-  healthy loop two polls later.
-- **The plist's `KeepAlive` is `{SuccessfulExit: false}`**, the menu bar's: 75
-  restarts it, 0 leaves it stopped. Plain `true` (every plist written before
-  2026-11-03) also restarts on 75, but restarts after 0 too, into a
-  `/bin/bash` that can't find the script.
+- **A missing script is waited out, never a reason to exit.** The menu bar
+  exits 0 after two missing ticks; this loop must not. ada ships no bottles,
+  and `brew reinstall` renames the keg to `<version>.reinstall` (the `opt` link
+  dangles) for both Swift builds, so the path is missing for minutes and then
+  comes back as a new file, which is a relaunch. Read in Homebrew's
+  `reinstall/reinstall.rb` (`backup`). Exiting there stopped alerts until the
+  next login, and deleting the plist (a review suggestion) would have unwired
+  Paseo. After a real uninstall the loop lingers, polling and failing to find
+  its launcher, until logout. A path that can't be stat'ed at startup turns the
+  rule off.
+- **The plist's guard covers the next login.** `ProgramArguments` is
+  `/bin/sh -c '[ -f "$0" ] || exit 0; exec /bin/bash "$0" run' <script>`. A
+  login after `brew uninstall` exits 0 and, with `KeepAlive`
+  `{SuccessfulExit: false}`, stays stopped instead of retrying a missing script
+  every `ThrottleInterval` (exit 127 is a failure). The script path stays its
+  own element, which `status` reads back. Plain `KeepAlive true` (every plist
+  written before 2026-11-03, which also runs `/bin/bash <script>` directly)
+  still restarts on 75, but retries forever after an uninstall until
+  `install` writes the new plist. Both were checked with throwaway launchd
+  jobs.
 - **Silent.** `status` reads any log output as a fault, so a relaunch shows only
   as `last exit code = 75: EX_TEMPFAIL` in `launchctl print`.
 - **`fire()` starts the launcher with `start_new_session=True`.** When the job's

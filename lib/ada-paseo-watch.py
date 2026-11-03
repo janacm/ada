@@ -143,12 +143,14 @@ def fire(label, duration, code, agent_id=""):
 # --- relaunch when the code underneath is replaced ---------------------------------
 # A `brew upgrade` points the opt symlink at a new keg and deletes the old one, and
 # a re-stage renames a new copy over this file; either way this process would go
-# on running the old code until the next login. The rule is the menu bar's
-# (RelaunchWatcher in Sources/ADAAlertCore/MenuBarSupport.swift): a different file
-# at the launch path means exit RELAUNCH_EXIT, which launchd's KeepAlive restarts;
-# gone for two ticks in a row means uninstalled, so exit 0, which KeepAlive
-# {SuccessfulExit: false} leaves stopped. One missing tick is tolerated because an
-# upgrade deletes and recreates the opt link.
+# on running the old code until the next login. A different file at the launch
+# path means exit RELAUNCH_EXIT, which launchd's KeepAlive restarts (the menu bar's
+# RelaunchWatcher in Sources/ADAAlertCore/MenuBarSupport.swift does the same).
+# A missing file is not a reason to exit, unlike the menu bar: `brew reinstall`
+# renames the keg away for the whole Swift build (ada ships no bottles), so
+# "missing" lasts minutes and is followed by a new file. The loop waits for it.
+# After an uninstall it lingers, harmlessly, until logout, and the plist's guard
+# keeps the next login from starting it (see ada-paseo-watch.sh install).
 RELAUNCH_EXIT = 75   # EX_TEMPFAIL, the menu bar's code too
 LAUNCHD_LABEL = "com.ada.paseo-watch"
 
@@ -174,26 +176,25 @@ def file_identity(path):
 
 
 class RelaunchWatcher:
-    KEEP, RELAUNCH, EXIT = "keep", "relaunch", "exit"
+    KEEP, RELAUNCH = "keep", "relaunch"
 
     def __init__(self, path):
         self.path = path
         self.original = file_identity(path)
-        self.missing = 0
 
     def check(self):
+        """KEEP while the launch path is this file or missing (mid-swap, mid-
+        reinstall, or uninstalled); RELAUNCH once it is a different file."""
         current = file_identity(self.path)
-        if current is None:
-            self.missing += 1
-            return self.EXIT if self.missing >= 2 else self.KEEP
-        self.missing = 0
-        return self.KEEP if current == self.original else self.RELAUNCH
+        if current is None or current == self.original:
+            return self.KEEP
+        return self.RELAUNCH
 
 
 def relaunch_watcher(env=None, path=None):
     """The watcher for this run, or None when the rule is off. Also None when the
-    script can't be stat'ed at startup: a path that never resolves would read as
-    "uninstalled" two ticks later and stop a healthy loop."""
+    script can't be stat'ed at startup: with no original to compare, any file
+    that later appeared there would read as a replacement."""
     if not relaunch_enabled(env):
         return None
     watcher = RelaunchWatcher(path or SELF)
@@ -303,12 +304,8 @@ def main():
         # Checked after a full poll, so whatever the old code saw is already
         # alerted when it exits. Silent on purpose: `status` reads any log output
         # as a fault, and launchd keeps the exit code (`last exit code = 75`).
-        if relaunch is not None:
-            decision = relaunch.check()
-            if decision == RelaunchWatcher.RELAUNCH:
-                sys.exit(RELAUNCH_EXIT)
-            if decision == RelaunchWatcher.EXIT:
-                sys.exit(0)
+        if relaunch is not None and relaunch.check() == RelaunchWatcher.RELAUNCH:
+            sys.exit(RELAUNCH_EXIT)
         time.sleep(POLL)
 
 

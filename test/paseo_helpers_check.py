@@ -203,14 +203,11 @@ check("no watcher for a script it cannot stat at startup",
 w = m.relaunch_watcher(ON, watched)
 seq = [w.check()]
 os.rename(watched, watched + ".away")
-seq.append(w.check())
+seq += [w.check() for _ in range(5)]
 os.rename(watched + ".away", watched)
 seq.append(w.check())
-os.rename(watched, watched + ".away")
-seq += [w.check(), w.check()]
-check("one missing tick is tolerated, a return resets it, two in a row mean exit",
-      seq == ["keep", "keep", "keep", "keep", "exit"], seq)
-os.rename(watched + ".away", watched)
+check("an unchanged or missing script keeps running, however long it is gone",
+      seq == ["keep"] * 7, seq)
 
 w = m.relaunch_watcher(ON, watched)
 os.rename(script("watched.new", ""), watched)

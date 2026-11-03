@@ -437,10 +437,11 @@ in place from `$(brew --prefix)/opt/ada/libexec` — which also means
 `brew upgrade ada` updates the watcher without re-running `install`. Either way
 `status` prints the runtime it's actually using.
 
-The running watcher notices when its own script is replaced (a `brew upgrade`,
-or `install` re-staging a from-source copy) and exits so launchd starts the new
-version within a few seconds, with no logout. If the script disappears for good
-(the formula was uninstalled), it exits and stays stopped. The release that
+The running watcher notices when its own script is replaced (a `brew upgrade`
+or `brew reinstall`, or `install` re-staging a from-source copy) and exits so
+launchd starts the new version within a few seconds, with no logout. If the
+formula is uninstalled, the old watcher lingers until you log out and does not
+start again at the next login. The release that
 added this can't apply it to the watcher already running, so after upgrading
 onto it, restart that one once:
 

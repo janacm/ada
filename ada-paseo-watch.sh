@@ -217,8 +217,11 @@ ada_install() {
   # Bake in a PATH that finds paseo (~/.local/bin) plus python3/lsappinfo,
   # because launchd jobs don't inherit your interactive shell PATH.
   # KeepAlive/SuccessfulExit=false: the loop exits 75 when its script was replaced
-  # (a brew upgrade, a re-stage) and launchd starts the new copy; it exits 0 when
-  # the script is gone (uninstalled), which must stay stopped.
+  # (a brew upgrade, a reinstall, a re-stage) and launchd starts the new copy.
+  # The sh guard exits 0 when the script is gone, so a login after `brew
+  # uninstall` leaves the job stopped instead of retrying a missing script every
+  # ThrottleInterval. The script path stays its own argument ($0 to the guard),
+  # which is what `status` reads back.
   cat > "$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -228,9 +231,10 @@ ada_install() {
   <string>${label_prefix}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/bash</string>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>[ -f "\$0" ] || exit 0; exec /bin/bash "\$0" run</string>
     <string>${script}</string>
-    <string>run</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
