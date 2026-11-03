@@ -741,8 +741,15 @@ removed.
 - A check is due a day (`ADA_UPDATE_INTERVAL`) after one that worked, and an
   hour after one that failed or never finished. A check marks the cache as
   running before it fetches, so alerts meanwhile don't start another.
+- Only one check may fetch and write at a time. A check first takes an atomic
+  lock (`<cache>.lock`, a directory `mkdir` creates); a background check that
+  can't take it stands down, `ada-update check` waits for it, and a lock older
+  than a minute is taken over. Anything at that path that isn't a directory
+  stops every check and is never removed.
 - The request must be an HTTPS GET of the formula with no headers, data or
-  identifiers of ours, must not follow a redirect off HTTPS, and must time out.
+  identifiers of ours, must ignore the user's curl configuration (`curl -q`,
+  so a `~/.curlrc` adds nothing to it), must not follow a redirect off HTTPS,
+  and must time out.
 - `ADA_UPDATE_CHECK=0` and the off switch `ada-update off` writes
   (`~/.local/share/ada/update-check-off`, outside `TMPDIR` so it lasts and the
   LaunchAgents see it) must each stop both the check and the notice.
@@ -839,6 +846,10 @@ removed.
   wrapper) reports, checks, and turns the check `off` or `on`; the off switch
   lives in `~/.local/share/ada` so the LaunchAgents see it. This is ada's only
   network request; the docs of record say what it sends (nothing about you).
+  From review: curl runs with `-q`, so a `~/.curlrc` can't add headers, data or
+  URLs to the request, and a lock beside the cache lets only one check fetch
+  and write at a time; two alerts arriving together each fetched, and on a
+  first check one's failure could overwrite the other's answer.
 
 - 2026-09-25: A pause no longer loses what arrives during it. The launcher keeps
   each held alert as its history line in `<pause file>.held/` and shows them all

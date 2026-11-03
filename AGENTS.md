@@ -808,6 +808,16 @@ writes `$TMPDIR/ada-update.command` and opens it, like Set Up Integrations.
   for the next alert. It marks the cache `checking` before it fetches, so the
   alerts that arrive meanwhile don't start another; a `checking` or `failed`
   line is due again after an hour, an `ok` one after `ADA_UPDATE_INTERVAL`.
+- **One check at a time, by `mkdir`.** The `checking` mark alone left a gap:
+  two alerts arriving together each read the old line, both fetched, and on a
+  first check one's `- failed` could land over the other's answer. A check now
+  takes `<cache>.lock` (a directory) first and reads the cache again once it
+  holds it. A lock older than a minute belongs to a check that died and is
+  taken over with `rmdir`, which can only remove an empty directory.
+- **`curl -q`, and first.** Without it curl applies the user's `~/.curlrc`,
+  whose `header`, `user`, `data` or `url` lines would ride along on a request
+  the docs promise carries nothing. `-q` only works as the first argument; the
+  test pins the exact argument list.
   The launcher takes the epoch from the history line it just built rather than
   running `date`.
 - **Copy `BASH_REMATCH` before calling anything.** The first version validated

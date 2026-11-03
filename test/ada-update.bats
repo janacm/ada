@@ -27,6 +27,7 @@ setup() {
 # curl stub: logs its arguments, one per line and a --- after each call, then
 # serves $STUB_CURL_BODY, or fails like an unreachable host without one.
 { printf '%s\n' "$@"; echo ---; } >> "$STUB_CURL_LOG"
+[[ -n "${STUB_CURL_SLEEP:-}" ]] && sleep "$STUB_CURL_SLEEP"
 [[ -n "${STUB_CURL_BODY:-}" && -f "$STUB_CURL_BODY" ]] || exit 7
 cat "$STUB_CURL_BODY"
 SH
@@ -71,8 +72,9 @@ curl_calls() { [[ -f "$STUB_CURL_LOG" ]] && grep -c '^---$' "$STUB_CURL_LOG" || 
 @test "the one request is a GET of the formula on main, https only, with nothing of ours" {
   run "$UPDATE" check
   assert_success
-  # Exactly these arguments: no headers, no data, no user agent of ours.
-  assert_equal "$(cat "$STUB_CURL_LOG")" "$(printf '%s\n' -fsSL --proto =https --proto-redir =https --max-time 15 \
+  # Exactly these arguments: no headers, no data, no user agent of ours. -q
+  # first, or curl would add whatever the user's ~/.curlrc says.
+  assert_equal "$(cat "$STUB_CURL_LOG")" "$(printf '%s\n' -q -fsSL --proto =https --proto-redir =https --max-time 15 \
     https://raw.githubusercontent.com/janacm/ada/main/Formula/ada.rb ---)"
 }
 
@@ -275,6 +277,66 @@ curl_calls() { [[ -f "$STUB_CURL_LOG" ]] && grep -c '^---$' "$STUB_CURL_LOG" || 
   assert_equal "$output" ""
   assert_equal "$(curl_calls)" 1
   assert_equal "$(cat "$CACHE")" "87400 0.5 ok"
+}
+
+# --- one check at a time -------------------------------------------------------------
+
+@test "two background checks that find one due make one request" {
+  export STUB_CURL_SLEEP=0.5
+  "$UPDATE" check --background 3>&- &
+  local first=$!
+  "$UPDATE" check --background 3>&- &
+  local second=$!
+  wait "$first" "$second"
+  assert_equal "$(curl_calls)" 1
+  [[ "$(cat "$CACHE")" == *" 0.5 ok" ]] || { cat "$CACHE"; false; }
+  [ ! -e "$CACHE.lock" ]
+}
+
+@test "a running check makes a background check stand down" {
+  mkdir "$CACHE.lock"
+  run "$UPDATE" check --background
+  assert_success
+  assert_equal "$(curl_calls)" 0
+  [ -d "$CACHE.lock" ]
+}
+
+@test "a lock left by a check that died is taken over after a minute" {
+  mkdir "$CACHE.lock"
+  touch -t 202001010000 "$CACHE.lock"
+  run "$UPDATE" check --background
+  assert_success
+  assert_equal "$(curl_calls)" 1
+  [ ! -e "$CACHE.lock" ]
+}
+
+@test "check by hand waits for a running check, then checks" {
+  mkdir "$CACHE.lock"
+  ( sleep 0.5; rmdir "$CACHE.lock" ) 3>&- &
+  run "$UPDATE" check
+  assert_success
+  assert_output_contains "ada 0.5 is out"
+  assert_equal "$(curl_calls)" 1
+  [ ! -e "$CACHE.lock" ]
+}
+
+@test "check by hand leaves a lock path that isn't a directory alone" {
+  echo mine > "$CACHE.lock"
+  run "$UPDATE" check
+  assert_failure
+  assert_output_contains "another update check holds $CACHE.lock"
+  assert_equal "$(cat "$CACHE.lock")" mine
+  assert_equal "$(curl_calls)" 0
+  run "$UPDATE" check --background
+  assert_success
+  assert_equal "$(curl_calls)" 0
+}
+
+@test "a failed check releases the lock too" {
+  rm "$STUB_CURL_BODY"
+  run "$UPDATE" check
+  assert_failure
+  [ ! -e "$CACHE.lock" ]
 }
 
 # --- the notice --------------------------------------------------------------------

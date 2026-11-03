@@ -161,11 +161,12 @@ __ada_update_note() {
 
 # Fetch the formula and print the version in its url line. Nothing but the URL
 # goes out: no headers or data of ours, and curl may not leave https, even on a
-# redirect.
+# redirect. -q must come first, or curl reads the user's ~/.curlrc, whose
+# header, user, data or url lines would ride along on this request.
 __ada_update_fetch() {
   local url=${ADA_UPDATE_URL:-$ADA_UPDATE_DEFAULT_URL} body line found
   local re='^[[:space:]]*url[[:space:]]+"[^"]*/v?([0-9]+(\.[0-9]+)+)\.tar\.gz"'
-  body=$(curl -fsSL --proto '=https' --proto-redir '=https' --max-time 15 "$url" 2>/dev/null) || return 1
+  body=$(curl -q -fsSL --proto '=https' --proto-redir '=https' --max-time 15 "$url" 2>/dev/null) || return 1
   while IFS= read -r line; do
     if [[ "$line" =~ $re ]]; then
       # Copied first: the check below runs a regex of its own, which replaces
@@ -179,8 +180,31 @@ __ada_update_fetch() {
   return 1
 }
 
-# Check now. Marks the check as running first, so alerts that show meanwhile
-# don't start another, and keeps the last answer when this one fails.
+# The check's lock: a directory beside the cache, which mkdir creates
+# atomically, so of the checks that find one due only one fetches and writes.
+# Without it two alerts arriving together each fetched, and on a first check
+# one's "- failed" could land over the other's answer. A lock older than a
+# minute was left by a check that died (a fetch gives up after 15 seconds), so
+# it is taken over; rmdir only ever removes an empty directory. Anything else at
+# that path (a file, a symlink) is not ours: no check runs while it is there.
+__ada_update_lock() {
+  local lock="$__ada_update_cache.lock" at now
+  mkdir "$lock" 2>/dev/null && return 0
+  [[ -d "$lock" && ! -L "$lock" ]] || return 1
+  at=$(stat -f %m "$lock" 2>/dev/null) || return 1
+  now=$(date +%s) || return 1
+  (( now - at > 60 )) || return 1
+  rmdir "$lock" 2>/dev/null
+  mkdir "$lock" 2>/dev/null
+}
+
+__ada_update_unlock() {
+  rmdir "$__ada_update_cache.lock" 2>/dev/null || true
+}
+
+# Check now, holding the lock (__ada_update_lock). Marks the check as running
+# first, so alerts that show meanwhile don't start another, and keeps the last
+# answer when this one fails.
 __ada_update_check() {
   local now latest
   now=$(date +%s) || return 1
@@ -250,12 +274,30 @@ __ada_update_cli() {
       __ada_update_read
       if [[ "$action" == check ]]; then
         # The launcher's background check: one per due period, however many
-        # alerts asked for it.
+        # alerts asked for it. A check already running has it covered, and one
+        # that finished while this waited for the lock made it moot, so the
+        # cache is read again once the lock is held.
         if [[ "${2:-}" == --background ]]; then
           __ada_update_due "$(date +%s)" || return 0
-          __ada_update_check
+          __ada_update_lock || return 0
+          trap __ada_update_unlock EXIT
+          trap 'exit 130' INT TERM
+          __ada_update_read
+          __ada_update_due "$(date +%s)" && __ada_update_check
           return 0
         fi
+        # Asked for by hand: wait out a check that is running (its fetch gives
+        # up after 15 seconds), then check again.
+        local tries=100 lock="$__ada_update_cache.lock"
+        until __ada_update_lock; do
+          if [[ ! -d "$lock" || -L "$lock" ]] && [[ -e "$lock" || -L "$lock" ]] || (( tries-- <= 0 )); then
+            echo "ada-update: another update check holds $lock" >&2
+            return 1
+          fi
+          sleep 0.2
+        done
+        trap __ada_update_unlock EXIT
+        trap 'exit 130' INT TERM
         if ! __ada_update_check; then
           echo "ada-update: could not read ${ADA_UPDATE_URL:-$ADA_UPDATE_DEFAULT_URL}" >&2
           return 1
