@@ -218,8 +218,12 @@ finished_release() {
 }
 
 @test "--next with no tags counts from the formula's version" {
+  # Pin the version: the fixture starts from the repo's own formula, which
+  # every release bumps.
+  sed -i '' 's|^  url ".*"|  url "https://github.com/janacm/ada/archive/refs/tags/v0.4.tar.gz"|' "$WORK/Formula/ada.rb"
+  git -C "$WORK" commit -q -am "formula installs v0.4"
   run "$RELEASE" --next minor
-  assert_equal "$output" "v0.5"      # the fixture's formula installs v0.4
+  assert_equal "$output" "v0.5"
   run "$RELEASE" --next major
   assert_equal "$output" "v1.0"
 }
