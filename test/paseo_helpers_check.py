@@ -163,6 +163,73 @@ sys.stderr = real_stderr
 check("a launcher that cannot start is reported, not raised",
       "launcher failed" in open(err).read())
 
+# --- fire: the launcher gets a session of its own -----------------------------------
+# launchd kills what is left in the job's process group when the loop exits (a
+# relaunch, an unload), and an alert window would go with it.
+pgrec = os.path.join(TMP, "fired-pgid.txt")
+m.LAUNCHER = script("launcher-pgid", 'echo "$$ $(ps -o pgid= -p $$)" > %s\n' % pgrec)
+m.fire("x", "1s", 0)
+for _ in range(100):
+    if os.path.exists(pgrec) and open(pgrec).read().strip():
+        break
+    time.sleep(0.02)
+fields = open(pgrec).read().split() if os.path.exists(pgrec) else []
+check("fire starts the launcher as the leader of a new process group",
+      len(fields) == 2 and fields[0] == fields[1] and int(fields[1]) != os.getpgrp(),
+      fields)
+
+# --- the relaunch rule ------------------------------------------------------------
+m = load_mod(BASE)
+check("the relaunch rule is on under the LaunchAgent only",
+      m.relaunch_enabled({"XPC_SERVICE_NAME": "com.ada.paseo-watch"})
+      and not m.relaunch_enabled({"XPC_SERVICE_NAME": "com.ada.menubar"})
+      and not m.relaunch_enabled({"XPC_SERVICE_NAME": "0"})
+      and not m.relaunch_enabled({}))
+check("ADA_PASEO_RELAUNCH=1 or 0 forces it, anything else leaves it to launchd",
+      m.relaunch_enabled({"ADA_PASEO_RELAUNCH": "1"})
+      and not m.relaunch_enabled({"ADA_PASEO_RELAUNCH": "0",
+                                  "XPC_SERVICE_NAME": "com.ada.paseo-watch"})
+      and m.relaunch_enabled({"ADA_PASEO_RELAUNCH": "yes",
+                              "XPC_SERVICE_NAME": "com.ada.paseo-watch"}))
+check("the watched path is the launch path, not its realpath",
+      m.SELF == os.path.abspath(MOD_PATH), m.SELF)
+
+ON = {"ADA_PASEO_RELAUNCH": "1"}
+watched = script("watched.py", "")
+check("no watcher when the rule is off", m.relaunch_watcher({}, watched) is None)
+check("no watcher for a script it cannot stat at startup",
+      m.relaunch_watcher(ON, os.path.join(TMP, "never-there.py")) is None)
+
+w = m.relaunch_watcher(ON, watched)
+seq = [w.check()]
+os.rename(watched, watched + ".away")
+seq.append(w.check())
+os.rename(watched + ".away", watched)
+seq.append(w.check())
+os.rename(watched, watched + ".away")
+seq += [w.check(), w.check()]
+check("one missing tick is tolerated, a return resets it, two in a row mean exit",
+      seq == ["keep", "keep", "keep", "keep", "exit"], seq)
+os.rename(watched + ".away", watched)
+
+w = m.relaunch_watcher(ON, watched)
+os.rename(script("watched.new", ""), watched)
+check("a different file renamed over the path means relaunch", w.check() == "relaunch")
+
+# The Homebrew shape: watch through a symlinked directory, then repoint it while
+# the old target still exists. Following the path, not a realpath, sees the swap.
+for keg in ("keg1", "keg2"):
+    os.makedirs(os.path.join(TMP, keg), exist_ok=True)
+    script(os.path.join(keg, "w.py"), "")
+opt = os.path.join(TMP, "opt")
+os.symlink("keg1", opt)
+w = m.relaunch_watcher(ON, os.path.join(opt, "w.py"))
+first = w.check()
+os.remove(opt)
+os.symlink("keg2", opt)
+check("repointing the opt link at a new keg means relaunch",
+      (first, w.check()) == ("keep", "relaunch"), first)
+
 # --- main: vanished agents are forgotten --------------------------------------------
 class StopLoop(Exception):
     pass

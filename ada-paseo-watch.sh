@@ -195,7 +195,8 @@ ada_install() {
   # to ~/Documents/GitHub/ada); launchd fails with "Operation not permitted"
   # (exit 126). A dev checkout therefore gets staged into ~/.local/share/ada. A
   # Homebrew install already sits in a non-TCC, version-stable location, so it
-  # runs in place and picks up `brew upgrade` automatically.
+  # runs in place and picks up `brew upgrade` automatically: the loop exits when
+  # its script is replaced and launchd starts the new one.
   local script
   __ada_load_stage_lib || return 1
   mkdir -p "$install_dir" "$HOME/Library/LaunchAgents"
@@ -215,6 +216,9 @@ ada_install() {
   fi
   # Bake in a PATH that finds paseo (~/.local/bin) plus python3/lsappinfo,
   # because launchd jobs don't inherit your interactive shell PATH.
+  # KeepAlive/SuccessfulExit=false: the loop exits 75 when its script was replaced
+  # (a brew upgrade, a re-stage) and launchd starts the new copy; it exits 0 when
+  # the script is gone (uninstalled), which must stay stopped.
   cat > "$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -238,7 +242,10 @@ ada_install() {
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
   <key>ThrottleInterval</key>
   <integer>10</integer>
   <key>StandardOutPath</key>

@@ -437,6 +437,17 @@ in place from `$(brew --prefix)/opt/ada/libexec` — which also means
 `brew upgrade ada` updates the watcher without re-running `install`. Either way
 `status` prints the runtime it's actually using.
 
+The running watcher notices when its own script is replaced (a `brew upgrade`,
+or `install` re-staging a from-source copy) and exits so launchd starts the new
+version within a few seconds, with no logout. If the script disappears for good
+(the formula was uninstalled), it exits and stays stopped. The release that
+added this can't apply it to the watcher already running, so after upgrading
+onto it, restart that one once:
+
+```sh
+launchctl kickstart -k gui/$(id -u)/com.ada.paseo-watch
+```
+
 Or run it in the foreground to try it out (Ctrl-C to stop), and fire a one-off
 sample alert to confirm the visuals:
 

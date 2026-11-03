@@ -574,3 +574,119 @@ SH
   [ ! -e "$ADA_PROBE_OUT" ] || { echo "an alert fired while paused:"; cat "$ADA_PROBE_OUT"; false; }
   refute_file_contains "$BATS_TEST_TMPDIR/loop.out" "Traceback"
 }
+
+# --- relaunch: a replaced script restarts the LaunchAgent's loop -------------------
+# Under the LaunchAgent the loop exits 75 when the file at its launch path is a
+# different one (a brew upgrade, a re-stage), which KeepAlive {SuccessfulExit:
+# false} restarts, and 0 when it is gone two polls in a row (uninstalled), which
+# it leaves stopped. Both launchd halves were checked live with a throwaway job.
+# The stub paseo below acts on the files at a set poll, inside the loop's own
+# iteration (`ls`, `permit ls`, then the check, then the sleep), so which check
+# sees what is exact rather than a race against the clock.
+
+# paseo stub: counts `ls` polls and, on poll N, sources $BATS_TEST_TMPDIR/at-N.
+relaunch_paseo_stub() {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat > "$BATS_TEST_TMPDIR/bin/paseo" <<'SH'
+#!/bin/bash
+state="$BATS_TEST_TMPDIR/paseo-polls"
+case "$1" in
+  ls)
+    n=$(( $(cat "$state" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$state"
+    if [[ -f "$BATS_TEST_TMPDIR/at-$n" ]]; then . "$BATS_TEST_TMPDIR/at-$n"; fi
+    echo '[]' ;;
+  permit) echo '[]' ;;
+esac
+SH
+  chmod +x "$BATS_TEST_TMPDIR/bin/paseo"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  # The real job is recognized by XPC_SERVICE_NAME, which a test can't set (it
+  # breaks the xcrun shims in /usr/bin); the knob stands in for it.
+  export ADA_PASEO_POLL=1 ADA_PASEO_RELAUNCH=1
+  export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
+}
+
+# A Homebrew prefix: opt/ada -> Cellar/ada/1, plus a keg 2 to upgrade to.
+relaunch_brew() {
+  PREFIX="$BATS_TEST_TMPDIR/brew"
+  local v keg
+  for v in 1 2; do
+    keg="$PREFIX/Cellar/ada/$v/libexec"
+    mkdir -p "$keg/lib"
+    cp "$REPO_ROOT/ada-paseo-watch.sh" "$keg/"
+    cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$keg/lib/"
+  done
+  mkdir -p "$PREFIX/opt"
+  ln -s ../Cellar/ada/1 "$PREFIX/opt/ada"
+  relaunch_paseo_stub
+}
+
+# What launchd runs: the front door's `run`, which execs the loop. The alarm is
+# a ceiling for a loop that never exits (status 142), not part of any check.
+run_watch_loop() {
+  run perl -e 'alarm shift; exec @ARGV' 20 /bin/bash "$1" run
+}
+
+loop_polls() { cat "$BATS_TEST_TMPDIR/paseo-polls"; }
+
+@test "the LaunchAgent's loop exits 75 when brew upgrade points opt at a new keg" {
+  relaunch_brew
+  echo "ln -sfn ../Cellar/ada/2 '$PREFIX/opt/ada'" > "$BATS_TEST_TMPDIR/at-2"
+  run_watch_loop "$PREFIX/opt/ada/libexec/ada-paseo-watch.sh"
+  assert_equal "$status" 75
+  # Right after the poll that moved the link, with keg 1 still on disk: a loop
+  # that resolved its path into the Cellar would keep finding the old file.
+  assert_equal "$(loop_polls)" 2
+  [ -f "$PREFIX/Cellar/ada/1/libexec/lib/ada-paseo-watch.py" ]
+}
+
+@test "the LaunchAgent's loop exits 75 when a re-install re-stages it" {
+  require_native_helper
+  relaunch_paseo_stub
+  run "$WATCH" install
+  assert_success
+  # The real install again, from inside poll 2: it renames a new copy over the
+  # staged script the loop is running from.
+  echo "'$WATCH' install >/dev/null 2>&1" > "$BATS_TEST_TMPDIR/at-2"
+  local before
+  before=$(stat -f %i "$ADA_PASEO_INSTALL_DIR/lib/ada-paseo-watch.py")
+  run_watch_loop "$ADA_PASEO_INSTALL_DIR/ada-paseo-watch.sh"
+  assert_equal "$status" 75
+  assert_equal "$(loop_polls)" 2
+  [ "$(stat -f %i "$ADA_PASEO_INSTALL_DIR/lib/ada-paseo-watch.py")" != "$before" ]
+}
+
+@test "the loop rides out one missing poll and exits 0 after two in a row" {
+  relaunch_brew
+  # Poll 2: the opt link is gone, as for a moment during an upgrade. Poll 3: it
+  # is back, pointing at the same keg. Poll 5: gone for good (brew uninstall).
+  echo "rm '$PREFIX/opt/ada'" > "$BATS_TEST_TMPDIR/at-2"
+  echo "ln -s ../Cellar/ada/1 '$PREFIX/opt/ada'" > "$BATS_TEST_TMPDIR/at-3"
+  echo "rm -rf '$PREFIX/opt/ada' '$PREFIX/Cellar/ada'" > "$BATS_TEST_TMPDIR/at-5"
+  run_watch_loop "$PREFIX/opt/ada/libexec/ada-paseo-watch.sh"
+  assert_equal "$status" 0
+  # Exiting at 2 would mean no tolerance; at 5, that the link's return did not
+  # reset the count. 6 is the second missing poll in a row.
+  assert_equal "$(loop_polls)" 6
+}
+
+@test "outside launchd the loop keeps running on a replaced script" {
+  relaunch_brew
+  unset ADA_PASEO_RELAUNCH
+  echo "ln -sfn ../Cellar/ada/2 '$PREFIX/opt/ada'" > "$BATS_TEST_TMPDIR/at-2"
+  # The stub's parent is the loop: poll 4 ends it, so "still running" is exact.
+  echo 'kill -TERM $PPID' > "$BATS_TEST_TMPDIR/at-4"
+  run_watch_loop "$PREFIX/opt/ada/libexec/ada-paseo-watch.sh"
+  assert_equal "$status" 143
+  assert_equal "$(loop_polls)" 4
+}
+
+@test "install writes a KeepAlive that restarts a failed loop but not a clean exit" {
+  require_native_helper
+  export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"
+  run "$WATCH" install
+  assert_success
+  local plist="$HOME/Library/LaunchAgents/com.ada.paseo-watch.plist"
+  assert_equal "$(/usr/libexec/PlistBuddy -c 'Print :KeepAlive:SuccessfulExit' "$plist")" false
+  assert_equal "$(/usr/libexec/PlistBuddy -c 'Print :RunAtLoad' "$plist")" true
+}

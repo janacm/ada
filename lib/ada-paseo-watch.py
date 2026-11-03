@@ -15,7 +15,10 @@
 # ada-paseo-watch.sh for the full rationale and the env knobs.
 #
 # Inherited environment:
-#   PASEO_BIN  resolved paseo CLI path (from the .sh)
+#   PASEO_BIN           resolved paseo CLI path (from the .sh)
+#   XPC_SERVICE_NAME    set by launchd; com.ada.paseo-watch turns on the
+#                       relaunch rule (see RelaunchWatcher below)
+#   ADA_PASEO_RELAUNCH  1 or 0 forces that rule on or off (tests use it)
 #   plus all the ADA_* knobs documented in ada-paseo-watch.sh
 # (ada-show-alert.sh is found as a sibling of this file, not via the env.)
 # =============================================================
@@ -31,7 +34,10 @@ PASEO = os.environ.get("PASEO_BIN") or "paseo"
 # checkout AND in the staged LaunchAgent layout (~/.local/share/ada/lib). Resolve
 # it relative to __file__ rather than an inherited ADA_DIR so it can't drift if
 # the caller sets ADA_DIR to the wrong base.
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# abspath, never realpath: under Homebrew this path runs through the opt symlink,
+# and the relaunch rule must keep watching that path, not today's Cellar copy.
+SELF = os.path.abspath(__file__)
+_HERE = os.path.dirname(SELF)
 LAUNCHER = os.path.join(_HERE, "ada-show-alert.sh")
 
 
@@ -120,14 +126,78 @@ def fire(label, duration, code, agent_id=""):
     env = dict(os.environ)
     env["ADA_SESSION_KEY"] = ("paseo-" + agent_id) if agent_id else ""
     env["ADA_SESSION_KIND"] = "agent"
+    # A session of its own: when this loop exits (a relaunch, an unload), launchd
+    # kills whatever is left in the job's process group, and an alert window the
+    # launcher backgrounded would close with it.
     try:
         subprocess.Popen(
             [LAUNCHER, label, duration, str(code)],
             env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
     except Exception as exc:
         print("ada-paseo-watch: launcher failed: %s" % exc, file=sys.stderr)
+
+
+# --- relaunch when the code underneath is replaced ---------------------------------
+# A `brew upgrade` points the opt symlink at a new keg and deletes the old one, and
+# a re-stage renames a new copy over this file; either way this process would go
+# on running the old code until the next login. The rule is the menu bar's
+# (RelaunchWatcher in Sources/ADAAlertCore/MenuBarSupport.swift): a different file
+# at the launch path means exit RELAUNCH_EXIT, which launchd's KeepAlive restarts;
+# gone for two ticks in a row means uninstalled, so exit 0, which KeepAlive
+# {SuccessfulExit: false} leaves stopped. One missing tick is tolerated because an
+# upgrade deletes and recreates the opt link.
+RELAUNCH_EXIT = 75   # EX_TEMPFAIL, the menu bar's code too
+LAUNCHD_LABEL = "com.ada.paseo-watch"
+
+
+def relaunch_enabled(env=None):
+    """Only under the LaunchAgent. A foreground `run` has no launchd to start it
+    again, so an editor saving the checkout's copy would just end the loop."""
+    env = os.environ if env is None else env
+    forced = env.get("ADA_PASEO_RELAUNCH")
+    if forced in ("0", "1"):
+        return forced == "1"
+    return env.get("XPC_SERVICE_NAME") == LAUNCHD_LABEL
+
+
+def file_identity(path):
+    """(device, inode) of path, None when it is gone. stat follows symlinks on
+    purpose: the file behind the opt link is the one an upgrade replaces."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+class RelaunchWatcher:
+    KEEP, RELAUNCH, EXIT = "keep", "relaunch", "exit"
+
+    def __init__(self, path):
+        self.path = path
+        self.original = file_identity(path)
+        self.missing = 0
+
+    def check(self):
+        current = file_identity(self.path)
+        if current is None:
+            self.missing += 1
+            return self.EXIT if self.missing >= 2 else self.KEEP
+        self.missing = 0
+        return self.KEEP if current == self.original else self.RELAUNCH
+
+
+def relaunch_watcher(env=None, path=None):
+    """The watcher for this run, or None when the rule is off. Also None when the
+    script can't be stat'ed at startup: a path that never resolves would read as
+    "uninstalled" two ticks later and stop a healthy loop."""
+    if not relaunch_enabled(env):
+        return None
+    watcher = RelaunchWatcher(path or SELF)
+    return watcher if watcher.original is not None else None
 
 
 def agents_snapshot():
@@ -180,6 +250,7 @@ def main():
     names = {}         # id -> friendly name
     seen_perm = set()  # currently-pending permission keys
     seeded = False
+    relaunch = relaunch_watcher()
 
     while True:
         now = int(time.time())
@@ -228,6 +299,16 @@ def main():
             seen_perm = set(perms)
 
         seeded = True
+
+        # Checked after a full poll, so whatever the old code saw is already
+        # alerted when it exits. Silent on purpose: `status` reads any log output
+        # as a fault, and launchd keeps the exit code (`last exit code = 75`).
+        if relaunch is not None:
+            decision = relaunch.check()
+            if decision == RelaunchWatcher.RELAUNCH:
+                sys.exit(RELAUNCH_EXIT)
+            if decision == RelaunchWatcher.EXIT:
+                sys.exit(0)
         time.sleep(POLL)
 
 
