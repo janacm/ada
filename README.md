@@ -105,7 +105,7 @@ so an upgrade takes effect on your next shell and next agent turn.
 
 #### Update notices
 
-From the release after v0.4 on, you don't have to watch for releases (getting
+From the release after v0.5 on, you don't have to watch for releases (getting
 to that one is the last upgrade you start unprompted). Once a day, the first
 alert that shows checks whether a newer ada is out, in the background so the
 alert never waits. When one is, every alert carries an **Update available**
