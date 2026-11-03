@@ -23,6 +23,7 @@ rules() { grep -v '^#' "$RULES" | grep -v '^$' || true; }
   assert_success
   assert_output_contains "(none yet)"
   assert_output_contains "on   terminal"
+  assert_output_contains "on   claude               Claude Code, any surface"
   assert_output_contains "on   claude/desktop"
   assert_output_contains "off  claude/headless      claude -p and Agent SDK runs (default)"
   assert_output_contains "on   paseo"
@@ -92,6 +93,7 @@ off source paseo"
     assert_failure
   done
   run "$SOURCES" list
+  assert_output_contains "off  claude               Claude Code, any surface (set)"
   assert_output_contains "off  claude/desktop       Claude desktop app (from claude)"
   assert_output_contains "off  claude/headless      claude -p and Agent SDK runs (default)"
 }

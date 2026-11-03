@@ -62,10 +62,10 @@ __ada_sources_path() {
 
 # The sources the integrations send, with what the CLI calls them. paseo/* is
 # open-ended (one per provider), so `list` adds the ones it has seen.
-__ada_src_known=(terminal claude/desktop claude/cli claude/ide claude/headless codex opencode paseo)
-__ada_src_titles=("Terminal commands" "Claude desktop app" "Claude Code in a terminal"
-                  "Claude Code in an IDE" "claude -p and Agent SDK runs" "Codex" "opencode"
-                  "Paseo agents")
+__ada_src_known=(terminal claude claude/desktop claude/cli claude/ide claude/headless codex opencode paseo)
+__ada_src_titles=("Terminal commands" "Claude Code, any surface" "Claude desktop app"
+                  "Claude Code in a terminal" "Claude Code in an IDE" "claude -p and Agent SDK runs"
+                  "Codex" "opencode" "Paseo agents")
 
 # __ada_source_default <key>: the built-in rule for exactly this key, in
 # __ada_src_def. One today: headless runs come from scripts, and a `claude -p`
@@ -363,7 +363,7 @@ __ada_sources_cli() {
       for name in "$@"; do
         if [[ "$kind" == source ]]; then
           __ada_source_key_ok "$name" || __ada_sources_die "not a source: '$name'"
-          if ! __ada_source_known "$name" && [[ "$name" != "*" && "$name" != paseo/* && "$name" != claude ]]; then
+          if ! __ada_source_known "$name" && [[ "$name" != "*" && "$name" != paseo/* ]]; then
             printf 'ada-sources: note: no integration sends "%s" yet; the rule is kept anyway\n' "$name" >&2
           fi
         else
