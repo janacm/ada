@@ -816,10 +816,30 @@ for a minute, and updates the open Integrations submenu in place.
   menu bar exits.
 - **Relaunch after an upgrade.** Started by launchd (`XPC_SERVICE_NAME ==
   com.ada.menubar`), the 30 s tick stats the binary at its launch path. A new
-  inode (a `brew upgrade` swapped the opt link, or a re-stage renamed a new
-  copy in) means exit 75, which KeepAlive restarts; missing for two ticks in a
-  row means exit 0 (uninstalled). One missing tick is tolerated for the moment
-  an upgrade swaps the link. `RelaunchWatcher` holds the rule.
+  inode (a `brew upgrade` swapped the opt link, a `brew reinstall` rebuilt the
+  keg, or a re-stage renamed a new copy in) means exit 75, which KeepAlive
+  restarts. `RelaunchWatcher` holds the rule; the Paseo watcher's loop follows
+  the same one.
+- **A missing binary is waited out, never a reason to exit.** The first
+  version exited 0 after two missing ticks, reading that as an uninstall, and
+  `brew reinstall` looks exactly like one: ada ships no bottles, and Homebrew's
+  `reinstall/reinstall.rb` (`backup`) renames the keg to `<version>.reinstall`
+  for both Swift builds, so the `opt` path is missing for minutes before the
+  rebuilt binary appears. The menu bar quit, and `SuccessfulExit: false` kept
+  it off until the next login. After a real `brew uninstall` the old process
+  lingers until logout, and a menu action reports its missing script instead
+  of running it (`ScriptError.missing`).
+- **The plist's guard covers the next login.** `ProgramArguments` is `/bin/sh -c
+  '[ -x "$0" ] || exit 0; exec "$0"' <runtime>/ada-menubar`. With the binary
+  gone the guard exits 0, which KeepAlive leaves stopped. Run directly, a
+  missing binary fails to spawn (`last exit code = 78: EX_CONFIG`) and launchd
+  leaves the job `spawn scheduled`, a retry it keeps pending. Both were checked
+  with throwaway launchd jobs. `exec` keeps the binary as the job's process: its
+  full path stays `argv[0]` (what `RelaunchWatcher` watches), and its own exit
+  status (75, a crash) reaches launchd. The path is its own element, which
+  `status` reads back with `sed` from old and new plists alike. A plist written
+  before 2026-11-03 runs the binary directly until `install` runs again, because
+  `brew upgrade` never rewrites it.
 - **One per user.** An exclusive `flock` on `$TMPDIR/ada-menubar.lock`; a
   second copy (a login item plus a manual `.build/release/ada-menubar &`) logs
   "another ADA menu bar is already running" and exits 0. If the manual one won,

@@ -48,16 +48,47 @@ import Testing
         #expect(kept["X"] == "1")
     }
 
-    @Test func relaunchWhenTheBinaryIsReplacedExitWhenItStaysGone() {
+    @Test func relaunchWhenTheBinaryIsReplaced() {
         let original = ExecutableIdentity(device: 1, inode: 10)
-        var watcher = RelaunchWatcher(original: original)
+        let watcher = RelaunchWatcher(original: original)
         #expect(watcher.check(original) == .keepRunning)
         #expect(watcher.check(ExecutableIdentity(device: 1, inode: 11)) == .relaunch)
-        // An upgrade swaps the opt symlink: one missing tick is tolerated.
-        #expect(watcher.check(nil) == .keepRunning)
-        #expect(watcher.check(original) == .keepRunning)
-        #expect(watcher.check(nil) == .keepRunning)
-        #expect(watcher.check(nil) == .exit)
+        // Same inode on another volume is another file.
+        #expect(watcher.check(ExecutableIdentity(device: 2, inode: 10)) == .relaunch)
+    }
+
+    // `brew reinstall` renames the keg away for both Swift builds, so the opt
+    // path is missing for minutes and then holds a rebuilt binary. Quitting
+    // there would leave the menu bar off until the next login.
+    @Test func aMissingBinaryIsWaitedOutThenTheRebuiltOneRelaunches() {
+        let original = ExecutableIdentity(device: 1, inode: 10)
+        let watcher = RelaunchWatcher(original: original)
+        for _ in 0..<20 {
+            #expect(watcher.check(nil) == .keepRunning)
+        }
+        #expect(watcher.check(ExecutableIdentity(device: 1, inode: 12)) == .relaunch)
+    }
+
+    // The same, against real files: rename the binary's directory away (the
+    // dangling opt link), then put a copy back under the old name.
+    @Test func aReinstalledKegReadsAsMissingThenReplaced() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("reinstall-\(UUID().uuidString)")
+        let keg = root.appendingPathComponent("Cellar/ada/1")
+        try FileManager.default.createDirectory(at: keg, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "v1".write(to: keg.appendingPathComponent("ada-menubar"), atomically: false, encoding: .utf8)
+        let opt = root.appendingPathComponent("opt-ada")
+        try FileManager.default.createSymbolicLink(at: opt, withDestinationURL: keg)
+        let launchPath = opt.appendingPathComponent("ada-menubar").path
+
+        let watcher = RelaunchWatcher(original: try #require(ExecutableIdentity.of(path: launchPath)))
+        let aside = root.appendingPathComponent("Cellar/ada/1.reinstall")
+        try FileManager.default.moveItem(at: keg, to: aside)
+        #expect(watcher.check(ExecutableIdentity.of(path: launchPath)) == .keepRunning)
+        try FileManager.default.createDirectory(at: keg, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: aside.appendingPathComponent("ada-menubar"),
+                                         to: keg.appendingPathComponent("ada-menubar"))
+        #expect(watcher.check(ExecutableIdentity.of(path: launchPath)) == .relaunch)
     }
 
     @Test func identityChangesWhenAFileIsReplacedByRename() throws {

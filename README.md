@@ -670,8 +670,10 @@ A LaunchAgent can't run anything from `~/Documents`, `~/Desktop` or
 `~/Downloads`, so a checkout is copied to `~/.local/share/ada` (the same copy
 the Paseo watcher uses); re-run `install` after pulling changes, and `status`
 tells you when the copy is out of date. A Homebrew install runs in place, and
-the menu bar restarts itself after `brew upgrade`. Because it runs as a
-LaunchAgent, it doesn't see variables you export in `~/.zshrc`.
+the menu bar restarts itself after `brew upgrade` or `brew reinstall`. After
+`brew uninstall` it stays in the menu bar until you log out and does not start
+at the next login. Because it runs as a LaunchAgent, it doesn't see variables
+you export in `~/.zshrc`.
 
 If the bell never appears after `install`, look for `ada-menubar` in the Login
 Items pane of **System Settings > General**, where macOS can keep a background
