@@ -37,6 +37,12 @@ class Ada < Formula
     libexec.install ".build/release/ada-alert"
     libexec.install ".build/release/ada-menubar"
 
+    # The version this keg is, for the update notice (lib/ada-update.sh compares
+    # it with the version in this formula on main). Only a Homebrew install has
+    # one: a checkout updates with git. A HEAD build writes "HEAD-<sha>", which
+    # the notice ignores.
+    (libexec/"VERSION").write "#{version}\n"
+
     bin.install_symlink libexec/"ada-alert"
     bin.install_symlink libexec/"ada-menubar"
 
@@ -56,9 +62,15 @@ class Ada < Formula
 
     # ada-mute lists or clears the sessions muted from an alert's "Mute this …"
     # button; ada-pause pauses or resumes every alert (the menu bar's Pause
-    # menu). The formula on main is read by every stable install, including ones
-    # whose tarball predates these scripts, so only wire a wrapper that shipped.
-    { "ada-mute" => "lib/ada-mute.sh", "ada-pause" => "lib/ada-pause.sh" }.each do |name, script|
+    # menu); ada-update says whether a newer release is out, or turns that
+    # check off. The formula on main is read by every stable install, including
+    # ones whose tarball predates these scripts, so only wire a wrapper that
+    # shipped.
+    {
+      "ada-mute"   => "lib/ada-mute.sh",
+      "ada-pause"  => "lib/ada-pause.sh",
+      "ada-update" => "lib/ada-update.sh",
+    }.each do |name, script|
       next unless (libexec/script).exist?
 
       (bin/name).write <<~SH
@@ -83,6 +95,13 @@ class Ada < Formula
     status = if (opt_libexec/"lib/ada-status.sh").exist?
       "\n  ada-setup --status    # what is wired, and whether it still works"
     end
+    update = <<~EOS if (opt_libexec/"lib/ada-update.sh").exist?
+
+      Once a day, the first alert checks whether a newer ada is out by
+      downloading this formula from GitHub (the request carries nothing about
+      you), and alerts show a notice until you upgrade. `ada-update` says what
+      it found; `ada-update off` stops the check.
+    EOS
 
     <<~EOS
       ada is installed but not yet wired up. Run:
@@ -102,10 +121,10 @@ class Ada < Formula
         ada-setup --agents terminal,claude,codex,opencode
         ada-setup --list#{status}
 
-      Upgrades: `brew upgrade ada` keeps existing wiring working, because it
-      points at the version-stable #{opt_libexec}. Re-run ada-setup only to pick
-      up an integration a newer version added — v0.3 added opencode.
-
+      Upgrades: `brew update && brew upgrade ada` keeps existing wiring working,
+      because it points at the version-stable #{opt_libexec}. Re-run ada-setup
+      only to pick up an integration a newer version added — v0.3 added opencode.
+      #{update}
       Upgrading FROM v0.2: that release wired itself to a versioned Cellar
       path, so run `ada-setup` once after upgrading to repoint it.
     EOS
@@ -116,6 +135,7 @@ class Ada < Formula
     # the sandbox and proves the script + its bundled deps are wired correctly.
     assert_match "terminal", shell_output("#{bin}/ada-setup --list")
     assert_path_exists bin/"ada-alert"
+    assert_equal version.to_s, (libexec/"VERSION").read.strip
     # --check prints and exits; any other argument would start the status item.
     assert_equal "ada-menubar native helper ok", shell_output("#{bin}/ada-menubar --check").strip
   end

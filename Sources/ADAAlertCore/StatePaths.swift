@@ -1,7 +1,8 @@
 import Foundation
 
 /// Where the shell side keeps the state the menu bar reads: the pause file, the
-/// alert history and the mute markers, all under the per-user temp dir.
+/// alert history, the mute markers and the update check's cache, all under the
+/// per-user temp dir.
 ///
 /// The rules mirror the scripts that own each file (`lib/ada-pause.sh`,
 /// `lib/ada-history.sh`, `lib/ada-mute.sh`) and the launcher's TMPDIR fallback
@@ -14,6 +15,8 @@ public struct StatePaths: Equatable {
     public let pauseFile: URL
     public let historyFile: URL
     public let muteDirectory: URL
+    /// The update check's cache (`lib/ada-update.sh`).
+    public let updateFile: URL
     /// Held by the running menu bar so a second copy exits.
     public let lockFile: URL
 
@@ -41,6 +44,7 @@ public struct StatePaths: Equatable {
             pauseFile: file("ADA_PAUSE_FILE", default: "ada-paused"),
             historyFile: file("ADA_HISTORY_FILE", default: "ada-history.tsv"),
             muteDirectory: file("ADA_MUTE_DIR", default: "ada-muted"),
+            updateFile: file("ADA_UPDATE_FILE", default: "ada-update"),
             lockFile: tempURL.appendingPathComponent("ada-menubar.lock")
         )
     }

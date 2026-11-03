@@ -13,15 +13,18 @@ import Testing
         #expect(paths.historyFile.path == "/t/ada-history.tsv")
         #expect(paths.muteDirectory.path == "/t/ada-muted")
         #expect(paths.lockFile.path == "/t/ada-menubar.lock")
+        #expect(paths.updateFile.path == "/t/ada-update")
     }
 
     @Test func statePathsHonorTheScriptsOverrides() {
         let paths = StatePaths.resolve(environment: [
             "TMPDIR": "/t", "ADA_PAUSE_FILE": "/p", "ADA_HISTORY_FILE": "/h", "ADA_MUTE_DIR": "/m",
+            "ADA_UPDATE_FILE": "/u",
         ], darwinTempDirectory: { nil })
         #expect(paths.pauseFile.path == "/p")
         #expect(paths.historyFile.path == "/h")
         #expect(paths.muteDirectory.path == "/m")
+        #expect(paths.updateFile.path == "/u")
     }
 
     @Test func theRealDarwinTempDirIsAnAbsolutePath() throws {

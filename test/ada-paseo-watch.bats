@@ -155,7 +155,8 @@ PY
   cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$REPO_ROOT/lib/ada-show-alert.sh" \
      "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" \
      "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-history.sh" "$REPO_ROOT/lib/ada-notify.sh" \
-     "$REPO_ROOT/lib/ada-stage.sh" "$REPO_ROOT/lib/ada-status.sh" "$libexec/lib/"
+     "$REPO_ROOT/lib/ada-stage.sh" "$REPO_ROOT/lib/ada-status.sh" "$REPO_ROOT/lib/ada-update.sh" \
+     "$libexec/lib/"
   cp "$REPO_ROOT/ada-alert" "$libexec/ada-alert" 2>/dev/null \
     || cp "$REPO_ROOT/.build/release/ada-alert" "$libexec/ada-alert"
 
@@ -186,7 +187,8 @@ PY
   cp "$REPO_ROOT/lib/ada-paseo-watch.py" "$REPO_ROOT/lib/ada-show-alert.sh" \
      "$REPO_ROOT/lib/ada-snooze-daemon.py" "$REPO_ROOT/lib/ada-mute.sh" \
      "$REPO_ROOT/lib/ada-pause.sh" "$REPO_ROOT/lib/ada-history.sh" "$REPO_ROOT/lib/ada-notify.sh" \
-     "$REPO_ROOT/lib/ada-stage.sh" "$REPO_ROOT/lib/ada-status.sh" "$libexec/lib/"
+     "$REPO_ROOT/lib/ada-stage.sh" "$REPO_ROOT/lib/ada-status.sh" "$REPO_ROOT/lib/ada-update.sh" \
+     "$libexec/lib/"
 
   export HOMEBREW_PREFIX="$BATS_TEST_TMPDIR/brew"
   export ADA_PASEO_INSTALL_DIR="$BATS_TEST_TMPDIR/stage"

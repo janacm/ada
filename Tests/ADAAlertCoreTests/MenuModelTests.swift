@@ -20,9 +20,17 @@ import Testing
     }
 
     private func input(pause: PauseState = .active, history: [String] = [], muted: [MutedSession] = [],
-                       integrations: [IntegrationStatus]? = []) -> MenuInput {
+                       integrations: [IntegrationStatus]? = [], update: AvailableUpdate? = nil) -> MenuInput {
         MenuInput(pause: pause, history: AlertHistory.parse(history.joined(separator: "\n")), muted: muted,
-                  integrations: integrations, now: now, calendar: calendar)
+                  integrations: integrations, now: now, calendar: calendar, update: update)
+    }
+
+    @Test func anUpdateComesFirstAndNothingWithoutOne() {
+        let entries = MenuModel.build(input(update: AvailableUpdate(installed: "0.4", latest: "0.5")))
+        #expect(entries[0] == .action("Update to ADA 0.5 (You Have 0.4)…", .update, symbol: "arrow.down.circle"))
+        #expect(entries[1] == .separator)
+        #expect(entries[2] == .info("Alerts On", symbol: "bell"))
+        #expect(!MenuModel.build(input()).contains { if case .action(_, .update, _) = $0 { return true }; return false })
     }
 
     private func submenu(_ title: String, in entries: [MenuEntry]) -> [MenuEntry]? {

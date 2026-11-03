@@ -50,6 +50,8 @@
 #   pauseduntil=<epoch|0>&pauseheld=<n>  a test alert shown during a pause, which
 #                                 ends at <epoch> (0 = when resumed) and has
 #                                 held <n> alerts so far
+# and on any alert, a summary included, when a newer release is out (see
+# lib/ada-update.sh): update=<latest>&installed=<this install's version>.
 # A summary is mode=summary&summaryb64=<b64>&autoclose=<n>&snooze=0&focus=0,
 # plus sport/stoken when a row can open something. summaryb64 is base64url
 # (no padding) of UTF-8 JSON:
@@ -368,6 +370,26 @@ if [[ -z "$pause_flush" ]]; then
   [[ -n "$mute_file" || -n "$hold_file" ]] && encoded_session_kind_b64=$(__ada_b64url_encode "$session_kind")
 fi
 
+# A newer release, for the notice in the corner (lib/ada-update.sh). Only an
+# alert that shows gets here, and it reads only the cache: when a check is due
+# it starts in the background and its answer shows on a later alert, so no
+# alert waits on the network. The history line just written carries the epoch,
+# which saves a `date`. A missing ada-update.sh means no notice.
+update_q=""
+if [[ -f "$selfdir/ada-update.sh" ]]; then
+  # shellcheck source=lib/ada-update.sh
+  . "$selfdir/ada-update.sh"
+  update_now=""
+  if [[ -z "$pause_flush" ]]; then
+    update_now=${__ada_history_line:-}
+    update_now=${update_now#*$'\t'}
+    update_now=${update_now%%$'\t'*}
+  fi
+  if __ada_update_note "$update_now"; then
+    update_q="&update=${__ada_update_latest}&installed=${__ada_update_version}"
+  fi
+fi
+
 # "Pause all alerts" rides on a daemon some other control already needed, and
 # runs the ada-pause.sh beside this script. A test alert shown during a pause
 # says so instead, with the same resume command.
@@ -446,13 +468,13 @@ if [[ -n "$pause_q" && -n "$pause_resume" ]]; then
 fi
 
 if [[ -n "$pause_flush" ]]; then
-  url="file://${alert_file}?mode=summary&summaryb64=${summary_b64}&autoclose=${auto_close}${daemon_q}"
+  url="file://${alert_file}?mode=summary&summaryb64=${summary_b64}&autoclose=${auto_close}${daemon_q}${update_q}"
 else
   text_q=""
   [[ -n "$encoded_cmd_b64" ]] && text_q="${text_q}&cmdb64=${encoded_cmd_b64}"
   [[ -n "$encoded_repo_b64" ]] && text_q="${text_q}&repob64=${encoded_repo_b64}"
 
-  url="file://${alert_file}?cmd=${encoded_cmd}${text_q}&duration=${duration}&code=${code}&autoclose=${auto_close}&repo=${encoded_repo}${daemon_q}${pause_q}"
+  url="file://${alert_file}?cmd=${encoded_cmd}${text_q}&duration=${duration}&code=${code}&autoclose=${auto_close}&repo=${encoded_repo}${daemon_q}${pause_q}${update_q}"
 fi
 
 __ada_kill_previous_native_alert "$pid_file"

@@ -61,6 +61,12 @@ setup_common() {
   export ADA_PAUSE_TIMER=0
   export ADA_SUMMARY_PID_FILE="$BATS_TEST_TMPDIR/ada-alert-summary.pid"
 
+  # No test may reach GitHub. Only a copy of the tree with a VERSION file checks
+  # for updates at all, and the update tests also put a curl stub first on PATH;
+  # this is the switch they turn back on.
+  export ADA_UPDATE_CHECK=0
+  unset ADA_UPDATE_URL ADA_UPDATE_FILE ADA_UPDATE_INTERVAL ADA_UPDATE_OFF_FILE
+
   export ADA_ALERT_FILE="$REPO_ROOT/alert.html"
 
   # The installers rebuild a .build/ helper older than the Swift sources. Tests

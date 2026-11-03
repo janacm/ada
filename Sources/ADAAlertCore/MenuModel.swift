@@ -12,6 +12,8 @@ public enum MenuAction: Equatable {
     case unmute(key: String)
     case unmuteAll
     case setUp
+    /// Opens Terminal on `brew update && brew upgrade ada`.
+    case update
     case testAlert
     case openFolder
     case quit
@@ -36,9 +38,12 @@ public struct MenuInput {
     public var now: Date
     public var calendar: Calendar
     public var recentLimit: Int
+    /// A newer release, when the update check found one (`UpdateCheck`).
+    public var update: AvailableUpdate?
 
     public init(pause: PauseState, history: [HistoryEntry], muted: [MutedSession],
-                integrations: [IntegrationStatus]?, now: Date, calendar: Calendar, recentLimit: Int = 10) {
+                integrations: [IntegrationStatus]?, now: Date, calendar: Calendar, recentLimit: Int = 10,
+                update: AvailableUpdate? = nil) {
         self.pause = pause
         self.history = history
         self.muted = muted
@@ -46,6 +51,7 @@ public struct MenuInput {
         self.now = now
         self.calendar = calendar
         self.recentLimit = recentLimit
+        self.update = update
     }
 }
 
@@ -56,9 +62,15 @@ public enum MenuModel {
     }
 
     public static func build(_ input: MenuInput) -> [MenuEntry] {
-        var entries: [MenuEntry] = [
-            .info(input.pause.title(now: input.now, calendar: input.calendar), symbol: statusSymbol(for: input.pause)),
-        ]
+        var entries: [MenuEntry] = []
+        // First, so it is seen: the alert's notice says the same.
+        if let update = input.update {
+            entries.append(.action("Update to ADA \(update.latest) (You Have \(update.installed))…", .update,
+                                   symbol: "arrow.down.circle"))
+            entries.append(.separator)
+        }
+        entries.append(.info(input.pause.title(now: input.now, calendar: input.calendar),
+                             symbol: statusSymbol(for: input.pause)))
         if input.pause.isPaused {
             entries.append(.action("Resume Alerts", .resume, symbol: "bell"))
         }
