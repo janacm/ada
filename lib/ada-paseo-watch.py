@@ -22,6 +22,7 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -112,7 +113,27 @@ def fmt_duration(s):
     return "%dh %dm" % (s // 3600, (s % 3600) // 60)
 
 
-def fire(label, duration, code, agent_id=""):
+def source_of(provider):
+    """The alert's ADA_SOURCE: paseo/<provider>, which `ada-sources off
+    paseo/<provider>` switches off (lib/ada-sources.sh), or plain paseo for an
+    agent whose provider is unknown or not a name a rule could hold."""
+    if provider and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,60}", provider):
+        return "paseo/" + provider
+    return "paseo"
+
+
+def repo_of(cwd):
+    """The agent's project, for the repo badge and the project switches: the
+    folder name of its working directory, which Paseo reports as the workspace
+    root (abbreviated with ~). Never git: the watcher is a LaunchAgent, and one
+    looking inside ~/Documents can raise a privacy prompt."""
+    cwd = (cwd or "").strip().rstrip("/")
+    if cwd in ("", "~"):
+        return ""
+    return cwd.rsplit("/", 1)[-1]
+
+
+def fire(label, duration, code, agent_id="", source="paseo", repo=""):
     if len(label) > 120:
         label = label[:119] + "…"
     # The agent id lets the alert's "Mute this agent" button silence this
@@ -120,6 +141,11 @@ def fire(label, duration, code, agent_id=""):
     env = dict(os.environ)
     env["ADA_SESSION_KEY"] = ("paseo-" + agent_id) if agent_id else ""
     env["ADA_SESSION_KIND"] = "agent"
+    env["ADA_SOURCE"] = source
+    # Set only when known: the launcher reads an empty ADA_REPO as "not a repo",
+    # while an unset one lets it ask git about its own cwd, as before.
+    if repo:
+        env["ADA_REPO"] = repo
     try:
         subprocess.Popen(
             [LAUNCHER, label, duration, str(code)],
@@ -131,7 +157,7 @@ def fire(label, duration, code, agent_id=""):
 
 
 def agents_snapshot():
-    """Map id -> (status, name, provider_base)."""
+    """Map id -> (status, name, provider_base, cwd)."""
     snap = {}
     for a in run_json(["ls"]):
         if not isinstance(a, dict):
@@ -142,7 +168,8 @@ def agents_snapshot():
         status = (a.get("status") or "").strip()
         name = str(a.get("name") or a.get("shortId") or aid or "agent").strip()
         provider = str(a.get("provider") or "").split("/")[0]
-        snap[aid] = (status, name, provider)
+        cwd = str(a.get("cwd") or "").strip()
+        snap[aid] = (status, name, provider, cwd)
     return snap
 
 
@@ -185,7 +212,7 @@ def main():
         now = int(time.time())
 
         snap = agents_snapshot()
-        for aid, (status, name, provider) in snap.items():
+        for aid, (status, name, provider, cwd) in snap.items():
             names[aid] = name
             prev = prev_status.get(aid)
 
@@ -197,11 +224,12 @@ def main():
             if seeded and prev == "running" and status != prev:
                 elapsed = now - run_start.get(aid, now)
                 tag = ("%s · %s" % (provider, name)) if provider else name
+                where = {"source": source_of(provider), "repo": repo_of(cwd)}
                 if status == "idle" and "finish" in EVENTS \
                         and elapsed >= THRESHOLD and not should_skip_active():
-                    fire("Paseo · " + tag, fmt_duration(elapsed), 0, aid)
+                    fire("Paseo · " + tag, fmt_duration(elapsed), 0, aid, **where)
                 elif status == "error" and "error" in EVENTS and not should_skip_active():
-                    fire("Paseo · failed · " + tag, fmt_duration(elapsed), 1, aid)
+                    fire("Paseo · failed · " + tag, fmt_duration(elapsed), 1, aid, **where)
                 run_start.pop(aid, None)
 
             prev_status[aid] = status
@@ -224,7 +252,9 @@ def main():
                     lbl = "Paseo · needs you" + (" · " + who if who else "")
                     if label:
                         lbl += " — " + label
-                    fire(lbl, "permission", 0, agent_id)
+                    owner = snap.get(agent_id) or ("", "", "", "")
+                    fire(lbl, "permission", 0, agent_id,
+                         source=source_of(owner[2]), repo=repo_of(owner[3]))
             seen_perm = set(perms)
 
         seeded = True

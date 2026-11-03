@@ -30,7 +30,8 @@ struct MenuBarContext {
                                   maxAge: MuteList.maxAge(environment: environment),
                                   now: now, history: history)
         return MenuInput(pause: PauseState.read(fileAt: paths.pauseFile, now: now), history: history,
-                         muted: muted, integrations: integrations, now: now, calendar: .current)
+                         muted: muted, integrations: integrations,
+                         sources: SourceRules.read(fileAt: paths.sourcesFile), now: now, calendar: .current)
     }
 
     struct ScriptResult {
@@ -248,6 +249,13 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 item.representedObject = ActionBox(action)
                 item.image = image(symbol)
                 return item
+            case let .toggle(title, isOn, action, indent):
+                let item = NSMenuItem(title: title, action: #selector(choose(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = ActionBox(action)
+                item.state = isOn ? .on : .off
+                item.indentationLevel = indent
+                return item
             case let .submenu(title, children, symbol):
                 let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
                 let submenu = NSMenu(title: title)
@@ -308,6 +316,16 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             runScript(InstallDirectory.muteScriptPath, ["clear", key])
         case .unmuteAll:
             runScript(InstallDirectory.muteScriptPath, ["clear"])
+        case let .setSource(key, on):
+            runScript(InstallDirectory.sourcesScriptPath, [on ? "on" : "off", key])
+        case let .setRepo(name, on):
+            runScript(InstallDirectory.sourcesScriptPath, [on ? "on" : "off", "repo", name])
+        case let .setRepoMode(onlyListed):
+            runScript(InstallDirectory.sourcesScriptPath, onlyListed ? ["off", "repo", "*"] : ["unset", "repo", "*"])
+        case .editSources:
+            editSources()
+        case .resetSources:
+            runScript(InstallDirectory.sourcesScriptPath, ["reset"])
         case .setUp:
             setUp()
         case .testAlert:
@@ -336,6 +354,38 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                     self.presentError("\(relativePath) failed", informativeText: reason)
                 default:
                     break
+                }
+            }
+        }
+    }
+
+    /// Creates the rules file when there is none (the script owns the write),
+    /// then opens it in the default text editor: it has no extension, so a
+    /// plain open would ask which app to use.
+    private func editSources() {
+        let context = self.context
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = context.run(InstallDirectory.sourcesScriptPath, ["init"])
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case let .success(done) where done.status == 0:
+                    let path = done.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                    process.arguments = ["-t", path.isEmpty ? context.paths.sourcesFile.path : path]
+                    do {
+                        try process.run()
+                    } catch {
+                        self.presentError("Could not open the rules file", informativeText: error.localizedDescription)
+                    }
+                case let .success(done):
+                    self.presentError("\(InstallDirectory.sourcesScriptPath) failed",
+                                      informativeText: done.errors.isEmpty ? "exit \(done.status)" : done.errors)
+                case let .failure(.missing(path)):
+                    self.presentError("Missing script", informativeText: "Could not find an executable \(path). Set ADA_HOME to your ada folder.")
+                case let .failure(.failed(reason)):
+                    self.presentError("\(InstallDirectory.sourcesScriptPath) failed", informativeText: reason)
                 }
             }
         }

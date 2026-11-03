@@ -56,9 +56,11 @@ class Ada < Formula
 
     # ada-mute lists or clears the sessions muted from an alert's "Mute this …"
     # button; ada-pause pauses or resumes every alert (the menu bar's Pause
-    # menu). The formula on main is read by every stable install, including ones
-    # whose tarball predates these scripts, so only wire a wrapper that shipped.
-    { "ada-mute" => "lib/ada-mute.sh", "ada-pause" => "lib/ada-pause.sh" }.each do |name, script|
+    # menu); ada-sources switches agents, harnesses and projects on or off. The
+    # formula on main is read by every stable install, including ones whose
+    # tarball predates these scripts, so only wire a wrapper that shipped.
+    { "ada-mute" => "lib/ada-mute.sh", "ada-pause" => "lib/ada-pause.sh",
+      "ada-sources" => "lib/ada-sources.sh" }.each do |name, script|
       next unless (libexec/script).exist?
 
       (bin/name).write <<~SH

@@ -14,12 +14,18 @@ public struct StatePaths: Equatable {
     public let pauseFile: URL
     public let historyFile: URL
     public let muteDirectory: URL
+    /// The source switches (`lib/ada-sources.sh`). Not under the temp dir: they
+    /// are settings, so they live at `~/.config/ada/sources` unless
+    /// `ADA_SOURCES_FILE` names another file. HOME, not XDG_CONFIG_HOME, which a
+    /// LaunchAgent does not inherit from a terminal.
+    public let sourcesFile: URL
     /// Held by the running menu bar so a second copy exits.
     public let lockFile: URL
 
     public static func resolve(
         environment: [String: String],
-        darwinTempDirectory: () -> String? = StatePaths.darwinUserTempDirectory
+        darwinTempDirectory: () -> String? = StatePaths.darwinUserTempDirectory,
+        homeDirectory: () -> String = NSHomeDirectory
     ) -> StatePaths {
         let temp: String
         if let value = environment["TMPDIR"], !value.isEmpty {
@@ -41,8 +47,18 @@ public struct StatePaths: Equatable {
             pauseFile: file("ADA_PAUSE_FILE", default: "ada-paused"),
             historyFile: file("ADA_HISTORY_FILE", default: "ada-history.tsv"),
             muteDirectory: file("ADA_MUTE_DIR", default: "ada-muted"),
+            sourcesFile: sourcesFile(environment: environment, homeDirectory: homeDirectory),
             lockFile: tempURL.appendingPathComponent("ada-menubar.lock")
         )
+    }
+
+    static func sourcesFile(environment: [String: String], homeDirectory: () -> String) -> URL {
+        if let value = environment["ADA_SOURCES_FILE"], !value.isEmpty {
+            return URL(fileURLWithPath: value)
+        }
+        let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? homeDirectory()
+        return URL(fileURLWithPath: home, isDirectory: true)
+            .appendingPathComponent(".config/ada/sources")
     }
 
     /// `confstr(_CS_DARWIN_USER_TEMP_DIR)`, what `getconf DARWIN_USER_TEMP_DIR` prints.

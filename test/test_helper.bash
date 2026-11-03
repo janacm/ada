@@ -52,6 +52,11 @@ setup_common() {
   unset ADA_SESSION_KEY ADA_SESSION_KIND ADA_MUTE_DIR ADA_MUTE_MAX_AGE ADA_MUTE_FILE \
         ADA_SNOOZE_SCOPE ADA_SNOOZE_HOLD_FILE ADA_SNOOZE_LOG
   # A pause or history file from the developer's shell must not leak in either.
+  # The source switches: no rules file (HOME is private below), no inherited
+  # source, and no Claude Code entrypoint, which the Claude hook maps to a
+  # source. A suite run from `claude -p` would otherwise inherit sdk-cli,
+  # which is switched off by default.
+  unset ADA_SOURCE ADA_SOURCES_FILE CLAUDE_CODE_ENTRYPOINT
   unset ADA_PAUSE_FILE ADA_IGNORE_PAUSE ADA_HISTORY_FILE ADA_HISTORY_MAX \
         ADA_PAUSE_FLUSH ADA_PAUSE_BUTTON ADA_PAUSE_CLI ADA_SUMMARY_AUTO_CLOSE \
         ADA_SUMMARY_TARGETS ADA_MUTED_KEYS

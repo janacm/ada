@@ -388,6 +388,59 @@ removed.
 - A launcher running without `ada-mute.sh` beside it must still alert, with no
   muting.
 
+## Source Switches
+
+- Every integration must name where an alert came from in `ADA_SOURCE`:
+  `terminal` (zsh hook), `claude/desktop`, `claude/cli`, `claude/ide`,
+  `claude/headless` or `claude` (Claude Code, by `CLAUDE_CODE_ENTRYPOINT`:
+  `claude-desktop`/`claude-desktop-3p`/`local-agent`, `cli`,
+  `claude-vscode`, `sdk-cli`/`sdk-ts`/`sdk-py`, anything else), `codex` (a
+  payload with `turn_id`, or a transcript under `.codex/`), `opencode`, and
+  `paseo/<provider>` (plain `paseo` when the provider is unknown or not a valid
+  name).
+- The rules must live in one file, `~/.config/ada/sources` (`ADA_SOURCES_FILE`
+  overrides it), outside `$TMPDIR` so they survive a restart and outside
+  `~/Documents` so a LaunchAgent can read them. Its location must not depend on
+  `XDG_CONFIG_HOME`, which a LaunchAgent does not inherit.
+- A rule is one line, `on|off source <key>` or `on|off repo <project>`; `#`
+  starts a comment, and lines that don't parse must be ignored by readers and
+  kept by writers. A later line for the same name replaces an earlier one.
+- A source rule must cover the sources under it, and the most specific rule
+  must win: `paseo/claude`, then `paseo`, then `*`. Built-in defaults must act
+  as rules that a rule of the same name replaces. The only default is `off
+  source claude/headless`, so a fresh install alerts for everything except
+  `claude -p` and Agent SDK runs.
+- A repo rule must name a project the way the repo badge does (the git top
+  level's folder name, or a Paseo agent's working folder); `repo *` covers every
+  project and alerts from outside any repo. An alert must show only when both
+  its source and its project are on.
+- The check must live only in `ada-show-alert.sh`, before the mute check, and a
+  dropped alert must get no history line, so switched-off harnesses cannot push
+  real alerts out of Recent Alerts. It must not run when `ADA_SOURCE` is unset,
+  when `ADA_IGNORE_PAUSE=1` (every test alert), or for a pause summary (which
+  inherits a source from the alert whose Pause was pressed). A snooze relaunch
+  inherits `ADA_SOURCE` and must be dropped if its source was switched off.
+- The launcher must resolve an alert's repo before deciding only when a repo
+  rule exists; with source rules alone, a dropped alert must not run git. The
+  Paseo watcher must pass `ADA_REPO` itself, without git, because a LaunchAgent
+  must not look inside `~/Documents`.
+- `lib/ada-sources.sh` must be the only writer: `list`, `on|off <source>...`
+  (which also drops the rules under each source), `on|off|unset repo
+  <name>...`, `only repo <name>...`, `unset`, `reset` (drops every rule, keeps
+  comments), `check <source> [repo]`, `path` and `init`. Writes must be atomic
+  (temp file and rename) and must go through a symlinked rules file to its
+  target. Homebrew must expose it as `ada-sources`.
+- The menu bar must show every switch with its state (Claude Code surfaces and
+  the Paseo providers seen in the history or named by a rule nested under
+  their harness), a Projects submenu choosing between every project and only
+  checked ones, **Edit Rules File…** and **Reset to Defaults**, and must change
+  them only by running `lib/ada-sources.sh`. `ada-menubar --print-menu` and
+  `ada-sources.sh check` must agree.
+- The installer must name the switched-off sources at the end of a run and say
+  how to change them, and must never write rules itself.
+- A launcher running without `ada-sources.sh` beside it must still alert, with
+  no switches. It must be in `ADA_RUNTIME_FILES` so staged runtimes have it.
+
 ## Global Pause
 
 - A pause must hold back every alert from every integration, including a
@@ -507,14 +560,15 @@ removed.
   `$TMPDIR/ada-history.tsv`) for every alert it decides on: shown, held back by
   a pause (`paused`), dropped by a mute (`muted`) or by a conversation snooze
   (`held`). A snooze relaunch must be flagged as one. A summary is not an alert
-  and adds no line.
+  and adds no line, and neither is an alert a source switch drops.
 - Each line must be tab-separated, version first: `1 epoch outcome snoozed key
-  kind label duration code repo focus_app focus_app_name click_url dir`, where
-  `dir` is `ADA_REPO_DIR` or the launcher's working directory. Tabs and line
+  kind label duration code repo focus_app focus_app_name click_url dir source`,
+  where `dir` is `ADA_REPO_DIR` or the launcher's working directory and `source`
+  is `ADA_SOURCE` (cut to 100 characters, empty for a test alert). Tabs and line
   breaks in a field must become spaces, and a field must be cut to 200
   characters (the click URL and dir to 500). Readers must skip lines of another
   version and ignore columns past the last one they know, and must accept a
-  line that ends at `click_url`.
+  line that ends at `click_url` or at `dir`.
 - Building a line must not depend on `ADA_HISTORY_MAX`, because a pause keeps
   the same line as its record with the history off.
 - A dropped alert must not resolve the repo (that runs git), so it records
@@ -669,6 +723,9 @@ removed.
   at watcher startup do not produce bogus elapsed durations.
 - Permission alerts must be deduplicated while the same permission request
   remains pending.
+- Every alert must carry `ADA_SOURCE=paseo/<provider base>` and, when Paseo
+  reports the agent's working folder, `ADA_REPO=<its folder name>`; a
+  permission takes both from the agent it names.
 
 ## Paseo LaunchAgent
 
@@ -786,6 +843,16 @@ removed.
   above 80%.
 
 ## Change Log
+
+- 2026-11-03: Added source switches (`lib/ada-sources.sh`, `ada-sources`, the
+  menu bar's **Alert Sources**): each integration names its source in
+  `ADA_SOURCE` (Claude Code split by desktop app, terminal, IDE and headless;
+  Paseo split by provider), and rules in `~/.config/ada/sources` switch
+  sources and projects on or off, the most specific rule winning. The
+  launcher drops a switched-off alert before the mute check without recording
+  it. New default: `claude -p` and Agent SDK runs no longer alert. The history
+  gained a 15th column, `source`, and Paseo alerts now carry the agent's folder
+  as their repo.
 
 - 2026-09-25: A pause no longer loses what arrives during it. The launcher keeps
   each held alert as its history line in `<pause file>.held/` and shows them all

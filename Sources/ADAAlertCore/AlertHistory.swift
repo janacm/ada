@@ -44,6 +44,10 @@ public struct HistoryEntry: Equatable {
     public let focusApp: String
     public let focusAppName: String
     public let clickURL: String
+    /// The integration that raised it (`ADA_SOURCE`, column 15): "terminal",
+    /// "claude/desktop", "paseo/codex", ... Empty for a test alert or a line
+    /// older than the column.
+    public var source: String = ""
 
     public var clickTarget: ClickTarget? {
         ClickTarget.from(clickURL: clickURL, focusApp: focusApp)
@@ -57,9 +61,10 @@ public struct HistoryEntry: Equatable {
 /// The alert history `lib/ada-history.sh` documents: one tab-separated line
 /// per alert, version first, oldest first.
 public enum AlertHistory {
-    /// Format v1 has 13 columns. Lines of another version, or with fewer
-    /// columns, are skipped; columns past the 13th are ignored, so a newer
-    /// launcher can add some without breaking this reader.
+    /// Format v1 has at least 13 columns. Lines of another version, or with
+    /// fewer columns, are skipped. The 14th (dir) is not read here, the 15th
+    /// (source) is when present, and later ones are ignored, so a newer launcher
+    /// can add some without breaking this reader.
     static let columns = 13
 
     public static func parse(_ text: String) -> [HistoryEntry] {
@@ -83,7 +88,8 @@ public enum AlertHistory {
                 repo: fields[9],
                 focusApp: fields[10],
                 focusAppName: fields[11],
-                clickURL: fields[12]
+                clickURL: fields[12],
+                source: fields.count > 14 ? fields[14] : ""
             )
         }
     }

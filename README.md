@@ -235,6 +235,69 @@ the fast interactive path.
 If the frontmost app can't be determined (e.g. a `tmux`/`ssh` session where the
 terminal's bundle id isn't propagated), `ada` errs toward showing the alert.
 
+## Choosing which agents and projects alert
+
+Wiring an integration decides what *can* alert. The source switches decide
+what *does*, without re-running the installer: a whole harness, one Claude
+Code surface, one Paseo provider, or one project. Out of the box everything
+alerts except headless Claude runs (`claude -p` and Agent SDK scripts):
+scripts are noise, and a `claude -p` you run by hand already gets the terminal
+alert.
+
+| Source | What raises it |
+| --- | --- |
+| `terminal` | a long command in zsh |
+| `claude/desktop` | Claude Code in the Claude desktop app |
+| `claude/cli` | `claude` in a terminal |
+| `claude/ide` | Claude Code in an IDE extension (VS Code) |
+| `claude/headless` | `claude -p` and Agent SDK runs (off by default) |
+| `codex` | Codex |
+| `opencode` | opencode |
+| `paseo/<provider>` | a Paseo agent: `paseo/claude`, `paseo/codex`, `paseo/cursor`, … |
+
+Switch them from the menu bar's **Alert Sources** menu, or with `ada-sources`
+(Homebrew, releases after v0.5; from a checkout: `lib/ada-sources.sh`):
+
+```sh
+ada-sources list                       # every switch, on or off, and why
+ada-sources off paseo                  # no Paseo agent alerts...
+ada-sources on paseo/claude            # ...except from its claude agents
+ada-sources off claude/desktop         # quiet the desktop app's chats
+ada-sources on claude/headless         # alert for claude -p after all
+ada-sources off repo sandbox   # nothing from this project
+ada-sources only repo ada api          # only these projects alert
+ada-sources unset paseo/claude         # back to the default
+ada-sources reset                      # forget every rule
+```
+
+The most specific switch wins: `paseo/claude` before `paseo`, and `paseo`
+before `*`, which covers every source (`ada-sources off '*'` makes every source
+opt-in). Switching a source on or off also clears the switches under it, so
+`ada-sources on claude` brings back every Claude surface except headless runs,
+whose default is a switch of its own.
+
+A project is named the way the alert's repo badge names it: the folder name of
+the git repo, or of the agent's working folder for Paseo. An alert shows only
+when both its source and its project are on, and with `only repo` an alert
+from outside any repo stays quiet too.
+
+The switches live in `~/.config/ada/sources`, one rule per line, which you can
+also edit by hand (the menu's **Edit Rules File…** opens it):
+
+```
+off source paseo
+on source paseo/claude
+off repo *
+on repo ada
+```
+
+They apply from the next alert on, for every integration, the Paseo watcher
+and alerts already snoozed included. A switched-off alert is dropped before
+anything else happens to it: it never shows, a pause doesn't hold it, and it
+isn't in Recent Alerts. Test alerts (`ada`, **Send Test Alert**) ignore the
+switches. To quiet one conversation rather than a whole source,
+[mute it](#muting-a-session).
+
 ## Usage
 
 It runs automatically once sourced. To preview the alert without waiting for a
@@ -629,8 +692,8 @@ ada keeps the last 50 alerts it decided on (`ADA_HISTORY_MAX`), including the
 ones a pause, a mute or a snoozed conversation kept off your screen, so you can
 find what finished while you were away. The menu bar's **Recent Alerts** shows
 them. Each line records when, what (the command or prompt), how long it ran,
-its exit code, the repo, where clicking the alert would have taken you, and the
-directory it came from:
+its exit code, the repo, where clicking the alert would have taken you, the
+directory it came from, and its [source](#choosing-which-agents-and-projects-alert):
 
 ```sh
 lib/ada-history.sh list    # from the ada folder; tab-separated, oldest first
@@ -652,6 +715,11 @@ and never leaves this Mac. `ADA_HISTORY_MAX=0` turns it off.
   brings its terminal forward.
 - **Muted Sessions**: what you muted from an alert's **Mute this …** button;
   choose one to unmute it, or **Unmute All**.
+- **Alert Sources**: a checkmark for each [source switch](#choosing-which-agents-and-projects-alert):
+  terminal commands, Claude Code and each of its surfaces, Codex, opencode,
+  Paseo and each provider that has alerted, and a **Projects** submenu
+  (every project, or only the checked ones). **Edit Rules File…** opens
+  `~/.config/ada/sources`.
 - **Integrations**: the [`--status`](#from-source) report, with **Set Up
   Integrations…**, which opens the installer in Terminal.
 - **Send Test Alert**, **Open ADA Folder**, **Quit ADA Menu Bar**.

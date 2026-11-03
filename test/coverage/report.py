@@ -27,6 +27,7 @@ SHELL_FILES = [
     "lib/ada-notify.sh",
     "lib/ada-pause.sh",
     "lib/ada-show-alert.sh",
+    "lib/ada-sources.sh",
     "lib/ada-stage.sh",
     "lib/ada-status.sh",
     "release.sh",

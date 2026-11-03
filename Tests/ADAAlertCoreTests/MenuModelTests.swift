@@ -144,6 +144,99 @@ import Testing
         #expect(MenuModel.age(from: now.addingTimeInterval(-200_000), to: now) == "2d ago")
     }
 
+    // --- the source switches ---------------------------------------------------
+
+    /// A history line with the repo and source columns set.
+    private func sourced(_ source: String, repo: String = "ada", ago: TimeInterval = 60) -> String {
+        ["1", String(Int(now.timeIntervalSince1970 - ago)), "shown", "0", "k", "agent", "l", "1s", "0",
+         repo, "", "", "", "/d", source].joined(separator: "\t")
+    }
+
+    private func sources(_ rules: String = "", history: [String] = []) throws -> [MenuEntry] {
+        var menuInput = input(history: history)
+        menuInput.sources = SourceRules.parse(rules)
+        return try #require(submenu("Alert Sources", in: MenuModel.build(menuInput)))
+    }
+
+    @Test func sourcesListEverySwitchAndAChoiceFlipsIt() throws {
+        let entries = try sources()
+        #expect(entries.prefix(11) == [
+            .toggle("Terminal Commands", isOn: true, .setSource(key: "terminal", on: false)),
+            .toggle("Claude Code", isOn: true, .setSource(key: "claude", on: false)),
+            .toggle("Desktop App", isOn: true, .setSource(key: "claude/desktop", on: false), indent: 1),
+            .toggle("Terminal", isOn: true, .setSource(key: "claude/cli", on: false), indent: 1),
+            .toggle("IDE", isOn: true, .setSource(key: "claude/ide", on: false), indent: 1),
+            .toggle("Headless (claude -p, Agent SDK)", isOn: false, .setSource(key: "claude/headless", on: true), indent: 1),
+            .toggle("Codex", isOn: true, .setSource(key: "codex", on: false)),
+            .toggle("opencode", isOn: true, .setSource(key: "opencode", on: false)),
+            .toggle("Paseo", isOn: true, .setSource(key: "paseo", on: false)),
+            .separator,
+            .submenu("Projects", MenuModel.projectEntries(input()), symbol: "folder"),
+        ])
+        #expect(entries.suffix(2) == [.action("Edit Rules File…", .editSources), .action("Reset to Defaults", .resetSources)])
+        #expect(MenuModel.build(input()).contains { if case .submenu("Alert Sources", _, "switch.2") = $0 { return true }; return false })
+    }
+
+    @Test func paseoProvidersComeFromTheHistoryAndTheRules() throws {
+        let entries = try sources("off source paseo\non source paseo/claude\noff source paseo/bad key",
+                                  history: [sourced("paseo/cursor"), sourced("paseo/codex"), sourced("paseo/cursor"),
+                                            sourced("claude/cli"), sourced("paseo/a/b"), sourced("")])
+        let paseo = try #require(entries.firstIndex(of: .toggle("Paseo", isOn: false, .setSource(key: "paseo", on: true))))
+        #expect(Array(entries[(paseo + 1)...].prefix(4)) == [
+            .toggle("claude", isOn: true, .setSource(key: "paseo/claude", on: false), indent: 1),
+            .toggle("codex", isOn: false, .setSource(key: "paseo/codex", on: true), indent: 1),
+            .toggle("cursor", isOn: false, .setSource(key: "paseo/cursor", on: true), indent: 1),
+            .separator,
+        ])
+    }
+
+    @Test func projectsComeFromTheRulesAndTheHistoryAlphabetically() throws {
+        var menuInput = input(history: [sourced("terminal", repo: "zeta"), sourced("terminal", repo: "ada"),
+                                        sourced("terminal", repo: "")])
+        menuInput.sources = SourceRules.parse("off repo Sandbox")
+        #expect(MenuModel.projectEntries(menuInput) == [
+            .toggle("All Projects", isOn: true, .setRepoMode(onlyListed: false)),
+            .toggle("Only Checked Projects", isOn: false, .setRepoMode(onlyListed: true)),
+            .separator,
+            .toggle("ada", isOn: true, .setRepo(name: "ada", on: false)),
+            .toggle("Sandbox", isOn: false, .setRepo(name: "Sandbox", on: true)),
+            .toggle("zeta", isOn: true, .setRepo(name: "zeta", on: false)),
+        ])
+        #expect(MenuModel.projectEntries(input()).last == .info("Projects Appear Here After They Alert"))
+    }
+
+    @Test func onlyCheckedProjectsSaysWhenNothingIsChecked() throws {
+        var menuInput = input(history: [sourced("terminal", repo: "ada")])
+        menuInput.sources = SourceRules.parse("off repo *")
+        let entries = MenuModel.projectEntries(menuInput)
+        #expect(entries[1] == .toggle("Only Checked Projects", isOn: true, .setRepoMode(onlyListed: true)))
+        #expect(entries[3] == .info("Nothing Alerts Until You Check a Project"))
+        #expect(entries[4] == .toggle("ada", isOn: false, .setRepo(name: "ada", on: true)))
+        #expect(try sources("off repo *").contains { if case .submenu("Projects (Only Checked)", _, _) = $0 { return true }; return false })
+    }
+
+    @Test func historyProjectsAreCappedButNamedOnesAlwaysShow() {
+        var menuInput = input(history: (1...30).map { sourced("terminal", repo: "r\($0)", ago: TimeInterval(100 - $0)) })
+        menuInput.sources = SourceRules.parse("off repo named")
+        let names = MenuModel.projectEntries(menuInput, limit: 5).compactMap { entry -> String? in
+            if case let .toggle(title, _, .setRepo, _) = entry { return title }
+            return nil
+        }
+        #expect(names == ["named", "r27", "r28", "r29", "r30"])
+    }
+
+    @Test func historyReadsTheSourceColumn() throws {
+        #expect(AlertHistory.parse(sourced("paseo/codex")).first?.source == "paseo/codex")
+        #expect(AlertHistory.parse(entry("old line")).first?.source == "")
+    }
+
+    @Test func rendersSwitchesWithTheirState() {
+        #expect(MenuModel.render([
+            .toggle("Paseo", isOn: false, .setSource(key: "paseo", on: true)),
+            .toggle("claude", isOn: true, .setSource(key: "paseo/claude", on: false), indent: 1),
+        ]) == "- [ ] Paseo\n- [x]   claude")
+    }
+
     @Test func rendersAsIndentedText() {
         let text = MenuModel.render([
             .info("Alerts On", symbol: "bell"),

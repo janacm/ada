@@ -21,6 +21,11 @@
 #                       "Mute this …" button. See lib/ada-mute.sh.
 #   ADA_SESSION_KIND    what the button calls it: conversation, session, agent,
 #                       terminal (default "session")
+#   ADA_SOURCE          which integration raised it (terminal, claude/desktop,
+#                       codex, paseo/<provider>, ...); a source or project
+#                       switched off in lib/ada-sources.sh drops the alert.
+#                       Unset = no switches apply (the test alerts)
+#   ADA_SOURCES_FILE    see lib/ada-sources.sh
 #   ADA_MUTE_BUTTON     0 hides the mute button (existing mutes still apply)
 #   ADA_MUTE_DIR / ADA_MUTE_MAX_AGE  see lib/ada-mute.sh
 #   ADA_SNOOZE_SCOPE    "session": snoozing also holds the session's later
@@ -111,6 +116,31 @@ unset ADA_PAUSE_FLUSH
 # being muted or snooze-held must not cost the whole summary.
 [[ -n "$pause_flush" ]] && session_key=""
 
+# The source switches (lib/ada-sources.sh): which integrations and projects may
+# raise an alert at all. A switched-off alert is dropped first, before the
+# history records it: a heavy user switches off whole harnesses, and their
+# alerts must not push real ones out of Recent Alerts. The snooze relaunch
+# inherits ADA_SOURCE, so a source switched off while an alert slept stays
+# quiet. A summary has no source (the timer inherits one from the alert whose
+# Pause was pressed), and an alert you asked for (ADA_IGNORE_PAUSE=1) ignores
+# the switches. A missing ada-sources.sh means no switches, never a lost alert.
+alert_source=${ADA_SOURCE:-}
+[[ -n "$pause_flush" ]] && alert_source=""
+if [[ -n "$alert_source" && "${ADA_IGNORE_PAUSE:-}" != 1 && -f "$selfdir/ada-sources.sh" ]]; then
+  # shellcheck source=lib/ada-sources.sh
+  . "$selfdir/ada-sources.sh"
+  __ada_sources_load
+  # A project rule needs the alert's project before deciding, the one case
+  # where an alert that is then dropped runs git. The result is exported, so a
+  # shown alert's badge reuses it. The Paseo watcher passes ADA_REPO itself:
+  # it runs as a LaunchAgent, which must not look inside ~/Documents.
+  if [[ "$__ada_src_has_repo" == 1 && -z "${ADA_REPO+set}" ]]; then
+    repo=$(git -C "${ADA_REPO_DIR:-$PWD}" rev-parse --show-toplevel 2>/dev/null)
+    export ADA_REPO="${repo##*/}"
+  fi
+  __ada_source_allowed "$alert_source" "${ADA_REPO:-}" || exit 0
+fi
+
 # Every alert decided here gets a line in the history (lib/ada-history.sh) that
 # the menu bar's Recent Alerts reads: shown, paused, muted or held. A missing
 # ada-history.sh means no history, never a missing alert; it also means a pause
@@ -128,7 +158,7 @@ fi
 # known to be shown. The directory goes in instead, so a summary can resolve it.
 __ada_history_args() {
   __ada_args=("$1" "$session_key" "$session_kind" "$cmd" "$duration" "$code" \
-    "${ADA_REPO:-}" "$focus_app" "$focus_app_name" "$click_url" "${ADA_REPO_DIR:-$PWD}")
+    "${ADA_REPO:-}" "$focus_app" "$focus_app_name" "$click_url" "${ADA_REPO_DIR:-$PWD}" "$alert_source")
 }
 __ada_record() {
   __ada_history_args "$1"
@@ -331,7 +361,8 @@ if [[ -n "$pause_flush" ]]; then
   focus_app=""; focus_app_name=""; click_url=""
   mute_file=""; hold_file=""; snooze_minutes=""
   unset ADA_SNOOZED ADA_SESSION_KEY ADA_SESSION_KIND ADA_CLICK_URL ADA_SNOOZE_SCOPE \
-        ADA_IGNORE_PAUSE ADA_MUTE_FILE ADA_SNOOZE_HOLD_FILE ADA_PAUSE_CLI ADA_SUMMARY_TARGETS
+        ADA_IGNORE_PAUSE ADA_MUTE_FILE ADA_SNOOZE_HOLD_FILE ADA_PAUSE_CLI ADA_SUMMARY_TARGETS \
+        ADA_SOURCE
   export ADA_REPO=""
   pid_file=${ADA_SUMMARY_PID_FILE:-${TMPDIR:-/tmp}/ada-alert-summary.pid}
 fi

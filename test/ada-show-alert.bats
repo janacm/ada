@@ -662,7 +662,7 @@ held_count() { local d; d=$(HELD_DIR); ls "$d" 2>/dev/null | grep -c '\.tsv$'; }
   refute_file_appears "$ADA_PROBE_OUT"
   assert_equal "$(held_count)" 1
   local rec; rec=$(cat "$(HELD_DIR)"/*.tsv)
-  assert_equal "$(awk -F'\t' '{print NF}' <<<"$rec")" 14
+  assert_equal "$(awk -F'\t' '{print NF}' <<<"$rec")" 15
   assert_equal "$(cut -f3,5,7,13,14 <<<"$rec")" "paused	claude-abc	while away	claude://resume?session=abc	$BATS_TEST_TMPDIR/proj"
   # The same line, once in the history.
   assert_equal "$(cat "$TMPDIR/ada-history.tsv")" "$rec"

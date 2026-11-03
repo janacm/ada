@@ -124,7 +124,9 @@ __ada_precmd() {
 __ada_show_alert() {
   local cmd=$1 duration=$2 code=$3 key=${4-$_ADA_SESSION_KEY} ignore_pause=${5:-${ADA_IGNORE_PAUSE:-}}
   local formatted=$(__ada_format_duration $duration)
-  ADA_SESSION_KEY="$key" ADA_SESSION_KIND=terminal ADA_IGNORE_PAUSE="$ignore_pause" \
+  # ADA_SOURCE=terminal is what `ada-sources off terminal` switches off; the
+  # test alert below ignores the switches along with the pause.
+  ADA_SESSION_KEY="$key" ADA_SESSION_KIND=terminal ADA_IGNORE_PAUSE="$ignore_pause" ADA_SOURCE=terminal \
     "$_ADA_DIR/lib/ada-show-alert.sh" "$cmd" "$formatted" "$code"
 }
 

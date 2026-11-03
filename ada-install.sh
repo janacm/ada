@@ -548,6 +548,28 @@ install_menubar() {
   "$dir/ada-menubar.sh" install
 }
 
+# Wiring an integration decides what CAN alert; the source switches
+# (lib/ada-sources.sh) decide what does. Say where they stand and how to change
+# them, since a heavy user will want some agents, Claude surfaces, Paseo
+# providers or projects quiet. Only reads: the installer never writes rules.
+show_source_switches() {
+  local sources="$dir/lib/ada-sources.sh" cmd off="" key
+  [[ -x "$sources" ]] || return 0
+  cmd=$sources
+  __ada_from_brew_prefix "$dir" && cmd=ada-sources
+  for key in terminal claude/desktop claude/cli claude/ide claude/headless codex opencode paseo; do
+    "$sources" check "$key" >/dev/null 2>&1 || off+="${off:+, }$key"
+  done
+  say
+  say "Switched off: ${off:-nothing}"
+  say "  Every wired integration alerts unless its switch is off. Turn agents, Claude"
+  say "  Code surfaces, Paseo providers and projects on or off from the menu bar's"
+  say "  Alert Sources menu, or from a terminal. Every switch, and why:"
+  say "    $cmd list"
+  say "  Silence every Paseo agent, for example:"
+  say "    $cmd off paseo"
+}
+
 run_test_alert() {
   [[ "$run_test" == 1 ]] || return 0
   say "Firing a sample alert"
@@ -635,6 +657,7 @@ for (( i=0; i<${#AGENT_IDS[@]}; i++ )); do
 done
 
 run_test_alert
+show_source_switches
 
 say
 say "Done."

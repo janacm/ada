@@ -23,12 +23,13 @@ field() {
 @test "a shown alert records every field, in the documented order" {
   export ADA_SESSION_KEY=claude-abc ADA_SESSION_KIND=conversation ADA_REPO=myrepo \
          ADA_FOCUS_APP=com.example.term ADA_FOCUS_APP_NAME="Example Term" \
-         ADA_CLICK_URL="claude://resume?session=abc" ADA_REPO_DIR="$BATS_TEST_TMPDIR/proj"
+         ADA_CLICK_URL="claude://resume?session=abc" ADA_REPO_DIR="$BATS_TEST_TMPDIR/proj" \
+         ADA_SOURCE=claude/cli
   run "$LAUNCHER" "make test" "2m 3s" 1
   assert_success
   wait_for_file "$ADA_PROBE_OUT"
   [ "$(wc -l < "$HISTORY")" -eq 1 ]
-  assert_equal "$(tail -n 1 "$HISTORY" | awk -F'\t' '{print NF}')" 14
+  assert_equal "$(tail -n 1 "$HISTORY" | awk -F'\t' '{print NF}')" 15
   assert_equal "$(field 1)" 1
   [[ "$(field 2)" =~ ^[0-9]{10}$ ]]
   assert_equal "$(field 3)" shown
@@ -43,6 +44,7 @@ field() {
   assert_equal "$(field 12)" "Example Term"
   assert_equal "$(field 13)" "claude://resume?session=abc"
   assert_equal "$(field 14)" "$BATS_TEST_TMPDIR/proj"
+  assert_equal "$(field 15)" claude/cli
 }
 
 # The directory is what lets a pause summary name the repo of an alert that
@@ -65,7 +67,7 @@ field() {
   run "$LAUNCHER" $'one\ttwo\nthree\r'"$long" "1s" 0
   wait_for_file "$ADA_PROBE_OUT"
   [ "$(wc -l < "$HISTORY")" -eq 1 ]
-  assert_equal "$(tail -n 1 "$HISTORY" | awk -F'\t' '{print NF}')" 14
+  assert_equal "$(tail -n 1 "$HISTORY" | awk -F'\t' '{print NF}')" 15
   local label; label=$(field 7)
   [[ "$label" == "one two three yyy"* ]] || { echo "label: $label"; false; }
   assert_equal "${#label}" 200
@@ -163,10 +165,11 @@ field() {
   assert_equal "$(field 14)" /d
 }
 
-@test "a record without the dir argument ends in an empty dir column" {
+@test "a record without the dir and source arguments ends in empty columns" {
   run bash -c ". '$REPO_ROOT/lib/ada-history.sh'; __ada_history_record shown k kind label 2s 0 '' '' '' ''"
-  assert_equal "$(tail -n 1 "$HISTORY" | awk -F'\t' '{print NF}')" 14
+  assert_equal "$(tail -n 1 "$HISTORY" | awk -F'\t' '{print NF}')" 15
   assert_equal "$(field 14)" ""
+  assert_equal "$(field 15)" ""
 }
 
 @test "ADA_HISTORY_MAX=0 keeps no history" {
@@ -199,7 +202,7 @@ field() {
   for i in $(seq 1 20); do "$LAUNCHER" "parallel $i" "1s" 0 & done
   wait
   [ "$(wc -l < "$HISTORY")" -eq 20 ]
-  assert_equal "$(awk -F'\t' '{print NF}' "$HISTORY" | sort -u)" 14
+  assert_equal "$(awk -F'\t' '{print NF}' "$HISTORY" | sort -u)" 15
   assert_equal "$(cut -f7 "$HISTORY" | sort -u | wc -l | tr -d ' ')" 20
 }
 
