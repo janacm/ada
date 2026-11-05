@@ -155,6 +155,34 @@ into `main` only), not from commit subjects: a rebase-merged PR leaves no `#N`
 in any subject. Any failed lookup stops the release rather than read as "not
 major".
 
+## Pull requests auto-merge by default
+
+The owner wants every PR in this repo merged without a manual click, so turn
+on GitHub auto-merge as soon as you open one, unless the user says to hold it
+or it is a draft. In the Claude desktop app use the `ccd_pr` `set_auto_merge`
+tool with `merge_method: "merge"`; elsewhere run `gh pr merge <n> --auto
+--merge`. Use a merge commit, as the history does, never squash.
+
+- **Put the release label on first.** `release:minor` or `release:major`
+  must be on the PR before it merges (see "Releases are automated from PR
+  labels" above); a label added after an auto-merge releases nothing.
+  Leave a PR unlabelled when it changes no shipped behavior (docs, tests, CI).
+- **Auto-merge waits for `bats` because `main` requires it.** The "main:
+  require bats" ruleset makes a PR mergeable only once the `bats` job from
+  GitHub Actions passed on its head, so auto-merge holds the PR until then.
+  Before that ruleset existed, GitHub refused auto-merge outright ("Pull
+  request is in unstable status" on PR #23, 2026-11-05: with nothing required
+  there was nothing to wait for), and the desktop app's "Merge when ready" was
+  greyed out. If it is refused again, check what `main` requires with
+  `gh api repos/janacm/ada/rules/branches/main` and tell the user; do not
+  merge it yourself instead.
+- **A merge you are asked to do still waits for `bats`.** Repo admins bypass
+  the ruleset, and the user's token is an admin's, so a direct `gh pr merge`
+  can land a PR whose checks are still running. Merge only once the `bats` job
+  has passed on the PR's head commit (`gh pr checks <n>`). A local run does
+  not stand in for it: `test.yml` runs on macOS because the tests that need
+  the Swift helper skip, not fail, without it.
+
 ## Native helper is the only renderer
 
 `ada-alert` is a SwiftPM executable that opens `alert.html` in an AppKit/WebKit
