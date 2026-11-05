@@ -40,7 +40,7 @@ if [ -n "${STUB_CURL_ADVANCE:-}" ]; then
     sed -i '' 's|^  url ".*"|  url "https://example.invalid/other.tar.gz"|' "$other/Formula/ada.rb"
     git -C "$other" -c user.name=o -c user.email=o@example.invalid commit -q -am "someone edits the formula"
   }
-  git -C "$other" push -q origin main
+  STUB_ADMIN_PUSH=1 git -C "$other" push -q origin main
   unset STUB_CURL_ADVANCE
 fi
 printf 'fake tarball for %s' "${!#}"
@@ -52,9 +52,38 @@ SH
   # `gh api repos/.../commits/<sha>/pulls` answers with the PR a commit came
   # from: the #N in a merge or squash subject, or a "<subject><TAB><N>" line in
   # $BATS_TEST_TMPDIR/pr-map for a rebase-merged commit whose subject has none.
-  export STUB_REPO="$WORK"
+  #
+  # `gh api --method POST repos/.../check-runs -f name=... -f head_sha=...` is the
+  # Checks API: like GitHub it refuses a commit origin doesn't have, logs each run
+  # to $BATS_TEST_TMPDIR/check-runs, and a completed, successful `bats` run puts
+  # the sha in checks-passed, which origin's pre-receive hook reads.
+  export STUB_REPO="$WORK" STUB_ORIGIN="$ORIGIN"
   cat > "$BATS_TEST_TMPDIR/bin/gh" <<'SH'
 #!/bin/bash
+if [ "$1" = api ] && [[ "$*" == *"/check-runs"* ]]; then
+  [ -n "${STUB_GH_CHECK_FAIL:-}" ] && { echo "HTTP 403: Resource not accessible by integration" >&2; exit 1; }
+  name="" sha="" status="" conclusion="" details=""
+  while [ $# -gt 0 ]; do
+    if [ "$1" = -f ]; then
+      case "$2" in
+        name=*) name=${2#name=} ;;
+        head_sha=*) sha=${2#head_sha=} ;;
+        status=*) status=${2#status=} ;;
+        conclusion=*) conclusion=${2#conclusion=} ;;
+        details_url=*) details=${2#details_url=} ;;
+      esac
+      shift 2
+    else
+      shift
+    fi
+  done
+  git -C "$STUB_ORIGIN" cat-file -e "$sha^{commit}" 2>/dev/null \
+    || { echo "HTTP 422: No commit found for SHA: $sha" >&2; exit 1; }
+  printf '%s %s %s %s %s\n' "$name" "$status" "$conclusion" "$sha" "$details" >> "$BATS_TEST_TMPDIR/check-runs"
+  [ "$name $status $conclusion" = "bats completed success" ] && echo "$sha" >> "$BATS_TEST_TMPDIR/checks-passed"
+  echo '{}'
+  exit 0
+fi
 if [ "$1" = api ]; then
   [ -n "${STUB_GH_API_FAIL:-}" ] && { echo "HTTP 502" >&2; exit 1; }
   sha=$(printf '%s' "$2" | sed -nE 's|.*/commits/([0-9a-f]+)/pulls$|\1|p')
@@ -69,6 +98,22 @@ echo "enhancement"
 SH
   chmod +x "$BATS_TEST_TMPDIR/bin/gh"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+
+  # origin stands in for main's "require bats" ruleset once require-bats exists
+  # in it: main moves only to a commit with a passing `bats` check run (the gh
+  # stub's checks-passed), unless an admin pushes (STUB_ADMIN_PUSH).
+  cat > "$ORIGIN/hooks/pre-receive" <<SH
+#!/bin/bash
+[ -f "$ORIGIN/require-bats" ] || exit 0
+[ -n "\${STUB_ADMIN_PUSH:-}" ] && exit 0
+while read -r old new ref; do
+  [ "\$ref" = refs/heads/main ] || continue
+  grep -qx "\$new" "$BATS_TEST_TMPDIR/checks-passed" 2>/dev/null && continue
+  echo "Required status check \"bats\" is expected." >&2
+  exit 1
+done
+SH
+  chmod +x "$ORIGIN/hooks/pre-receive"
 }
 
 expected_sha() {
@@ -544,4 +589,92 @@ SH
   assert_file_contains "$WORK/Formula/ada.rb" "refs/tags/v0.6.tar.gz"
   run git -C "$ORIGIN" tag -l v0.7
   assert_equal "$output" ""
+}
+
+# --- main requires the bats check (the "main: require bats" ruleset) ----------------
+# The workflow's token can't bypass it, so with ADA_RELEASE_MARK_BATS=1 the formula
+# bump goes to a scratch branch, gets a passing `bats` check run, and only then
+# moves main. origin's pre-receive hook enforces the rule (see setup).
+
+mark_env() {
+  touch "$ORIGIN/require-bats"
+  export ADA_RELEASE_MARK_BATS=1 GITHUB_RUN_ID=4242 GITHUB_REPOSITORY=janacm/ada \
+    GITHUB_SERVER_URL=https://github.com
+}
+
+@test "with bats required, the workflow's release marks its formula bump and lands it" {
+  mark_env
+  run "$RELEASE" v9.9.0
+  assert_success
+  local head
+  head=$(git -C "$ORIGIN" rev-parse main)
+  assert_equal "$(git -C "$ORIGIN" log -1 --format=%s main)" "Homebrew: point formula at v9.9.0"
+  run cat "$BATS_TEST_TMPDIR/check-runs"
+  assert_equal "$output" "bats completed success $head https://github.com/janacm/ada/actions/runs/4242"
+  run git -C "$ORIGIN" branch --list 'ada-release/*'
+  assert_equal "$output" ""
+}
+
+# The control: origin really turns away an unmarked bump, so the test above
+# proves the mark is what let it through. A manual run marks nothing.
+@test "with bats required, an unmarked formula bump is turned away" {
+  touch "$ORIGIN/require-bats"
+  local before
+  before=$(git -C "$ORIGIN" rev-parse main)
+  run "$RELEASE" v9.9.0
+  assert_failure
+  assert_output_contains "could not push the formula bump"
+  assert_equal "$(git -C "$ORIGIN" rev-parse main)" "$before"
+  [ ! -e "$BATS_TEST_TMPDIR/check-runs" ]
+}
+
+@test "main moving during a marked release gives the replayed bump its own check" {
+  mark_env
+  export STUB_CURL_ADVANCE="$ORIGIN"
+  run "$RELEASE" v9.9.0
+  assert_success
+  assert_output_contains "main moved; replaying the formula bump"
+  local head
+  head=$(git -C "$ORIGIN" rev-parse main)
+  assert_equal "$(git -C "$ORIGIN" log -1 --format=%s main~1)" "concurrent work"
+  run awk '{print $4}' "$BATS_TEST_TMPDIR/check-runs"
+  [ "${#lines[@]}" -eq 2 ] || { echo "expected 2 check runs: $output"; false; }
+  assert_equal "${lines[1]}" "$head"
+  [ "${lines[0]}" != "$head" ]
+  run git -C "$ORIGIN" branch --list 'ada-release/*'
+  assert_equal "$output" ""
+}
+
+@test "a check run that can't be created stops the release with a re-run hint" {
+  mark_env
+  export STUB_GH_CHECK_FAIL=1
+  local before
+  before=$(git -C "$ORIGIN" rev-parse main)
+  run "$RELEASE" v9.9.0
+  assert_failure
+  assert_output_contains "could not give the formula bump a passing bats check; re-run ./release.sh v9.9.0"
+  assert_equal "$(git -C "$ORIGIN" rev-parse main)" "$before"
+  assert_equal "$(git -C "$WORK" rev-parse main)" "$before"
+  git -C "$ORIGIN" rev-parse -q --verify refs/tags/v9.9.0 >/dev/null
+  run git -C "$ORIGIN" branch --list 'ada-release/*'
+  assert_equal "$output" ""
+}
+
+# The check run says the commit changes only the formula; one that changes more
+# is not marked, so the ruleset keeps it off main. A pre-commit hook in the work
+# repo slips a second file into the bump commit.
+@test "a bump commit that changes more than the formula is not marked tested" {
+  mark_env
+  cat > "$WORK/.git/hooks/pre-commit" <<'SH'
+#!/bin/bash
+echo extra > extra.txt && git add extra.txt
+SH
+  chmod +x "$WORK/.git/hooks/pre-commit"
+  local before
+  before=$(git -C "$ORIGIN" rev-parse main)
+  run "$RELEASE" v9.9.0
+  assert_failure
+  assert_output_contains "changes more than Formula/ada.rb; not marking it tested"
+  assert_equal "$(git -C "$ORIGIN" rev-parse main)" "$before"
+  [ ! -e "$BATS_TEST_TMPDIR/check-runs" ]
 }

@@ -23,7 +23,8 @@ setup_common() {
         ADA_REPO ADA_REPO_DIR ADA_FOCUS_APP_NAME ADA_SNOOZED \
         __CFBundleIdentifier HOMEBREW_PREFIX ADA_DEBUG_LOG_FILE \
         ADA_OPENCODE_EVENTS ADA_OPENCODE_THRESHOLD ADA_OPENCODE_PLUGIN_DIR \
-        ADA_OPENCODE_FALLBACK_PATHS STUB_OPENCODE_CONFIG ADA_PASEO_FALLBACK_PATHS
+        ADA_OPENCODE_FALLBACK_PATHS STUB_OPENCODE_CONFIG ADA_PASEO_FALLBACK_PATHS \
+        ADA_RELEASE_MARK_BATS
 
   # Private temp so the Claude-hook state dir ($TMPDIR/ada-claude), the paseo
   # logfile ($TMPDIR/ada-paseo-watch.log) and friends are isolated per test.

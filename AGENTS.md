@@ -107,6 +107,24 @@ names it) and the formula bump is replayed on the newer `main`, which the next
 labelled merge releases. `.github/workflows/test.yml` runs
 the same suite on every PR and every direct push to `main`.
 
+**`main` requires the `bats` check, and the release job marks its own bump.**
+The "main: require bats" ruleset lets a commit onto `main` only once a `bats`
+check run from GitHub Actions (app id 15368) passed on it; repo admins bypass
+it, so a manual `./release.sh` and your own pushes are unaffected. The release
+job's `GITHUB_TOKEN` is not an admin, and on a repo owned by a personal account
+GitHub Actions can't be a bypass actor (creating the ruleset with it failed:
+"Actor GitHub Actions integration must be part of the ruleset source or owner
+organization"). So with `ADA_RELEASE_MARK_BATS=1`, set only in the workflow's
+Release step, `__mark_bats` in `release.sh` pushes the bump to
+`ada-release/<version>`, creates a completed, successful `bats` check run on
+it through the Checks API (the workflow has `checks: write`; a personal token
+can't create check runs), pushes `main`, and deletes the scratch branch. It
+marks only a commit whose diff is `Formula/ada.rb` alone, and marks a replayed
+bump again, since the replay is a new commit. `test/release.bats` makes its bare
+`origin` enforce the rule with a `pre-receive` hook and stubs the Checks API in
+`gh`; one test pushes unmarked and must be turned away, so the others prove the
+mark is what let the bump through.
+
 **A published tag is never deleted or moved.** The tag push and the formula
 push are separate, so a release can stop between them. If `main` moves in that
 window, `release.sh` replays its formula-only commit on the new `main` and

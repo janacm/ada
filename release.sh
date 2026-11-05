@@ -21,6 +21,11 @@
 # tag is on GitHub but main never got the formula bump. Re-running with the same
 # version finishes it, and --next returns that version again instead of
 # skipping past it.
+#
+# main requires the `bats` check. ADA_RELEASE_MARK_BATS=1, which the release
+# workflow sets, gives the formula bump a passing `bats` check run on a scratch
+# branch before pushing main (see __mark_bats). A manual run pushes as an admin,
+# which the ruleset lets through.
 # =============================================================
 set -euo pipefail
 
@@ -286,6 +291,40 @@ if [[ -z "$(git -C "$dir" status --porcelain -- Formula/ada.rb)" ]]; then
 else
   git -C "$dir" add Formula/ada.rb
   git -C "$dir" commit -q -m "Homebrew: point formula at $version"
+  # main requires the `bats` check (the "main: require bats" ruleset), so a
+  # commit reaches main only once that check passed on it, unless an admin
+  # pushes it. The release workflow's token is no admin, and a repo owned by a
+  # personal account can't let GitHub Actions bypass a ruleset. So with
+  # ADA_RELEASE_MARK_BATS=1 (set by the workflow) the bump goes to a scratch
+  # branch first and gets a passing `bats` check run there: the suite passed
+  # earlier in the same job, and the commit changes only the formula, which
+  # this checks. A manual run needs none of it: you push as an admin.
+  scratch="ada-release/$version"
+  marked=0
+  __mark_bats() {
+    [[ "${ADA_RELEASE_MARK_BATS:-0}" == 1 ]] || return 0
+    local sha changed run_url=""
+    sha=$(git -C "$dir" rev-parse HEAD)
+    changed=$(git -C "$dir" diff --name-only HEAD~1 HEAD)
+    if [[ "$changed" != Formula/ada.rb ]]; then
+      echo "release: the bump commit changes more than Formula/ada.rb; not marking it tested" >&2
+      return 1
+    fi
+    [[ -n "${GITHUB_RUN_ID:-}" ]] &&
+      run_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-$repo}/actions/runs/$GITHUB_RUN_ID"
+    git -C "$dir" push -q -f origin "HEAD:refs/heads/$scratch" || return 1
+    marked=1
+    gh api --method POST "repos/$repo/check-runs" \
+      -f name=bats -f head_sha="$sha" -f status=completed -f conclusion=success \
+      ${run_url:+-f details_url="$run_url"} \
+      -f "output[title]=Formula bump for $version" \
+      -f "output[summary]=The release job ran the bats suite before tagging $version. This commit changes only Formula/ada.rb." \
+      >/dev/null || return 1
+  }
+  __drop_scratch() {
+    (( marked )) || return 0
+    git -C "$dir" push -q origin --delete "$scratch" 2>/dev/null || true
+  }
   # The tag is already public, so main moving during the tarball download must
   # not strand it. The bump touches only the formula: replay it on the new main
   # and push again. A conflict means someone else changed the formula; stop.
@@ -295,12 +334,14 @@ else
   # --keep refuses rather than discard anything but that one commit (the tree
   # was clean when this started).
   __give_up() {
+    __drop_scratch
     git -C "$dir" fetch -q origin main || true
     git -C "$dir" reset -q --keep origin/main || true
     echo "release: $1; re-run ./release.sh $version to finish" >&2
     exit 1
   }
   for attempt in 1 2 3; do
+    __mark_bats || __give_up "could not give the formula bump a passing bats check"
     git -C "$dir" push -q origin main && break
     (( attempt < 3 )) || __give_up "could not push the formula bump"
     echo "release: main moved; replaying the formula bump on origin/main"
@@ -310,6 +351,7 @@ else
       __give_up "the formula bump conflicts with origin/main"
     fi
   done
+  __drop_scratch
   echo "Committed and pushed the formula bump to main"
 fi
 

@@ -22,6 +22,9 @@ permissions:
   contents: write
   # read the labels of every PR since the last release (see "Pick the next version")
   pull-requests: read
+  # main requires the `bats` check, and this token can't bypass that: release.sh
+  # gives its formula bump a passing `bats` check run before pushing main
+  checks: write
 
 jobs:
   release:
@@ -72,6 +75,7 @@ jobs:
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
+          ADA_RELEASE_MARK_BATS: "1"
           BUMP: ${{ contains(github.event.pull_request.labels.*.name, 'release:major') && 'major' || 'minor' }}
         run: |
           git config user.name "github-actions[bot]"

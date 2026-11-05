@@ -103,6 +103,15 @@ removed.
   the PRs must be found for every merge method (merge commit, squash, rebase).
 - Every PR and every direct push to the default branch must run the bats suite
   on macOS with the native helper built, so no test skips for lack of it.
+- The default branch must require the `bats` check from GitHub Actions before
+  any commit lands on it (the "main: require bats" ruleset), with only repo
+  admins able to bypass. The release workflow, whose token can't bypass it,
+  must push its formula bump to a scratch branch, give it a passing `bats`
+  check run there, and only then push the default branch, and delete the
+  scratch branch afterwards. It must mark only a commit that changes nothing
+  but `Formula/ada.rb`, must mark the replayed bump again when the default
+  branch moved, and a check run it can't create must stop the release with
+  the same re-run hint as a failed push.
 
 ## Onboarding Installer
 
@@ -927,6 +936,12 @@ removed.
 
 ## Change Log
 
+- 2026-11-05: `main` requires the `bats` check (new ruleset "main: require
+  bats", repo admins bypass), so GitHub auto-merge waits for CI. The release
+  workflow can't bypass it, so `release.sh` (with `ADA_RELEASE_MARK_BATS=1`,
+  which the workflow sets) pushes its formula bump to `ada-release/<version>`,
+  gives it a passing `bats` check run, then pushes `main`. The workflow gained
+  `checks: write`.
 - 2026-11-05: Clicking a Paseo alert opens the agent it is about in Paseo
   Desktop, not just the app: the watcher passes
   `paseo://h/<server id>/agent/<agent id>` as `ADA_CLICK_URL`, with the server
