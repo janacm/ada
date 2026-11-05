@@ -1,8 +1,8 @@
 class Ada < Formula
   desc "Maximized-window alert when long terminal commands or agent turns finish"
   homepage "https://github.com/janacm/ada"
-  url "https://github.com/janacm/ada/archive/refs/tags/v0.6.tar.gz"
-  sha256 "7391e7863f1d900394623ac2575e812afb8f02576a07e05e3817ca4cda833be2"
+  url "https://github.com/janacm/ada/archive/refs/tags/v0.7.tar.gz"
+  sha256 "322a0208af60a7acbd2d4dec3cec225f1555889f7575bdd4aec7c2a761e79acc"
   license "MIT"
   head "https://github.com/janacm/ada.git", branch: "main"
 
