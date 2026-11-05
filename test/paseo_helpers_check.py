@@ -161,6 +161,85 @@ check("source_of keeps a provider a rule can name, else plain paseo",
 check("repo_of takes the folder name, and nothing for home or an empty cwd",
       [m.repo_of(c) for c in ("~/Documents/GitHub/ada/", "~", "", "/tmp/x")] == ["ada", "", "", "x"])
 
+# --- server_id / agent_link: the deep link that opens the agent in Paseo ----------
+# Paseo Desktop's parser (packages/protocol/src/agent-deep-link.ts in the Paseo
+# repo) accepts exactly paseo://h/<server id>/agent/<agent id>: host "h", three
+# path segments with "agent" in the middle, each percent-decoded, and no port,
+# query or fragment. This mirrors it, so a link it would reject fails here.
+from urllib.parse import unquote, urlsplit
+
+
+def paseo_parse(link):
+    u = urlsplit(link)
+    segs = [s for s in u.path.split("/") if s]
+    if u.scheme != "paseo" or u.hostname != "h" or u.port or u.query or u.fragment \
+            or u.username or len(segs) != 3 or segs[1] != "agent":
+        return None
+    return (unquote(segs[0]), unquote(segs[2]))
+
+
+calls = os.path.join(TMP, "status-calls.txt")
+m = load_mod(BASE)
+m.PASEO = script("paseo-status", 'echo "$*" >> %s\n'
+                 'echo \'{"home": "/x", "serverId": "srv_Test0Server", "localDaemon": "running"}\'\n'
+                 % calls)
+check("server_id reads serverId from `paseo daemon status --json`",
+      m.server_id() == "srv_Test0Server", m.server_id())
+m.server_id()
+check("server_id asks the CLI once and keeps the answer",
+      open(calls).read().splitlines() == ["daemon status --json"], open(calls).read())
+
+m = load_mod(BASE)
+m.PASEO = script("paseo-status-down", 'echo \'{"error": {"code": "DAEMON_UNREACHABLE"}}\'; exit 1\n')
+check("server_id is empty when the daemon reports an error", m.server_id() == "")
+m.PASEO = script("paseo-status-up", 'echo \'{"serverId": "srv_later"}\'\n')
+check("a failed lookup is not kept: the next alert asks again", m.server_id() == "srv_later")
+
+m = load_mod(BASE)
+m.PASEO = script("paseo-status-odd", 'echo \'{"serverId": "srv/../x y"}\'\n')
+check("server_id refuses an id that is not a plain token", m.server_id() == "")
+m.PASEO = os.path.join(TMP, "no-such-paseo")
+check("server_id survives a missing CLI", m.server_id() == "")
+
+m = load_mod(BASE)
+m.server_id = lambda: "srv_Test0Server"
+aid = "11111111-2222-4333-8444-555555555555"
+link = m.agent_link(aid, focus_app="sh.paseo.desktop")
+check("agent_link builds the link Paseo Desktop opens",
+      link == "paseo://h/srv_Test0Server/agent/" + aid, link)
+check("Paseo's parser reads the server and agent back out of the link",
+      paseo_parse(link) == ("srv_Test0Server", aid), paseo_parse(link))
+odd = m.agent_link("a/b?c#d", focus_app="sh.paseo.desktop")
+check("an agent id with URL syntax in it is percent-encoded, not spliced",
+      paseo_parse(odd) == ("srv_Test0Server", "a/b?c#d"), odd)
+check("no link without an agent id", m.agent_link("", focus_app="sh.paseo.desktop") == "")
+check("no link when the click target is another app, or none",
+      [m.agent_link(aid, focus_app=f) for f in ("com.mitchellh.ghostty", "")] == ["", ""])
+os.environ.pop("ADA_FOCUS_APP", None)
+check("an unset ADA_FOCUS_APP means the Paseo app, the front door's default",
+      m.agent_link(aid) == link, m.agent_link(aid))
+m.server_id = lambda: ""
+check("no link when the server id is unknown", m.agent_link(aid, focus_app="sh.paseo.desktop") == "")
+
+# --- fire: the agent link reaches the launcher as ADA_CLICK_URL -------------------
+urlrec = os.path.join(TMP, "fired-url.txt")
+m = load_mod(BASE)
+m.server_id = lambda: "srv_Test0Server"
+m.LAUNCHER = script("launcher-url", 'printf "%%s|%%s\\n" "$1" "${ADA_CLICK_URL-unset}" >> %s\n' % urlrec)
+os.environ["ADA_FOCUS_APP"] = "sh.paseo.desktop"
+os.environ["ADA_CLICK_URL"] = "claude://resume?session=inherited"
+m.fire("finished", "3s", 0, "a1")
+m.fire("needs you", "permission", 0)
+os.environ.pop("ADA_CLICK_URL", None)
+os.environ.pop("ADA_FOCUS_APP", None)
+for _ in range(100):
+    if os.path.exists(urlrec) and len(open(urlrec).read().splitlines()) >= 2:
+        break
+    time.sleep(0.02)
+urls = sorted(open(urlrec).read().splitlines()) if os.path.exists(urlrec) else []
+check("fire sends the agent's link, and an empty one (never an inherited one) without an id",
+      urls == ["finished|paseo://h/srv_Test0Server/agent/a1", "needs you|"], urls)
+
 # --- fire: label clipping and a launcher that can't start --------------------------
 record = os.path.join(TMP, "fired.txt")
 m.LAUNCHER = script("launcher", 'printf "%%s|%%s|%%s\\n" "$1" "$2" "$3" >> %s\n' % record)

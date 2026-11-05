@@ -16,6 +16,8 @@
 #   paseo ls --json        -> [{ id, shortId, name, provider, status, … }]
 #                             status ∈ initializing|idle|running|error|closed
 #   paseo permit ls --json -> [ <pending permission request>, … ]
+#   paseo daemon status --json -> { serverId, … }, read once, for the click
+#                             link paseo://h/<serverId>/agent/<id>
 #
 # So we synthesize the missing "Stop" event by polling that snapshot
 # and diffing each agent's status between polls:
@@ -60,7 +62,8 @@
 #   ADA_NATIVE_ALERT           path to ada-alert native helper (via launcher)
 #   ADA_AUTO_CLOSE             auto-dismiss seconds (default 90, via launcher)
 #   ADA_SNOOZE_MINUTES         snooze options       (default "5 10 30 60", via launcher)
-#   ADA_FOCUS_APP              bundle id to focus on click (default sh.paseo.desktop)
+#   ADA_FOCUS_APP              bundle id to focus on click (default sh.paseo.desktop;
+#                              only that default makes a click open the agent)
 #   ADA_FOCUS_APP_NAME         display name for the click hint (default Paseo)
 # =============================================================
 set -u
@@ -129,11 +132,12 @@ plist="$HOME/Library/LaunchAgents/${label_prefix}.plist"
 logfile="${TMPDIR:-/tmp}/ada-paseo-watch.log"
 
 # --- locate the paseo CLI (PATH, then the usual symlink, then the app bundle) ---
+# ADA_PASEO_FALLBACK_PATHS overrides the fixed fallbacks, as in find_paseo in
+# lib/ada-status.sh (the test suite narrows it to hide an installed Paseo.app).
 __ada_find_paseo() {
   local p
   p=$(command -v paseo 2>/dev/null) && { printf '%s' "$p"; return 0; }
-  for p in "$HOME/.local/bin/paseo" \
-           "/Applications/Paseo.app/Contents/Resources/bin/paseo"; do
+  for p in ${ADA_PASEO_FALLBACK_PATHS-"$HOME/.local/bin/paseo" /Applications/Paseo.app/Contents/Resources/bin/paseo}; do
     [[ -x "$p" ]] && { printf '%s' "$p"; return 0; }
   done
   return 1

@@ -178,12 +178,13 @@ paseo_plist() {
 }
 
 @test "paseo: no CLI and no watcher is unavailable" {
-  [ -x /Applications/Paseo.app/Contents/Resources/bin/paseo ] && skip "Paseo.app is installed here"
-  PATH="/usr/bin:/bin:$STUBS" run row paseo
+  hide_paseo
+  run row paseo
   assert_equal "$output" "paseo|unavailable|Paseo|Paseo not found"
 }
 
 @test "paseo: the CLI without the watcher is off" {
+  hide_paseo
   mkdir -p "$HOME/.local/bin"
   printf '#!/bin/sh\n' > "$HOME/.local/bin/paseo"; chmod +x "$HOME/.local/bin/paseo"
   assert_equal "$(row paseo)" "paseo|off|Paseo|watcher not installed"

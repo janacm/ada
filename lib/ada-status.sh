@@ -38,11 +38,13 @@ find_python() {
   return 1
 }
 
+# ADA_PASEO_FALLBACK_PATHS overrides the fixed fallbacks (the test suite's
+# hide_paseo narrows it to the test's own HOME, so an installed Paseo.app can't
+# make the no-CLI branch unobservable). ada-paseo-watch.sh has the same rule.
 find_paseo() {
   local p
   p=$(command -v paseo 2>/dev/null) && { printf '%s' "$p"; return 0; }
-  for p in "$HOME/.local/bin/paseo" \
-           "/Applications/Paseo.app/Contents/Resources/bin/paseo"; do
+  for p in ${ADA_PASEO_FALLBACK_PATHS-"$HOME/.local/bin/paseo" /Applications/Paseo.app/Contents/Resources/bin/paseo}; do
     [[ -x "$p" ]] && { printf '%s' "$p"; return 0; }
   done
   return 1

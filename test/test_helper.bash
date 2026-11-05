@@ -23,7 +23,7 @@ setup_common() {
         ADA_REPO ADA_REPO_DIR ADA_FOCUS_APP_NAME ADA_SNOOZED \
         __CFBundleIdentifier HOMEBREW_PREFIX ADA_DEBUG_LOG_FILE \
         ADA_OPENCODE_EVENTS ADA_OPENCODE_THRESHOLD ADA_OPENCODE_PLUGIN_DIR \
-        ADA_OPENCODE_FALLBACK_PATHS STUB_OPENCODE_CONFIG
+        ADA_OPENCODE_FALLBACK_PATHS STUB_OPENCODE_CONFIG ADA_PASEO_FALLBACK_PATHS
 
   # Private temp so the Claude-hook state dir ($TMPDIR/ada-claude), the paseo
   # logfile ($TMPDIR/ada-paseo-watch.log) and friends are isolated per test.
@@ -84,6 +84,22 @@ setup_common() {
   # introspection tools (lsappinfo/launchctl) so no test can ever signal or
   # query a real process. Behaviour is still opt-in via STUB_* env vars.
   PATH="$STUBS:$PATH"
+}
+
+# For a test that needs Paseo to be absent, or found only where it puts a stub:
+# the developer's own Paseo must not count. Drops every PATH directory holding a
+# paseo executable (~/.local/bin, where Paseo's installer links the CLI), and
+# narrows the finders' fixed fallbacks to this test's private HOME, which hides
+# /Applications/Paseo.app (ADA_PASEO_FALLBACK_PATHS, in lib/ada-status.sh and
+# ada-paseo-watch.sh). On CI neither exists and this changes nothing.
+hide_paseo() {
+  local d kept="" IFS=:
+  for d in $PATH; do
+    [[ -n "$d" && -x "$d/paseo" ]] && continue
+    kept="${kept:+$kept:}$d"
+  done
+  PATH=$kept
+  export ADA_PASEO_FALLBACK_PATHS="$HOME/.local/bin/paseo"
 }
 
 # Back-compat: stubs are already on PATH from setup_common. Kept so existing

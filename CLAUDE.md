@@ -291,6 +291,8 @@ status between snapshots:
 - `paseo ls --json` — `running → idle` = finished turn; `running → error` =
   failed turn.
 - `paseo permit ls --json` — a new entry = an agent blocked on a permission.
+- `paseo daemon status --json` — the server id for the click link, read once
+  (see [Click-to-open the Paseo agent](#click-to-open-the-paseo-agent-deep-link)).
 
 The loop is **Python, not bash**, because it needs per-agent state keyed by id
 (associative arrays) and macOS still ships **bash 3.2**, which has none. The
@@ -420,6 +422,18 @@ A healthy job is `state = running` with a live `python …/.local/share/ada/ada-
 - `⚠️  loaded but not running yet` — job registered, pid not up
 - `❌ not loaded — run: ... install` — off
 Plus `✅/❌ plist` and `✅ log clean` / `⚠️ log has output`.
+
+**Tests must not find the developer's own Paseo.** The two Paseo finders
+(`__ada_find_paseo` in `ada-paseo-watch.sh`, `find_paseo` in `lib/ada-status.sh`)
+try `PATH` first and then fixed fallbacks, `~/.local/bin/paseo` and the CLI
+inside `/Applications/Paseo.app`. On a machine with Paseo installed, a test that
+expects "no CLI" (the installer's locked Paseo row, the status row) or expects
+its own stub to be the one found saw the real CLI instead, and four tests failed
+locally while CI, which has no Paseo, passed. Such a test calls `hide_paseo`
+(`test/test_helper.bash`): it drops every `PATH` directory holding a `paseo`
+executable and sets `ADA_PASEO_FALLBACK_PATHS` to the test's private
+`$HOME/.local/bin/paseo`, which hides the app bundle. Both finders honor that
+variable, like `ADA_OPENCODE_FALLBACK_PATHS` for opencode.
 
 ## How to validate windowed-vs-fullscreen
 
@@ -604,6 +618,42 @@ values. To confirm a deep link lands live, fire `open "claude://resume?session=
 <real-id>"` and watch `~/Library/Logs/Claude/main.log` for
 `Resume deep link: importing CLI session <id>` → `Imported CLI session … as
 Desktop session local_<id>`.
+
+## Click-to-open the Paseo agent (deep link)
+
+Clicking a Paseo alert opens that agent in Paseo Desktop through the same
+`ADA_CLICK_URL` path as the Claude link above. `fire()` in
+`lib/ada-paseo-watch.py` sets it to `paseo://h/<server id>/agent/<agent id>`.
+
+Unlike the Claude scheme, this one is **documented and tested upstream**: the
+Paseo repo's `packages/protocol/src/agent-deep-link.ts` builds and parses it,
+`paseo agent open <id>` uses it, and `docs/development.md` names it as the way
+for desktop integrations to focus an existing agent (since Paseo PR #2324,
+2026-07-22; the installed 0.15.0 app registers the `paseo` scheme). Its parser
+takes exactly host `h`, three segments with `agent` in the middle, each
+percent-decoded, and no port, query or fragment; `test/paseo_helpers_check.py`
+mirrors it. To check against the real parser, run the TypeScript file with
+`node --experimental-strip-types` and call `parseAgentDeepLink`.
+
+- **The server id comes from `paseo daemon status --json`** (`serverId`), the
+  supported CLI, not from reading `~/.paseo/server-id`, so it follows
+  `PASEO_HOST` like the rest of the watcher. It costs about 1.8 s here, so the
+  first success is cached for the life of the loop and the lookup runs lazily,
+  in `fire()`, only for an alert that names an agent. A failure is not cached.
+  With the daemon stopped the JSON simply has no `serverId`.
+- **Only the Paseo click target gets a link.** `ADA_FOCUS_APP` must be
+  `sh.paseo.desktop` (the front door's default); set to another app or to empty,
+  the click keeps meaning what it meant. That check runs before the CLI call,
+  which is also why the bats suite (`ADA_FOCUS_APP=""`) never runs it except in
+  the one test that opts in.
+- **`fire()` always sets `ADA_CLICK_URL`, empty when there is no link.** An
+  inherited value would otherwise give every Paseo alert the same target.
+- **Success logs nothing on the Paseo side.** `openOrFocusAgent` shows and
+  focuses a window and routes it; only failures reach
+  `~/Library/Logs/Paseo/main.log`. The live check is the window title, which is
+  the open agent's name: `peekaboo window list --app Paseo --json --no-remote`
+  and read `window_title` of the `is_key` window before and after
+  `open "paseo://h/<server id>/agent/<id>"`.
 
 ## Muting a session is enforced in the launcher only
 

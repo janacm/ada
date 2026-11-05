@@ -227,15 +227,14 @@ PY
 # so a python3 stub that reports what it was handed is the whole check.
 
 @test "run fails clearly when no paseo CLI exists anywhere" {
-  if [ -x /Applications/Paseo.app/Contents/Resources/bin/paseo ]; then
-    skip "Paseo.app is installed; the no-CLI branch is unobservable here"
-  fi
+  hide_paseo
   run "$WATCH" run
   assert_failure
   assert_output_contains "'paseo' CLI not found"
 }
 
 @test "run execs the python loop with PASEO_BIN pointing at the CLI it found" {
+  hide_paseo
   mkdir -p "$HOME/.local/bin" "$BATS_TEST_TMPDIR/bin"
   printf '#!/bin/sh\necho "[]"\n' > "$HOME/.local/bin/paseo"
   printf '#!/bin/sh\necho "python3 $* PASEO_BIN=$PASEO_BIN"\n' > "$BATS_TEST_TMPDIR/bin/python3"
@@ -574,6 +573,46 @@ SH
   kill "$pid"; wait "$pid" 2>/dev/null || true
   (( $(cat "$BATS_TEST_TMPDIR/paseo-polls") >= 3 )) || { cat "$BATS_TEST_TMPDIR/loop.out"; echo "the loop never polled"; false; }
   [ ! -e "$ADA_PROBE_OUT" ] || { echo "an alert fired while paused:"; cat "$ADA_PROBE_OUT"; false; }
+  refute_file_contains "$BATS_TEST_TMPDIR/loop.out" "Traceback"
+}
+
+# Clicking a Paseo alert opens that agent: the loop asks the CLI for the daemon's
+# server id and hands the launcher paseo://h/<server id>/agent/<agent id>, which
+# the history keeps as the alert's click target (column 13). A click URL starts
+# the snooze daemon; it is ended through its dismiss endpoint, never /focus,
+# which would really open Paseo. fd 3 is closed so the daemon can't hold bats.
+@test "the watcher loop gives a finished turn a link that opens its agent in Paseo" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 required"
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat > "$BATS_TEST_TMPDIR/bin/paseo" <<'SH'
+#!/bin/bash
+state="$BATS_TEST_TMPDIR/paseo-polls"
+case "$1 ${2:-}" in
+  "ls --json")
+    n=$(cat "$state" 2>/dev/null || echo 0); echo $((n + 1)) > "$state"
+    if (( n == 0 )); then s=running; else s=idle; fi
+    printf '[{"id":"11111111-2222-4333-8444-555555555555","name":"fixer","status":"%s"}]\n' "$s" ;;
+  "permit ls") echo '[]' ;;
+  "daemon status") echo '{"home":"/x","serverId":"srv_Test0Server","localDaemon":"running"}' ;;
+esac
+SH
+  chmod +x "$BATS_TEST_TMPDIR/bin/paseo"
+  export PASEO_BIN="$BATS_TEST_TMPDIR/bin/paseo" ADA_PASEO_POLL=1 ADA_PASEO_THRESHOLD=0
+  export ADA_FOCUS_APP=sh.paseo.desktop
+  python3 "$REPO_ROOT/lib/ada-paseo-watch.py" > "$BATS_TEST_TMPDIR/loop.out" 2>&1 3>&- &
+  local pid=$!
+  if ! wait_for_file "$ADA_PROBE_OUT" 100; then
+    kill "$pid"; cat "$BATS_TEST_TMPDIR/loop.out"; echo "the loop never fired"; false
+  fi
+  kill "$pid"; wait "$pid" 2>/dev/null || true
+  local url port token
+  url=$(cat "$ADA_PROBE_OUT")
+  port=$(sed -n 's/.*[?&]sport=\([0-9]*\).*/\1/p' <<<"$url")
+  token=$(sed -n 's/.*[?&]stoken=\([^&]*\).*/\1/p' <<<"$url")
+  [[ -n "$port" && -n "$token" ]] && curl -s -o /dev/null "http://127.0.0.1:$port/$token/dismiss"
+  assert_file_contains "$ADA_PROBE_OUT" "focus=1"
+  run awk -F'\t' '{print $13}' "$TMPDIR/ada-history.tsv"
+  assert_equal "$output" "paseo://h/srv_Test0Server/agent/11111111-2222-4333-8444-555555555555"
   refute_file_contains "$BATS_TEST_TMPDIR/loop.out" "Traceback"
 }
 

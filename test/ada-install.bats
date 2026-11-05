@@ -397,11 +397,13 @@ JSON
 # interactive_select refuses to run without a terminal, so these go through
 # test/pty_run.py. HOME has ~/.claude and ~/.codex and the opencode stub is on
 # PATH, so five rows start selected (the menu bar can be built from this
-# checkout); Paseo has no CLI, so its row is locked.
+# checkout); Paseo has no CLI (hide_paseo hides the developer's own), so its
+# row is locked.
 # --dry-run keeps every install step to a "would ..." line, which is how each
 # test reads back what the selection ended up being.
 select_keys() {
   mkdir -p "$HOME/.claude" "$HOME/.codex"
+  hide_paseo
   run python3 "$BATS_TEST_DIRNAME/pty_run.py" "$@" -- "$INSTALL" --dry-run --no-test
 }
 

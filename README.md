@@ -202,9 +202,9 @@ All settings are environment variables. Set them before `ada.sh` is sourced
 | `ADA_NATIVE_ALERT` | _(auto)_ | Path to a specific `ada-alert` executable. Defaults to `ada-alert`, `.build/release/ada-alert`, or `.build/debug/ada-alert` in the ada install, one level above `lib/ada-show-alert.sh`. |
 | `ADA_REPO` | _(auto: git repo name)_ | Repo name shown on the alert. Auto-detected as the basename of the command's git repository; set it to override the displayed name, or to empty (`ADA_REPO=""`) to hide the repo badge. A snooze re-launch reuses the value resolved on the first alert. |
 | `ADA_REPO_DIR` | _(where the command ran)_ | Directory whose git repo name is shown. Defaults to the launcher's working directory, which is almost always right; the [Claude/Codex hook integration](#claude-code-and-codex) sets it to the turn's project directory automatically. Ignored when `ADA_REPO` is set. |
-| `ADA_FOCUS_APP` | `__CFBundleIdentifier` | Bundle id to activate when you click the alert. Set to empty to make click-anywhere only dismiss. The Paseo watcher defaults this to `sh.paseo.desktop`. |
+| `ADA_FOCUS_APP` | `__CFBundleIdentifier` | Bundle id to activate when you click the alert. Set to empty to make click-anywhere only dismiss. The Paseo watcher defaults this to `sh.paseo.desktop`, and only then makes a click open the agent itself. |
 | `ADA_FOCUS_APP_NAME` | _(empty)_ | Optional display name shown in the click hint. The Paseo watcher defaults this to `Paseo`. |
-| `ADA_CLICK_URL` | _(empty)_ | URL to `open` when you click the alert, instead of just activating `ADA_FOCUS_APP`. Takes precedence over the bundle id and is preserved across a snooze. The [Claude Code hook](#claude-code-and-codex) sets it to `claude://resume?session=<id>` so a click opens that turn's conversation in the Claude macOS app. Requires `python3` (the click daemon). |
+| `ADA_CLICK_URL` | _(empty)_ | URL to `open` when you click the alert, instead of just activating `ADA_FOCUS_APP`. Takes precedence over the bundle id and is preserved across a snooze. The [Claude Code hook](#claude-code-and-codex) sets it to `claude://resume?session=<id>` so a click opens that turn's conversation in the Claude macOS app, and the [Paseo watcher](#paseo) to `paseo://h/<server id>/agent/<agent id>`. Requires `python3` (the click daemon). |
 | `ADA_SKIP_OWN_TERMINAL` | `1` | When `1`, suppress the alert if the terminal that ran the command is the frontmost app when it finishes. Set to `0` to always alert. |
 | `ADA_SKIP_WHEN_ACTIVE` | _(empty)_ | Space-separated apps to also stay silent for when they're frontmost. Each entry matches a frontmost app's bundle id exactly, or its name as a substring. |
 | `ADA_CLAUDE_THRESHOLD` | `45` | Minimum Claude Code / Codex *turn* duration, in seconds, to trigger an alert. Only used by the [Claude/Codex hook integration](#claude-code-and-codex). |
@@ -512,6 +512,13 @@ each agent's status between snapshots:
 - `paseo permit ls --json` — a new entry is an agent waiting on a permission.
 
 One watcher covers every agent and every provider, and survives daemon restarts.
+
+Clicking a Paseo alert opens the agent it is about in Paseo Desktop, through
+the same `paseo://h/<server id>/agent/<agent id>` link that `paseo agent open`
+uses. The watcher reads the server id once from `paseo daemon status --json`.
+When the CLI reports none, or the alert names no agent, the click just brings
+Paseo forward. Setting `ADA_FOCUS_APP` to another
+app, or to empty, turns the link off too.
 
 Install it as a background **launchd LaunchAgent** so it runs across logins —
 install-once, like sourcing `ada.sh`:
