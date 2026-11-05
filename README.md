@@ -474,6 +474,18 @@ in place from `$(brew --prefix)/opt/ada/libexec` — which also means
 `brew upgrade ada` updates the watcher without re-running `install`. Either way
 `status` prints the runtime it's actually using.
 
+The running watcher notices when its own script is replaced (a `brew upgrade`
+or `brew reinstall`, or `install` re-staging a from-source copy) and exits so
+launchd starts the new version within a few seconds, with no logout. If the
+formula is uninstalled, the old watcher lingers until you log out and does not
+start again at the next login. The release that
+added this can't apply it to the watcher already running, so after upgrading
+onto it, restart that one once:
+
+```sh
+launchctl kickstart -k gui/$(id -u)/com.ada.paseo-watch
+```
+
 Or run it in the foreground to try it out (Ctrl-C to stop), and fire a one-off
 sample alert to confirm the visuals:
 
@@ -711,8 +723,10 @@ A LaunchAgent can't run anything from `~/Documents`, `~/Desktop` or
 `~/Downloads`, so a checkout is copied to `~/.local/share/ada` (the same copy
 the Paseo watcher uses); re-run `install` after pulling changes, and `status`
 tells you when the copy is out of date. A Homebrew install runs in place, and
-the menu bar restarts itself after `brew upgrade`. Because it runs as a
-LaunchAgent, it doesn't see variables you export in `~/.zshrc`.
+the menu bar restarts itself after `brew upgrade` or `brew reinstall`. After
+`brew uninstall` it stays in the menu bar until you log out and does not start
+at the next login. Because it runs as a LaunchAgent, it doesn't see variables
+you export in `~/.zshrc`.
 
 If the bell never appears after `install`, look for `ada-menubar` in the Login
 Items pane of **System Settings > General**, where macOS can keep a background

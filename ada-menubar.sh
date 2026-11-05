@@ -72,6 +72,12 @@ __ada_load_stage_lib() {
 }
 
 # The plist for a menu bar running from <runtime>.
+#   ProgramArguments                an sh guard that exits 0 when the binary is
+#                                   gone, so a login after `brew uninstall`
+#                                   leaves the job stopped instead of failing to
+#                                   spawn it (exit 78, EX_CONFIG) with a retry
+#                                   kept pending. The binary is its own argument
+#                                   ($0 to the guard), which `status` reads back.
 #   KeepAlive/SuccessfulExit=false  restart after a crash or the exit(75) that
 #                                   follows a replaced binary, but not after Quit
 #   LimitLoadToSessionType=Aqua     a GUI login session, where a status item can live
@@ -89,6 +95,9 @@ __ada_menubar_plist() {
   <string>${label}</string>
   <key>ProgramArguments</key>
   <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>[ -x "\$0" ] || exit 0; exec "\$0"</string>
     <string>${runtime}/ada-menubar</string>
   </array>
   <key>EnvironmentVariables</key>

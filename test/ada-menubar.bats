@@ -79,9 +79,11 @@ SH
   run "$CHECKOUT/ada-menubar.sh" install
   assert_success
   command -v plutil >/dev/null && { run plutil -lint "$PLIST"; assert_success; }
-  local program
-  program=$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$PLIST")
-  assert_equal "$program" "$ADA_MENUBAR_INSTALL_DIR/ada-menubar"
+  # The binary runs behind the sh guard, as the guard's $0.
+  assert_equal "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$PLIST")" /bin/sh
+  assert_equal "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:3' "$PLIST")" "$ADA_MENUBAR_INSTALL_DIR/ada-menubar"
+  run /usr/libexec/PlistBuddy -c 'Print :ProgramArguments:4' "$PLIST"
+  assert_failure
   assert_equal "$(/usr/libexec/PlistBuddy -c 'Print :Label' "$PLIST")" com.ada.menubar
   # Quit exits 0 and must stay quit; a crash or the relaunch exit restarts it.
   assert_equal "$(/usr/libexec/PlistBuddy -c 'Print :KeepAlive:SuccessfulExit' "$PLIST")" false
@@ -92,6 +94,37 @@ SH
   assert_file_contains "$PLIST" "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
   run find "$HOME/Library/LaunchAgents" -name 'com.ada.menubar.plist.*'
   assert_equal "$output" ""
+}
+
+# A login after `brew uninstall` must not retry a missing binary every
+# ThrottleInterval: the plist's own guard exits 0 instead, which KeepAlive
+# {SuccessfulExit: false} leaves stopped. Run the plist's ProgramArguments as
+# launchd would, against a missing, a non-executable and a present binary.
+@test "the plist's guard exits 0 for a missing binary and execs a present one" {
+  make_checkout
+  run "$CHECKOUT/ada-menubar.sh" install
+  assert_success
+  local argv=() i
+  for i in 0 1 2; do
+    argv+=("$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:$i" "$PLIST")")
+  done
+
+  run "${argv[@]}" "$BATS_TEST_TMPDIR/gone/ada-menubar"
+  assert_success
+  assert_equal "$output" ""
+
+  local fake="$BATS_TEST_TMPDIR/fake-menubar"
+  printf '#!/bin/sh\necho "menubar argv0=$0 args=$#"\nexit 3\n' > "$fake"
+  run "${argv[@]}" "$fake"
+  assert_success
+  assert_equal "$output" ""
+
+  # exec, not a child: the binary's own exit status reaches launchd, and argv[0]
+  # is the full path the relaunch rule watches.
+  chmod +x "$fake"
+  run "${argv[@]}" "$fake"
+  [ "$status" -eq 3 ]
+  assert_equal "$output" "menubar argv0=$fake args=0"
 }
 
 @test "the menu bar and the Paseo watcher share one stage" {
@@ -185,7 +218,7 @@ brew_libexec() {
   run "$LIBEXEC/ada-menubar.sh" install
   assert_success
   assert_output_contains "running the menu bar in place from $LIBEXEC"
-  assert_equal "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$PLIST")" "$LIBEXEC/ada-menubar"
+  assert_equal "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:3' "$PLIST")" "$LIBEXEC/ada-menubar"
   [ ! -e "$ADA_MENUBAR_INSTALL_DIR" ]
 }
 
@@ -275,6 +308,20 @@ brew_libexec() {
   assert_output_contains "staged from: $CHECKOUT"
   refute_output_contains "differs from the staged copy"
   assert_output_contains "log clean"
+}
+
+# A brew upgrade keeps the plist an earlier install wrote, which ran the binary
+# directly with no guard, until the installer runs again.
+@test "status: reads the runtime from a plist written before the guard" {
+  make_checkout
+  "$CHECKOUT/ada-menubar.sh" install >/dev/null
+  /usr/libexec/PlistBuddy -c 'Delete :ProgramArguments' -c 'Add :ProgramArguments array' \
+    -c "Add :ProgramArguments:0 string $ADA_MENUBAR_INSTALL_DIR/ada-menubar" "$PLIST"
+  run /usr/libexec/PlistBuddy -c 'Print :ProgramArguments' "$PLIST"
+  refute_output_contains "/bin/sh"
+  run "$CHECKOUT/ada-menubar.sh" status
+  assert_success
+  assert_output_contains "runtime: $ADA_MENUBAR_INSTALL_DIR"
 }
 
 @test "status: loaded but quit, and a stage older than the checkout" {
