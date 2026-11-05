@@ -150,7 +150,8 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         updateIcon()
 
         // Started by launchd: watch the binary at the path launchd runs, so a
-        // `brew upgrade` or a re-stage restarts us on the new one.
+        // `brew upgrade` or a re-stage restarts us on the new one. The plist's
+        // sh guard execs it by that full path, so argv[0] is the path itself.
         if RelaunchWatcher.launchedByLaunchd(environment: context.environment) {
             let path = CommandLine.arguments[0]
             if path.hasPrefix("/"), let identity = ExecutableIdentity.of(path: path) {
@@ -168,14 +169,9 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     private func onTick() {
         updateIcon()
-        if var watcher = relaunch, let path = watchedExecutable {
-            let decision = watcher.check(ExecutableIdentity.of(path: path))
-            relaunch = watcher
-            switch decision {
-            case .keepRunning: break
-            case .relaunch: exit(RelaunchWatcher.relaunchExitCode)
-            case .exit: exit(0)
-            }
+        if let watcher = relaunch, let path = watchedExecutable,
+           watcher.check(ExecutableIdentity.of(path: path)) == .relaunch {
+            exit(RelaunchWatcher.relaunchExitCode)
         }
     }
 

@@ -146,7 +146,7 @@ def fire(label, duration, code, agent_id=""):
 # on running the old code until the next login. A different file at the launch
 # path means exit RELAUNCH_EXIT, which launchd's KeepAlive restarts (the menu bar's
 # RelaunchWatcher in Sources/ADAAlertCore/MenuBarSupport.swift does the same).
-# A missing file is not a reason to exit, unlike the menu bar: `brew reinstall`
+# A missing file is not a reason to exit (nor for the menu bar): `brew reinstall`
 # renames the keg away for the whole Swift build (ada ships no bottles), so
 # "missing" lasts minutes and is followed by a new file. The loop waits for it.
 # After an uninstall it lingers, harmlessly, until logout, and the plist's guard

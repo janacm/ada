@@ -71,20 +71,25 @@ public struct ExecutableIdentity: Equatable {
 /// Decides, on each tick, whether a menu bar started by launchd should keep
 /// running. A `brew upgrade` or a re-stage replaces the binary at the path
 /// launchd runs while this process keeps executing the old one; exiting with
-/// `relaunchExitCode` makes launchd's KeepAlive start the new one. A binary
-/// that is gone for two ticks in a row (a `brew uninstall`) means exit
-/// cleanly, which KeepAlive leaves alone; one missing tick is tolerated because
-/// an upgrade swaps the opt symlink.
+/// `relaunchExitCode` makes launchd's KeepAlive start the new one.
+///
+/// A missing binary is never a reason to exit. `brew reinstall` renames the
+/// keg to `<version>.reinstall` for both Swift builds (ada ships no bottles),
+/// so the opt path is gone for minutes and then holds a new file; exiting 0
+/// there would leave the menu bar off until the next login, because KeepAlive
+/// restarts only a failed exit. After a `brew uninstall` the old process
+/// lingers until logout, and the plist's sh guard (`ada-menubar.sh`) keeps the
+/// next login from starting a binary that is no longer there. The Paseo
+/// watcher (`lib/ada-paseo-watch.py`) follows the same rule.
 public struct RelaunchWatcher {
     public enum Decision: Equatable {
-        case keepRunning, relaunch, exit
+        case keepRunning, relaunch
     }
 
     public static let relaunchExitCode: Int32 = 75
     public static let launchdLabel = "com.ada.menubar"
 
     public let original: ExecutableIdentity
-    public private(set) var missingTicks = 0
 
     public init(original: ExecutableIdentity) {
         self.original = original
@@ -94,13 +99,11 @@ public struct RelaunchWatcher {
         environment["XPC_SERVICE_NAME"] == launchdLabel
     }
 
-    public mutating func check(_ current: ExecutableIdentity?) -> Decision {
-        guard let current else {
-            missingTicks += 1
-            return missingTicks >= 2 ? .exit : .keepRunning
-        }
-        missingTicks = 0
-        return current == original ? .keepRunning : .relaunch
+    /// `.relaunch` once the launch path holds a different file; `.keepRunning`
+    /// while it is this one or missing (mid-swap, mid-reinstall, uninstalled).
+    public func check(_ current: ExecutableIdentity?) -> Decision {
+        guard let current, current != original else { return .keepRunning }
+        return .relaunch
     }
 }
 

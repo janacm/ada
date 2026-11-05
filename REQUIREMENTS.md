@@ -242,8 +242,14 @@ removed.
   app; any other argument must exit 2 rather than put a status item on screen.
 - One menu bar must run per user (an exclusive lock in `$TMPDIR`). Started by
   launchd, it must exit 75 when the binary at its launch path is replaced (a
-  `brew upgrade`, a re-stage) so launchd restarts the new one, and exit 0 when
-  that path is gone for two checks in a row.
+  `brew upgrade` or `brew reinstall`, a re-stage) so launchd restarts the new
+  one. A missing binary must not make it exit, however long it is gone, because
+  `brew reinstall` keeps the keg renamed away for both Swift builds.
+- The menu bar's LaunchAgent must run the binary through a guard that exits 0
+  without running anything when the binary is missing, so a login after
+  `brew uninstall` leaves the job stopped instead of retrying it. The binary's
+  path must stay its own `ProgramArguments` element, and the guard must `exec`
+  it, so the binary's exit status reaches launchd.
 - Set Up Integrations must hand the installer to Terminal as a `.command` file,
   so the menu bar itself never runs anything under a TCC-protected folder.
 - The menu bar helper must trigger alerts through `ada-show-alert.sh` so it
@@ -803,6 +809,19 @@ removed.
 
 ## Change Log
 
+- 2026-11-03: `brew reinstall ada` no longer quits the menu bar until the next
+  login. Started by launchd, it exited 0 when its binary was missing for two
+  30-second ticks, as after an uninstall; `brew reinstall` renames the keg to
+  `<version>.reinstall` for both Swift builds (ada ships no bottles), so the
+  binary was missing for minutes and `KeepAlive {SuccessfulExit: false}` left
+  the clean exit alone. A missing binary is now waited out, and the rebuilt one
+  is a relaunch (exit 75). The plist runs the binary through an `sh` guard that
+  exits 0 when it is gone, so a login after `brew uninstall` leaves the job
+  stopped instead of launchd failing to spawn the missing binary (exit 78) and
+  keeping a retry pending. A plist written earlier keeps running the binary
+  directly until `ada-menubar.sh install` (or `ada-setup`) writes the new one,
+  and the menu bar already running is the old code, so a `brew reinstall` onto
+  this release still quits it once.
 - 2026-11-03: The Paseo watcher restarts itself when its code is replaced.
   After `brew upgrade ada` from 0.4 to 0.5 the LaunchAgent kept running 0.4's
   Python from the deleted 0.4 Cellar directory until a logout or a manual
