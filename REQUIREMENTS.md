@@ -683,8 +683,24 @@ removed.
   loading launchd, except when it is already running from a Homebrew install
   (under `$(brew --prefix)/opt`), which is both outside every TCC-protected
   location and version-stable. In that case it must run in place so that
-  `brew upgrade` refreshes the watcher, and must fail rather than load a
+  `brew upgrade` replaces the watcher's files, and must fail rather than load a
   LaunchAgent if any runtime file or the native helper is missing.
+- Started by launchd (`XPC_SERVICE_NAME` is `com.ada.paseo-watch`;
+  `ADA_PASEO_RELAUNCH=1` or `0` overrides), the poll loop must check after every
+  poll whether the file at its launch path (through Homebrew's `opt` link, never
+  its realpath) is still the one it started from. A different file (a
+  `brew upgrade` or `brew reinstall`, a re-stage) must make it exit 75 so
+  launchd starts the new code without a logout or a manual
+  `launchctl kickstart`. A missing file must not make it exit, however long it
+  is gone, because `brew reinstall` keeps the keg renamed away for a whole
+  build. A foreground `run` must not exit this way.
+- The LaunchAgent's `KeepAlive` must restart the loop only after an
+  unsuccessful exit (`SuccessfulExit` false), and its `ProgramArguments` must
+  exit 0 without running anything when the watcher script is missing, so a
+  login after an uninstall leaves the job stopped instead of retrying it.
+- The watcher must start the launcher in a session of its own, because launchd
+  kills what is left in the job's process group when the loop exits, and an
+  alert window open at a relaunch would close with it.
 - The LaunchAgent must set `ADA_PASEO_ENV` to the env file under the per-user
   install directory in both modes, so watcher configuration survives a
   `brew upgrade` replacing the Homebrew-managed tree.
@@ -806,6 +822,23 @@ removed.
   directly until `ada-menubar.sh install` (or `ada-setup`) writes the new one,
   and the menu bar already running is the old code, so a `brew reinstall` onto
   this release still quits it once.
+- 2026-11-03: The Paseo watcher restarts itself when its code is replaced.
+  After `brew upgrade ada` from 0.4 to 0.5 the LaunchAgent kept running 0.4's
+  Python from the deleted 0.4 Cellar directory until a logout or a manual
+  `launchctl kickstart -k`: running in place refreshed the files, not the
+  process. Under launchd the loop now stats its script at its launch path after
+  every poll and exits 75 when it is a different file, which `KeepAlive`
+  restarts. A missing script is waited out rather than read as an uninstall,
+  because `brew reinstall` renames the keg away for the whole build. Instead
+  the plist runs the script through an `sh` guard that exits 0 when it is gone,
+  and `KeepAlive` now restarts only after an unsuccessful exit, so a login after
+  an uninstall leaves the job stopped. The launcher now gets a session of its
+  own, because launchd kills the job's process group when the loop exits, which
+  closed any alert window open at that moment. The watcher running when this
+  release is installed is the old code, so that one upgrade still needs a
+  `launchctl kickstart -k gui/$(id -u)/com.ada.paseo-watch` or a logout. A plist
+  written earlier still restarts on 75, but after an uninstall it retries the
+  missing script until `ada-paseo-watch.sh install` writes the new one.
 - 2026-09-25: A pause no longer loses what arrives during it. The launcher keeps
   each held alert as its history line in `<pause file>.held/` and shows them all
   in one summary alert when the pause ends: its timer runs out (a detached
