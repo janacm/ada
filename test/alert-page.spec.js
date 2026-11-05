@@ -189,6 +189,56 @@ test('without the bridge the feedback link falls back to window.open', async ({ 
   expect(await closed(page)).toBe(false);
 });
 
+// --- update notice -------------------------------------------------------------------
+
+test('a newer release shows the notice with both versions, the command and the changes', async ({ page }) => {
+  await open(page, { update: '0.6', installed: '0.4' });
+  await expect(page.locator('#updateBox')).toBeVisible();
+  await expect(page.locator('#updateText')).toHaveText('ada 0.6 is out. You have 0.4. To update, run:');
+  await expect(page.locator('#updateCmd')).toHaveText('brew update && brew upgrade ada');
+  await page.locator('#updateLink').click();
+  expect(await page.evaluate(() => window.__opened)).toEqual(['bridge:https://github.com/janacm/ada/compare/v0.4...v0.6']);
+  expect(await signals(page)).toEqual([]);
+  expect(await closed(page)).toBe(false);
+});
+
+test('without both versions there is no notice', async ({ page }) => {
+  await open(page);
+  await expect(page.locator('#updateBox')).toBeHidden();
+});
+
+for (const [name, overrides] of [
+  ['only the latest', { update: '0.6' }],
+  ['a latest that is no version', { update: '0.6/../../evil', installed: '0.4' }],
+  ['an installed that is no version', { update: '0.6', installed: 'HEAD-1a2b3c4' }],
+  ['a one-number version', { update: '1', installed: '0.4' }],
+]) {
+  test(`${name} shows no notice`, async ({ page }) => {
+    await open(page, overrides);
+    await expect(page.locator('#updateBox')).toBeHidden();
+  });
+}
+
+test('the summary of a pause carries the notice too', async ({ page }) => {
+  const summary = b64url(JSON.stringify({ v: 1, n: 1, why: 'resumed', end: 0, ask: 0, fail: 0,
+    items: [{ t: 1000, l: 'npm test', d: '2m', c: '0', r: '', k: 'session', s: 'ok', z: 0, o: 0, a: '' }] }));
+  await open(page, { mode: 'summary', summaryb64: summary, update: '0.6', installed: '0.4' });
+  await expect(page.locator('#updateBox')).toBeVisible();
+});
+
+test('selecting the command in the notice does not dismiss the alert', async ({ page }) => {
+  await open(page, { update: '0.6', installed: '0.4' });
+  await page.locator('#updateCmd').click();
+  // A drag that starts in the notice and ends outside it is a selection too.
+  const box = await page.locator('#updateCmd').boundingBox();
+  await page.mouse.move(box.x + 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width + 200, box.y - 150);
+  await page.mouse.up();
+  expect(await signals(page)).toEqual([]);
+  expect(await closed(page)).toBe(false);
+});
+
 test('clicks inside the feedback box do not dismiss the alert', async ({ page }) => {
   await open(page);
   await page.locator('#feedbackBox .feedback-text').click({ position: { x: 5, y: 5 } });

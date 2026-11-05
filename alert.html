@@ -590,6 +590,52 @@
     border-bottom-color: rgba(129, 140, 248, 0.8);
   }
 
+  /* A newer release is out: the corner opposite the feedback note, in the same
+     panel with an indigo edge. Selectable, so the command can be copied; clicks
+     inside don't dismiss (see the click handler). No display rule, so [hidden]
+     still hides it. */
+  .update {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 1.5rem;
+    max-width: 22rem;
+    text-align: left;
+    padding: 0.85rem 1.05rem;
+    border-radius: 12px;
+    background: rgba(39, 39, 42, 0.6);
+    border: 1px solid rgba(99, 102, 241, 0.45);
+    backdrop-filter: blur(6px);
+    cursor: text;
+    user-select: text;
+    -webkit-user-select: text;
+    z-index: 11;
+  }
+
+  .update-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #c7d2fe;
+    margin-bottom: 0.35rem;
+  }
+
+  .update-text {
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: #a1a1aa;
+  }
+
+  .update-cmd {
+    display: block;
+    margin: 0.4rem 0 0.5rem;
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 0.8rem;
+    color: #c7d2fe;
+  }
+
+  .update .feedback-link { font-size: 0.82rem; }
+
   .progress-ring {
     position: fixed;
     bottom: 0;
@@ -678,6 +724,14 @@
 <div class="feedback" id="feedbackBox">
   <p class="feedback-title">Feedback</p>
   <p class="feedback-text">Want to support us, want us to support a different agent, or the pop-up didn't fire the right way? <a class="feedback-link" id="feedbackLink" href="https://github.com/janacm/ada/issues/new">Let us know.</a></p>
+</div>
+
+<!-- Shown when the launcher passes update=<latest>&installed=<version>. -->
+<div class="update" id="updateBox" hidden>
+  <p class="update-title">Update available</p>
+  <p class="update-text" id="updateText"></p>
+  <code class="update-cmd" id="updateCmd">brew update &amp;&amp; brew upgrade ada</code>
+  <a class="feedback-link" id="updateLink" href="https://github.com/janacm/ada/tags">See what changed</a>
 </div>
 
 <div class="progress-ring" id="progressBar"></div>
@@ -1078,7 +1132,7 @@
   // the browser sends that click to the common ancestor, which is no dismiss.
   let pressKept = false;
   document.addEventListener('mousedown', (e) => {
-    pressKept = Boolean(e.target.closest && e.target.closest('#pausedNote, #summaryList'));
+    pressKept = Boolean(e.target.closest && e.target.closest('#pausedNote, #summaryList, #updateBox'));
   }, true);
   document.addEventListener('click', () => {
     if (pressKept) { pressKept = false; return; }
@@ -1092,13 +1146,7 @@
   // and the link must open in the real browser rather than navigating the alert's
   // own WebView away. The native helper exposes an adaOpen bridge for that; if it's
   // absent we fall back to window.open (a no-op in the bare WebView, but harmless).
-  const feedbackBox = document.getElementById('feedbackBox');
-  const feedbackLink = document.getElementById('feedbackLink');
-  feedbackBox.addEventListener('click', (e) => e.stopPropagation());
-  feedbackLink.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const url = feedbackLink.href;
+  function openExternal(url) {
     try {
       if (window.webkit?.messageHandlers?.adaOpen) {
         window.webkit.messageHandlers.adaOpen.postMessage(url);
@@ -1106,7 +1154,37 @@
       }
     } catch (e) {}
     try { window.open(url, '_blank'); } catch (e) {}
-  });
+  }
+  function externalLink(link) {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openExternal(link.href);
+    });
+  }
+  const feedbackBox = document.getElementById('feedbackBox');
+  feedbackBox.addEventListener('click', (e) => e.stopPropagation());
+  externalLink(document.getElementById('feedbackLink'));
+
+  // A newer release is out (lib/ada-update.sh decides, from the version the
+  // formula on main installs). The notice names both versions, the command
+  // that updates, and the changes between the two tags. Either value that
+  // isn't a version means no notice, so nothing else reaches the link.
+  const VERSION_RE = /^[0-9]{1,6}(\.[0-9]{1,6}){1,3}$/;
+  const updateLatest = params.get('update') || '';
+  const updateInstalled = params.get('installed') || '';
+  if (VERSION_RE.test(updateLatest) && VERSION_RE.test(updateInstalled)) {
+    const updateBox = document.getElementById('updateBox');
+    const updateLink = document.getElementById('updateLink');
+    document.getElementById('updateText').textContent =
+      'ada ' + updateLatest + ' is out. You have ' + updateInstalled + '. To update, run:';
+    updateLink.href = 'https://github.com/janacm/ada/compare/v' + updateInstalled + '...v' + updateLatest;
+    externalLink(updateLink);
+    // Selectable, so the command can be copied: a click here is not a dismiss,
+    // nor a drag that starts here and ends outside (see the click handler).
+    updateBox.addEventListener('click', (e) => e.stopPropagation());
+    updateBox.hidden = false;
+  }
 
   // Render the snooze options the launcher passed through (ADA_SNOOZE_MINUTES).
   // The durations sit collapsed behind a "Snooze" toggle unless the user pinned

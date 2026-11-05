@@ -58,7 +58,7 @@ SH
   local stage=$ADA_MENUBAR_INSTALL_DIR f
   for f in ada-menubar.sh ada-paseo-watch.sh alert.html lib/ada-show-alert.sh lib/ada-snooze-daemon.py \
            lib/ada-mute.sh lib/ada-pause.sh lib/ada-history.sh lib/ada-notify.sh lib/ada-stage.sh \
-           lib/ada-status.sh lib/ada-paseo-watch.py; do
+           lib/ada-status.sh lib/ada-update.sh lib/ada-paseo-watch.py; do
     [ -f "$stage/$f" ] || { echo "not staged: $f"; false; }
   done
   [ -x "$stage/ada-menubar" ]

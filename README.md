@@ -28,7 +28,10 @@ cross-system contracts change.
 
 `ada` is open source under the [MIT License](LICENSE). The core utility is
 local-first: it does not send telemetry, prompts, command labels, repository
-names, or local paths to a remote service.
+names, or local paths to a remote service. Its one network request is the
+[update check](#update-notices) of a Homebrew install: once a day it downloads
+the public formula from GitHub, a request that carries nothing about you, and
+`ada-update off` stops it.
 
 The installer can modify shell startup files, Claude Code hooks, Codex hooks,
 the opencode plugin directory, and LaunchAgent state when you opt into those
@@ -99,6 +102,35 @@ so an upgrade takes effect on your next shell and next agent turn.
 > Upgrading **from v0.2** is the one exception. That release wired itself to a
 > versioned Cellar path that `brew upgrade` removes, so run `ada-setup` once
 > after upgrading to repoint it.
+
+#### Update notices
+
+From the release after v0.5 on, you don't have to watch for releases (getting
+to that one is the last upgrade you start unprompted). Once a day, the first
+alert that shows checks whether a newer ada is out, in the background so the
+alert never waits. When one is, every alert carries an **Update available**
+note in its bottom-left corner with both versions, the command above, and a
+link to what changed, and the [menu bar](#the-menu-bar-item) gains **Update to
+ADA …**, which runs that command in Terminal. The note goes away once you
+upgrade.
+
+The check downloads [`Formula/ada.rb`](Formula/ada.rb) from this repo's `main`
+branch, the formula `brew upgrade` installs, and reads its version. It sends
+nothing about you or your Mac: no version, no id, no labels or paths. A check
+that fails (you're offline) is retried within an hour.
+
+```sh
+ada-update          # Homebrew; what the last check found (no network)
+ada-update check    # check now
+ada-update off      # stop checking, for every integration and the menu bar
+ada-update on
+```
+
+`ada-setup --status` also ends with that line. `ADA_UPDATE_CHECK=0` turns the
+check off for the processes that see it; `ada-update off` writes
+`~/.local/share/ada/update-check-off` instead, which the Paseo watcher and the
+menu bar read too. Only a Homebrew release install checks: a from-source
+checkout updates with `git pull`, and a `--HEAD` build has no release version.
 
 ### From source
 
@@ -196,6 +228,11 @@ All settings are environment variables. Set them before `ada.sh` is sourced
 | `ADA_PAUSE_TIMER` | `1` | `0` starts no timer for a timed pause, so its summary waits for `ada-pause resume` or the next alert after the end. The test suite sets it. |
 | `ADA_HISTORY_FILE` | `${TMPDIR}/ada-history.tsv` | The [alert history](#alert-history), one line per alert. |
 | `ADA_HISTORY_MAX` | `50` | How many alerts the history keeps. `0` keeps none. |
+| `ADA_UPDATE_CHECK` | `1` | Set to `0` to stop the daily [update check](#update-notices) and hide its notice. `ada-update off` does the same for every process, LaunchAgents included. |
+| `ADA_UPDATE_INTERVAL` | `86400` | Seconds between update checks. A check that failed is retried after an hour, or after this many seconds if that is sooner. |
+| `ADA_UPDATE_FILE` | `${TMPDIR}/ada-update` | What the last update check found: one line, `<epoch> <latest version> <ok\|failed\|checking>`. |
+| `ADA_UPDATE_URL` | `Formula/ada.rb` on `main` | The formula the update check reads. HTTPS only. |
+| `ADA_UPDATE_OFF_FILE` | `~/.local/share/ada/update-check-off` | The switch `ada-update off` writes. While it exists, nothing checks. |
 | `ADA_MENUBAR_INSTALL_DIR` | `ADA_PASEO_INSTALL_DIR`, else `~/.local/share/ada` | Where `ada-menubar.sh install` copies a checkout so the login item can run it. |
 | `ADA_STATUS_SKIP_PROTECTED` | _(empty)_ | `1` makes `--status` skip checking that wired paths under `$HOME` still exist. The menu bar sets it, because a LaunchAgent may not look inside `~/Documents`. A pause summary honors it too, and then shows no repo for alerts from under `$HOME`. |
 | `ADA_SESSION_KEY` | _(set by each integration)_ | Which session an alert belongs to; the integrations set it for you. Only letters, digits, `.`, `_` and `-` are accepted, and an alert without a valid key has no mute button. |
@@ -656,6 +693,10 @@ and never leaves this Mac. `ADA_HISTORY_MAX=0` turns it off.
 
 `ada-menubar` puts a bell in the menu bar (crossed out while paused). Its menu:
 
+- **Update to ADA …**, at the top when a newer release is out (see
+  [Update notices](#update-notices)): opens Terminal on
+  `brew update && brew upgrade ada`. The menu bar restarts itself on the new
+  version.
 - **Pause Alerts**: for an hour, until 08:00 tomorrow, or until you resume;
   **Resume Alerts** while paused. The same switch as `ada-pause`.
 - **Recent Alerts**: the last 10 from the [history](#alert-history), newest

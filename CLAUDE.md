@@ -842,6 +842,59 @@ A missing `ada-history.sh` defines a no-op `__ada_history_record` and a
 (while paused too: with no record to keep, the alert shows); the file is in
 `ADA_RUNTIME_FILES`.
 
+## The update notice: the formula on main, read in the background
+
+`lib/ada-update.sh` tells a Homebrew install that a newer release is out. The
+formula writes `libexec/VERSION`; once a day the first alert that **shows**
+starts `ada-update.sh check --background`, which fetches `Formula/ada.rb` from
+`main`, reads the version out of its `url` line, and writes one cache line,
+`<epoch> <latest|-> <ok|failed|checking>`, to `$TMPDIR/ada-update`. The
+launcher sources the script and, without forking, compares that line with
+`VERSION`; a newer one adds `update=<latest>&installed=<version>` to the page,
+which draws the bottom-left notice. The menu bar reads the same two files
+(`UpdateCheck` in `ADAAlertCore`) for its **Update to ADA …** item, which
+writes `$TMPDIR/ada-update.command` and opens it, like Set Up Integrations.
+
+- **The formula, not the tags.** `release.sh` pushes the tag before the formula
+  bump, and a release can stop between the two. A notice built from tags would
+  send people to a `brew upgrade` that installs nothing new. The formula on
+  `main` is exactly what `brew upgrade` installs.
+- **`brew update` first.** `brew upgrade` refreshes taps only when its own
+  auto-update is due, so a bare `brew upgrade ada` can report "already
+  installed" for a release the notice just announced.
+- **No alert waits on the network.** The check runs detached and its answer is
+  for the next alert. It marks the cache `checking` before it fetches, so the
+  alerts that arrive meanwhile don't start another; a `checking` or `failed`
+  line is due again after an hour, an `ok` one after `ADA_UPDATE_INTERVAL`.
+- **One check at a time, by `mkdir`.** The `checking` mark alone left a gap:
+  two alerts arriving together each read the old line, both fetched, and on a
+  first check one's `- failed` could land over the other's answer. A check now
+  takes `<cache>.lock` (a directory) first and reads the cache again once it
+  holds it. A lock older than a minute belongs to a check that died and is
+  taken over with `rmdir`, which can only remove an empty directory.
+- **`curl -q`, and first.** Without it curl applies the user's `~/.curlrc`,
+  whose `header`, `user`, `data` or `url` lines would ride along on a request
+  the docs promise carries nothing. `-q` only works as the first argument; the
+  test pins the exact argument list.
+  The launcher takes the epoch from the history line it just built rather than
+  running `date`.
+- **Copy `BASH_REMATCH` before calling anything.** The first version validated
+  the captured version with `__ada_update_version_ok`, whose own `=~` replaced
+  `BASH_REMATCH`, so the cache said `.4` instead of `0.4`.
+- **Who never checks:** a checkout (no `VERSION`), a `--HEAD` build (`VERSION`
+  is `HEAD-<sha>`), and anyone with `ADA_UPDATE_CHECK=0` or the off switch.
+  The switch is a file in `~/.local/share/ada` (beside `paseo-watch.env`),
+  not an environment variable alone, because the LaunchAgents never see what
+  `~/.zshrc` exports.
+- **Tests never reach GitHub.** `setup_common` sets `ADA_UPDATE_CHECK=0`, the
+  repo has no `VERSION`, and `test/ada-update.bats` runs a Homebrew-shaped copy
+  of the tree with a curl stub first on `PATH`. Do not put a `curl` stub in
+  `test/stubs/`: the launcher tests use the real curl to talk to the snooze
+  daemon on 127.0.0.1. One test parses the real `Formula/ada.rb`, so a change
+  to the formula's `url` line that the parser can't read fails here first.
+- **`lib/ada-update.sh` is in `ADA_RUNTIME_FILES`**, like every script the
+  launcher sources; a missing copy means no notice, never a missing alert.
+
 ## The menu bar item: a thin renderer, run as a login item
 
 `Sources/ADAMenuBar/main.swift` renders `MenuModel.build(MenuInput)` from

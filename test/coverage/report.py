@@ -29,6 +29,7 @@ SHELL_FILES = [
     "lib/ada-show-alert.sh",
     "lib/ada-stage.sh",
     "lib/ada-status.sh",
+    "lib/ada-update.sh",
     "release.sh",
 ]
 

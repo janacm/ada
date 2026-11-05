@@ -24,7 +24,7 @@ ADA_RUNTIME_FILES=(ada-paseo-watch.sh ada-menubar.sh alert.html
                    lib/ada-paseo-watch.py lib/ada-show-alert.sh
                    lib/ada-snooze-daemon.py lib/ada-mute.sh lib/ada-pause.sh
                    lib/ada-history.sh lib/ada-notify.sh lib/ada-stage.sh
-                   lib/ada-status.sh)
+                   lib/ada-status.sh lib/ada-update.sh)
 
 # True when <dir> is a Homebrew install: under $(brew --prefix)/opt, which is
 # outside every TCC root and survives upgrades, so launchd can run it in place.

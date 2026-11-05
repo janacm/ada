@@ -164,7 +164,10 @@ Good contributions usually improve one of these surfaces:
   contracts
 
 Please avoid adding telemetry, remote services, or network dependencies to the
-core alert path. `ada` should remain local-first by default.
+core alert path. `ada` should remain local-first by default. The one network
+request is the daily update check (`lib/ada-update.sh`): it runs in the
+background, never delays an alert, sends nothing but a GET for the public
+formula, and `ada-update off` stops it. Keep it that way.
 
 ## Security-Sensitive Changes
 

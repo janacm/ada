@@ -19,7 +19,13 @@ GitHub profile and include:
 
 ## Security Expectations
 
-- The core app should stay local-first and avoid telemetry.
+- The core app should stay local-first and avoid telemetry. The update check
+  (`lib/ada-update.sh`) is the one network request: an HTTPS GET of the
+  public formula, once a day (hourly after a failed check), carrying no
+  headers, data or identifiers of ours and nothing from the user's
+  `~/.curlrc` (`curl -q`), off with `ada-update off` or
+  `ADA_UPDATE_CHECK=0`. It must never run in an alert's foreground, follow a
+  redirect off HTTPS, or send anything from the machine.
 - Loopback helpers must bind only to `127.0.0.1` and require an unguessable
   token for control requests.
 - Installers must preserve unrelated user config and write backups before
