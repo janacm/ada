@@ -17,7 +17,8 @@
 # the Paseo watcher and the menu bar.
 #
 #   ada-status.sh           the lines
-#   ada-status.sh --table   aligned, for people
+#   ada-status.sh --table   aligned, for people, plus whether a newer
+#                           release is out (lib/ada-update.sh status)
 #
 # Environment:
 #   ADA_STATUS_SKIP_PROTECTED  1 = don't check that a wired path exists when it
@@ -289,9 +290,15 @@ __ada_status_cli() {
       while IFS=$'\t' read -r id state name detail; do
         printf '%-9s %-18s %-12s %s\n' "$id" "$name" "$state" "$detail"
       done < <(__ada_status_all)
+      # A release install (Homebrew's, which has VERSION) also says whether a
+      # newer one is out, from the update check's cache: no network here.
+      if [[ -f "$selfdir/../VERSION" && -f "$selfdir/ada-update.sh" ]]; then
+        echo
+        bash "$selfdir/ada-update.sh" status
+      fi
       ;;
     -h|--help|help)
-      sed -n '18,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '18,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       ;;
     *)
       echo "ada-status: unknown argument: $1 (try --table)" >&2

@@ -310,9 +310,10 @@ not). This asymmetry is the tell.
 `ada-paseo-watch.sh install` checks whether it lives under `$(brew --prefix)/opt`
 (`__ada_from_brew_prefix`). A **Homebrew install runs in place** — that path is
 outside every TCC root *and* version-stable, so the plist points straight at
-`<prefix>/opt/ada/libexec/ada-paseo-watch.sh` and `brew upgrade` refreshes the
-watcher with no re-install. Staging a Homebrew install would do the opposite:
-freeze a snapshot brew could never update.
+`<prefix>/opt/ada/libexec/ada-paseo-watch.sh` and `brew upgrade` replaces the
+watcher's files with no re-install. Staging a Homebrew install would do the
+opposite: freeze a snapshot brew could never update. New files alone do not
+move the running loop, though; see the relaunch rule below.
 
 Everything else (a dev checkout, `~/.ada`) **stages** the runtime it needs
 (every file in `ADA_RUNTIME_FILES` in `lib/ada-stage.sh`, plus `ada-alert`) into a non-TCC dir —
@@ -348,6 +349,63 @@ undo by accident:
 - **`stage-info` records the source checkout**, its rev and whether it was
   dirty, so anything running from the stage can name the checkout without
   reading it (it may be under `~/Documents`).
+
+**The loop relaunches itself when its script is replaced.** Observed
+2026-11-03: after `brew upgrade` from 0.4 to 0.5, the LaunchAgent kept running
+0.4's Python out of the deleted 0.4 Cellar directory, because a process keeps
+the code it started with. The rule is the menu bar's `RelaunchWatcher`, in
+Python (`RelaunchWatcher` in `lib/ada-paseo-watch.py`):
+
+- **Only under launchd.** On when `XPC_SERVICE_NAME` is `com.ada.paseo-watch`
+  (launchd sets it to the label; checked on the live job), or forced with
+  `ADA_PASEO_RELAUNCH=1`/`0`. A foreground `run` has no launchd to start it
+  again, so an editor saving the checkout's copy would just end the loop. The
+  tests use the knob because setting `XPC_SERVICE_NAME` by hand breaks the
+  xcrun shims, and so does a live probe: a throwaway job bootstrapped from a
+  plist outside `~/Library/LaunchAgents` saw `XPC_SERVICE_NAME=0`.
+- **After every poll, `os.stat` the launch path.** That is `SELF`, the
+  `abspath` of `__file__`, never its realpath: under Homebrew it runs through
+  the `opt` link, and a realpath would keep watching the old keg, which still
+  exists when the link moves. A different `(st_dev, st_ino)` means exit 75;
+  checking after the poll means whatever the old code saw is already alerted.
+- **A missing script is waited out, never a reason to exit.** The menu bar
+  waits too; it once exited 0 after two missing ticks. ada ships no bottles,
+  and `brew reinstall` renames the keg to `<version>.reinstall` (the `opt` link
+  dangles) for both Swift builds, so the path is missing for minutes and then
+  comes back as a new file, which is a relaunch. Read in Homebrew's
+  `reinstall/reinstall.rb` (`backup`). Exiting there stopped alerts until the
+  next login, and deleting the plist (a review suggestion) would have unwired
+  Paseo. After a real uninstall the loop lingers, polling and failing to find
+  its launcher, until logout. A path that can't be stat'ed at startup turns the
+  rule off.
+- **The plist's guard covers the next login.** `ProgramArguments` is
+  `/bin/sh -c '[ -f "$0" ] || exit 0; exec /bin/bash "$0" run' <script>`. A
+  login after `brew uninstall` exits 0 and, with `KeepAlive`
+  `{SuccessfulExit: false}`, stays stopped instead of retrying a missing script
+  every `ThrottleInterval` (exit 127 is a failure). The script path stays its
+  own element, which `status` reads back. Plain `KeepAlive true` (every plist
+  written before 2026-11-03, which also runs `/bin/bash <script>` directly)
+  still restarts on 75, but retries forever after an uninstall until
+  `install` writes the new plist. Both were checked with throwaway launchd
+  jobs.
+- **Silent.** `status` reads any log output as a fault, so a relaunch shows only
+  as `last exit code = 75: EX_TEMPFAIL` in `launchctl print`.
+- **`fire()` starts the launcher with `start_new_session=True`.** When the job's
+  process exits, launchd kills what is left in its process group, and the
+  launcher's backgrounded `ada-alert` was in it: the live probe saw an open
+  alert window die at the relaunch, and survive once the launcher had its own
+  session. The menu bar uses `AbandonProcessGroup` for the same reason; the
+  spawn fixes it for old plists too.
+- **A turn running across a relaunch** is timed from the new process's start,
+  like any agent already running when the watcher starts. Per-agent state is
+  not handed over.
+- **The first upgrade onto this rule still needs one restart**
+  (`launchctl kickstart -k gui/$(id -u)/com.ada.paseo-watch`, or a logout): the
+  loop that is running is the old code, which has no rule.
+
+The bats tests drive the real front door's `run` against a stub `paseo` that
+acts on the files from inside a given poll (`at-N` files), so which check sees
+the swap is exact: each iteration is `ls`, `permit ls`, the check, the sleep.
 
 **Debugging:**
 ```bash
@@ -833,6 +891,59 @@ A missing `ada-history.sh` defines a no-op `__ada_history_record` and a
 (while paused too: with no record to keep, the alert shows); the file is in
 `ADA_RUNTIME_FILES`.
 
+## The update notice: the formula on main, read in the background
+
+`lib/ada-update.sh` tells a Homebrew install that a newer release is out. The
+formula writes `libexec/VERSION`; once a day the first alert that **shows**
+starts `ada-update.sh check --background`, which fetches `Formula/ada.rb` from
+`main`, reads the version out of its `url` line, and writes one cache line,
+`<epoch> <latest|-> <ok|failed|checking>`, to `$TMPDIR/ada-update`. The
+launcher sources the script and, without forking, compares that line with
+`VERSION`; a newer one adds `update=<latest>&installed=<version>` to the page,
+which draws the bottom-left notice. The menu bar reads the same two files
+(`UpdateCheck` in `ADAAlertCore`) for its **Update to ADA …** item, which
+writes `$TMPDIR/ada-update.command` and opens it, like Set Up Integrations.
+
+- **The formula, not the tags.** `release.sh` pushes the tag before the formula
+  bump, and a release can stop between the two. A notice built from tags would
+  send people to a `brew upgrade` that installs nothing new. The formula on
+  `main` is exactly what `brew upgrade` installs.
+- **`brew update` first.** `brew upgrade` refreshes taps only when its own
+  auto-update is due, so a bare `brew upgrade ada` can report "already
+  installed" for a release the notice just announced.
+- **No alert waits on the network.** The check runs detached and its answer is
+  for the next alert. It marks the cache `checking` before it fetches, so the
+  alerts that arrive meanwhile don't start another; a `checking` or `failed`
+  line is due again after an hour, an `ok` one after `ADA_UPDATE_INTERVAL`.
+- **One check at a time, by `mkdir`.** The `checking` mark alone left a gap:
+  two alerts arriving together each read the old line, both fetched, and on a
+  first check one's `- failed` could land over the other's answer. A check now
+  takes `<cache>.lock` (a directory) first and reads the cache again once it
+  holds it. A lock older than a minute belongs to a check that died and is
+  taken over with `rmdir`, which can only remove an empty directory.
+- **`curl -q`, and first.** Without it curl applies the user's `~/.curlrc`,
+  whose `header`, `user`, `data` or `url` lines would ride along on a request
+  the docs promise carries nothing. `-q` only works as the first argument; the
+  test pins the exact argument list.
+  The launcher takes the epoch from the history line it just built rather than
+  running `date`.
+- **Copy `BASH_REMATCH` before calling anything.** The first version validated
+  the captured version with `__ada_update_version_ok`, whose own `=~` replaced
+  `BASH_REMATCH`, so the cache said `.4` instead of `0.4`.
+- **Who never checks:** a checkout (no `VERSION`), a `--HEAD` build (`VERSION`
+  is `HEAD-<sha>`), and anyone with `ADA_UPDATE_CHECK=0` or the off switch.
+  The switch is a file in `~/.local/share/ada` (beside `paseo-watch.env`),
+  not an environment variable alone, because the LaunchAgents never see what
+  `~/.zshrc` exports.
+- **Tests never reach GitHub.** `setup_common` sets `ADA_UPDATE_CHECK=0`, the
+  repo has no `VERSION`, and `test/ada-update.bats` runs a Homebrew-shaped copy
+  of the tree with a curl stub first on `PATH`. Do not put a `curl` stub in
+  `test/stubs/`: the launcher tests use the real curl to talk to the snooze
+  daemon on 127.0.0.1. One test parses the real `Formula/ada.rb`, so a change
+  to the formula's `url` line that the parser can't read fails here first.
+- **`lib/ada-update.sh` is in `ADA_RUNTIME_FILES`**, like every script the
+  launcher sources; a missing copy means no notice, never a missing alert.
+
 ## The menu bar item: a thin renderer, run as a login item
 
 `Sources/ADAMenuBar/main.swift` renders `MenuModel.build(MenuInput)` from
@@ -865,10 +976,30 @@ for a minute, and updates the open Integrations submenu in place.
   menu bar exits.
 - **Relaunch after an upgrade.** Started by launchd (`XPC_SERVICE_NAME ==
   com.ada.menubar`), the 30 s tick stats the binary at its launch path. A new
-  inode (a `brew upgrade` swapped the opt link, or a re-stage renamed a new
-  copy in) means exit 75, which KeepAlive restarts; missing for two ticks in a
-  row means exit 0 (uninstalled). One missing tick is tolerated for the moment
-  an upgrade swaps the link. `RelaunchWatcher` holds the rule.
+  inode (a `brew upgrade` swapped the opt link, a `brew reinstall` rebuilt the
+  keg, or a re-stage renamed a new copy in) means exit 75, which KeepAlive
+  restarts. `RelaunchWatcher` holds the rule; the Paseo watcher's loop follows
+  the same one.
+- **A missing binary is waited out, never a reason to exit.** The first
+  version exited 0 after two missing ticks, reading that as an uninstall, and
+  `brew reinstall` looks exactly like one: ada ships no bottles, and Homebrew's
+  `reinstall/reinstall.rb` (`backup`) renames the keg to `<version>.reinstall`
+  for both Swift builds, so the `opt` path is missing for minutes before the
+  rebuilt binary appears. The menu bar quit, and `SuccessfulExit: false` kept
+  it off until the next login. After a real `brew uninstall` the old process
+  lingers until logout, and a menu action reports its missing script instead
+  of running it (`ScriptError.missing`).
+- **The plist's guard covers the next login.** `ProgramArguments` is `/bin/sh -c
+  '[ -x "$0" ] || exit 0; exec "$0"' <runtime>/ada-menubar`. With the binary
+  gone the guard exits 0, which KeepAlive leaves stopped. Run directly, a
+  missing binary fails to spawn (`last exit code = 78: EX_CONFIG`) and launchd
+  leaves the job `spawn scheduled`, a retry it keeps pending. Both were checked
+  with throwaway launchd jobs. `exec` keeps the binary as the job's process: its
+  full path stays `argv[0]` (what `RelaunchWatcher` watches), and its own exit
+  status (75, a crash) reaches launchd. The path is its own element, which
+  `status` reads back with `sed` from old and new plists alike. A plist written
+  before 2026-11-03 runs the binary directly until `install` runs again, because
+  `brew upgrade` never rewrites it.
 - **One per user.** An exclusive `flock` on `$TMPDIR/ada-menubar.lock`; a
   second copy (a login item plus a manual `.build/release/ada-menubar &`) logs
   "another ADA menu bar is already running" and exits 0. If the manual one won,

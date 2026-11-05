@@ -29,9 +29,12 @@ struct MenuBarContext {
         let muted = MuteList.read(directory: paths.muteDirectory,
                                   maxAge: MuteList.maxAge(environment: environment),
                                   now: now, history: history)
+        let update = UpdateCheck.read(cacheAt: paths.updateFile, installDirectory: installDirectory,
+                                      environment: environment)
         return MenuInput(pause: PauseState.read(fileAt: paths.pauseFile, now: now), history: history,
                          muted: muted, integrations: integrations,
-                         sources: SourceRules.read(fileAt: paths.sourcesFile), now: now, calendar: .current)
+                         sources: SourceRules.read(fileAt: paths.sourcesFile), now: now, calendar: .current,
+                         update: update)
     }
 
     struct ScriptResult {
@@ -151,7 +154,8 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         updateIcon()
 
         // Started by launchd: watch the binary at the path launchd runs, so a
-        // `brew upgrade` or a re-stage restarts us on the new one.
+        // `brew upgrade` or a re-stage restarts us on the new one. The plist's
+        // sh guard execs it by that full path, so argv[0] is the path itself.
         if RelaunchWatcher.launchedByLaunchd(environment: context.environment) {
             let path = CommandLine.arguments[0]
             if path.hasPrefix("/"), let identity = ExecutableIdentity.of(path: path) {
@@ -169,14 +173,9 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     private func onTick() {
         updateIcon()
-        if var watcher = relaunch, let path = watchedExecutable {
-            let decision = watcher.check(ExecutableIdentity.of(path: path))
-            relaunch = watcher
-            switch decision {
-            case .keepRunning: break
-            case .relaunch: exit(RelaunchWatcher.relaunchExitCode)
-            case .exit: exit(0)
-            }
+        if let watcher = relaunch, let path = watchedExecutable,
+           watcher.check(ExecutableIdentity.of(path: path)) == .relaunch {
+            exit(RelaunchWatcher.relaunchExitCode)
         }
     }
 
@@ -328,6 +327,8 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             runScript(InstallDirectory.sourcesScriptPath, ["reset"])
         case .setUp:
             setUp()
+        case .update:
+            update()
         case .testAlert:
             showTestAlert()
         case .openFolder:
@@ -449,6 +450,22 @@ final class MenuBarAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
         NSWorkspace.shared.open(command)
         integrationsCheckedAt = nil
+    }
+
+    /// Runs `brew update && brew upgrade ada` in Terminal, where you can watch
+    /// it and answer brew. Once the upgrade replaces the binary, a menu bar
+    /// started by launchd restarts on the new one at its next 30s tick.
+    private func update() {
+        let command = context.paths.tempDirectory.appendingPathComponent("ada-update.command")
+        do {
+            try UpdateCheck.script(installDirectory: context.installDirectory)
+                .write(to: command, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: command.path)
+        } catch {
+            presentError("Could not start the update", informativeText: error.localizedDescription)
+            return
+        }
+        NSWorkspace.shared.open(command)
     }
 
     private func presentError(_ messageText: String, informativeText: String) {

@@ -1,7 +1,8 @@
 import Foundation
 
 /// Where the shell side keeps the state the menu bar reads: the pause file, the
-/// alert history and the mute markers, all under the per-user temp dir.
+/// alert history, the mute markers and the update check's cache, all under the
+/// per-user temp dir.
 ///
 /// The rules mirror the scripts that own each file (`lib/ada-pause.sh`,
 /// `lib/ada-history.sh`, `lib/ada-mute.sh`) and the launcher's TMPDIR fallback
@@ -14,6 +15,8 @@ public struct StatePaths: Equatable {
     public let pauseFile: URL
     public let historyFile: URL
     public let muteDirectory: URL
+    /// The update check's cache (`lib/ada-update.sh`).
+    public let updateFile: URL
     /// The source switches (`lib/ada-sources.sh`). Not under the temp dir: they
     /// are settings, so they live at `~/.config/ada/sources` unless
     /// `ADA_SOURCES_FILE` names another file. HOME, not XDG_CONFIG_HOME, which a
@@ -47,6 +50,7 @@ public struct StatePaths: Equatable {
             pauseFile: file("ADA_PAUSE_FILE", default: "ada-paused"),
             historyFile: file("ADA_HISTORY_FILE", default: "ada-history.tsv"),
             muteDirectory: file("ADA_MUTE_DIR", default: "ada-muted"),
+            updateFile: file("ADA_UPDATE_FILE", default: "ada-update"),
             sourcesFile: sourcesFile(environment: environment, homeDirectory: homeDirectory),
             lockFile: tempURL.appendingPathComponent("ada-menubar.lock")
         )

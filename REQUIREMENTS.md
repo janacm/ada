@@ -26,7 +26,9 @@ removed.
   LaunchAgents, prompt or command capture, loopback control, and file staging.
 - The public documentation must state that the core utility is local-first and
   does not send telemetry, prompts, command labels, repository names, or local
-  paths to a remote service.
+  paths to a remote service. The update check (see Update Notices) is the only
+  network request, and the documentation must say what it fetches, that it
+  sends nothing about the user, and how to turn it off.
 - Open-source distribution must not require publishing generated SwiftPM build
   output or local machine configuration.
 
@@ -51,6 +53,9 @@ removed.
   refer only to files the installed tree has (checked under `opt_libexec`): no
   `ada-pause` wrapper, menu bar caveat or `--status` line for a tarball that
   predates them.
+- The formula must write the installed version to `VERSION` at the install
+  root (`libexec`), for the update check, and expose `lib/ada-update.sh` as
+  `ada-update` when the installed tree has it.
 - `brew install` and `brew upgrade` must write only under the Homebrew prefix;
   they must not modify user dotfiles, agent hook config, or an existing
   from-source install.
@@ -242,8 +247,14 @@ removed.
   app; any other argument must exit 2 rather than put a status item on screen.
 - One menu bar must run per user (an exclusive lock in `$TMPDIR`). Started by
   launchd, it must exit 75 when the binary at its launch path is replaced (a
-  `brew upgrade`, a re-stage) so launchd restarts the new one, and exit 0 when
-  that path is gone for two checks in a row.
+  `brew upgrade` or `brew reinstall`, a re-stage) so launchd restarts the new
+  one. A missing binary must not make it exit, however long it is gone, because
+  `brew reinstall` keeps the keg renamed away for both Swift builds.
+- The menu bar's LaunchAgent must run the binary through a guard that exits 0
+  without running anything when the binary is missing, so a login after
+  `brew uninstall` leaves the job stopped instead of retrying it. The binary's
+  path must stay its own `ProgramArguments` element, and the guard must `exec`
+  it, so the binary's exit status reaches launchd.
 - Set Up Integrations must hand the installer to Terminal as a `.command` file,
   so the menu bar itself never runs anything under a TCC-protected folder.
 - The menu bar helper must trigger alerts through `ada-show-alert.sh` so it
@@ -734,8 +745,24 @@ removed.
   loading launchd, except when it is already running from a Homebrew install
   (under `$(brew --prefix)/opt`), which is both outside every TCC-protected
   location and version-stable. In that case it must run in place so that
-  `brew upgrade` refreshes the watcher, and must fail rather than load a
+  `brew upgrade` replaces the watcher's files, and must fail rather than load a
   LaunchAgent if any runtime file or the native helper is missing.
+- Started by launchd (`XPC_SERVICE_NAME` is `com.ada.paseo-watch`;
+  `ADA_PASEO_RELAUNCH=1` or `0` overrides), the poll loop must check after every
+  poll whether the file at its launch path (through Homebrew's `opt` link, never
+  its realpath) is still the one it started from. A different file (a
+  `brew upgrade` or `brew reinstall`, a re-stage) must make it exit 75 so
+  launchd starts the new code without a logout or a manual
+  `launchctl kickstart`. A missing file must not make it exit, however long it
+  is gone, because `brew reinstall` keeps the keg renamed away for a whole
+  build. A foreground `run` must not exit this way.
+- The LaunchAgent's `KeepAlive` must restart the loop only after an
+  unsuccessful exit (`SuccessfulExit` false), and its `ProgramArguments` must
+  exit 0 without running anything when the watcher script is missing, so a
+  login after an uninstall leaves the job stopped instead of retrying it.
+- The watcher must start the launcher in a session of its own, because launchd
+  kills what is left in the job's process group when the loop exits, and an
+  alert window open at a relaunch would close with it.
 - The LaunchAgent must set `ADA_PASEO_ENV` to the env file under the per-user
   install directory in both modes, so watcher configuration survives a
   `brew upgrade` replacing the Homebrew-managed tree.
@@ -775,6 +802,47 @@ removed.
 - `ada-paseo-watch.sh test` must fire one sample alert through the shared
   launcher.
 
+## Update Notices
+
+- A Homebrew release install must tell the user when a newer release is out:
+  every alert, a pause summary included, carries a notice naming the installed
+  and the newer version, the command that updates
+  (`brew update && brew upgrade ada`), and a link to the changes between the
+  two tags; the menu bar shows an item at the top of its menu that runs that
+  command in Terminal. The notice must go away once the install is current.
+- The newer version must be read from `Formula/ada.rb` on the default branch
+  (the version `brew upgrade` installs), never from tags, which can name a
+  release whose formula bump has not landed yet.
+- No alert may wait on the network. The launcher reads only the cache
+  (`$TMPDIR/ada-update`) and `VERSION`, and when a check is due starts it in
+  the background; its answer shows on a later alert. Only an alert that is
+  shown starts a check: one a pause, mute or snooze hold drops does not.
+- A check is due a day (`ADA_UPDATE_INTERVAL`) after one that worked, and an
+  hour after one that failed or never finished. A check marks the cache as
+  running before it fetches, so alerts meanwhile don't start another.
+- Only one check may fetch and write at a time. A check first takes an atomic
+  lock (`<cache>.lock`, a directory `mkdir` creates); a background check that
+  can't take it stands down, `ada-update check` waits for it, and a lock older
+  than a minute is taken over. Anything at that path that isn't a directory
+  stops every check and is never removed.
+- The request must be an HTTPS GET of the formula with no headers, data or
+  identifiers of ours, must ignore the user's curl configuration (`curl -q`,
+  so a `~/.curlrc` adds nothing to it), must not follow a redirect off HTTPS,
+  and must time out.
+- `ADA_UPDATE_CHECK=0` and the off switch `ada-update off` writes
+  (`~/.local/share/ada/update-check-off`, outside `TMPDIR` so it lasts and the
+  LaunchAgents see it) must each stop both the check and the notice.
+- A from-source checkout (no `VERSION`) and a HEAD build (`VERSION` is not a
+  release version) must never check.
+- The cache and the off switch follow the pause file's rule: only a plain file
+  is read, replaced (through a temp file and a rename) or deleted.
+- `lib/ada-update.sh` must be in `ADA_RUNTIME_FILES`. A missing copy means no
+  notice, never a missing alert.
+- `ada-setup --status` must end with what the last check found, for a release
+  install, without a network request.
+- The test suite must not reach the network: `setup_common` sets
+  `ADA_UPDATE_CHECK=0`, and the update tests serve the formula from a curl stub.
+
 ## Menu Bar LaunchAgent
 
 - `ada-menubar.sh install` must make the menu bar a login item: a LaunchAgent
@@ -809,6 +877,8 @@ removed.
   must not affect `ada` when the native helper is built.
 - `paseo` is required only for the Paseo watcher and may be found on `PATH`,
   under `~/.local/bin`, or in the Paseo application bundle.
+- `curl` (part of macOS) is used only by the update check. Without it the check
+  fails and is retried; alerts are unaffected.
 - `opencode` is required only for the opencode integration. The plugin runs
   inside opencode's own JavaScript runtime, so it adds no separate Node
   dependency; the installer uses the `opencode` CLI only to locate the config
@@ -853,7 +923,51 @@ removed.
   it. New default: `claude -p` and Agent SDK runs no longer alert. The history
   gained a 15th column, `source`, and Paseo alerts now carry the agent's folder
   as their repo.
-
+- 2026-11-03: Homebrew installs say when a newer release is out. Once a day the
+  first alert that shows starts `lib/ada-update.sh check --background`, which
+  reads the version out of `Formula/ada.rb` on `main` and caches it in
+  `$TMPDIR/ada-update`; alerts compare that with the `VERSION` file the formula
+  now writes, and show an **Update available** note in the bottom-left corner
+  with the `brew update && brew upgrade ada` command and a compare link. The
+  menu bar shows **Update to ADA …**, which runs that command in Terminal, and
+  `ada-setup --status` ends with the same line. `ada-update` (a new formula
+  wrapper) reports, checks, and turns the check `off` or `on`; the off switch
+  lives in `~/.local/share/ada` so the LaunchAgents see it. This is ada's only
+  network request; the docs of record say what it sends (nothing about you).
+  From review: curl runs with `-q`, so a `~/.curlrc` can't add headers, data or
+  URLs to the request, and a lock beside the cache lets only one check fetch
+  and write at a time; two alerts arriving together each fetched, and on a
+  first check one's failure could overwrite the other's answer.
+- 2026-11-03: `brew reinstall ada` no longer quits the menu bar until the next
+  login. Started by launchd, it exited 0 when its binary was missing for two
+  30-second ticks, as after an uninstall; `brew reinstall` renames the keg to
+  `<version>.reinstall` for both Swift builds (ada ships no bottles), so the
+  binary was missing for minutes and `KeepAlive {SuccessfulExit: false}` left
+  the clean exit alone. A missing binary is now waited out, and the rebuilt one
+  is a relaunch (exit 75). The plist runs the binary through an `sh` guard that
+  exits 0 when it is gone, so a login after `brew uninstall` leaves the job
+  stopped instead of launchd failing to spawn the missing binary (exit 78) and
+  keeping a retry pending. A plist written earlier keeps running the binary
+  directly until `ada-menubar.sh install` (or `ada-setup`) writes the new one,
+  and the menu bar already running is the old code, so a `brew reinstall` onto
+  this release still quits it once.
+- 2026-11-03: The Paseo watcher restarts itself when its code is replaced.
+  After `brew upgrade ada` from 0.4 to 0.5 the LaunchAgent kept running 0.4's
+  Python from the deleted 0.4 Cellar directory until a logout or a manual
+  `launchctl kickstart -k`: running in place refreshed the files, not the
+  process. Under launchd the loop now stats its script at its launch path after
+  every poll and exits 75 when it is a different file, which `KeepAlive`
+  restarts. A missing script is waited out rather than read as an uninstall,
+  because `brew reinstall` renames the keg away for the whole build. Instead
+  the plist runs the script through an `sh` guard that exits 0 when it is gone,
+  and `KeepAlive` now restarts only after an unsuccessful exit, so a login after
+  an uninstall leaves the job stopped. The launcher now gets a session of its
+  own, because launchd kills the job's process group when the loop exits, which
+  closed any alert window open at that moment. The watcher running when this
+  release is installed is the old code, so that one upgrade still needs a
+  `launchctl kickstart -k gui/$(id -u)/com.ada.paseo-watch` or a logout. A plist
+  written earlier still restarts on 75, but after an uninstall it retries the
+  missing script until `ada-paseo-watch.sh install` writes the new one.
 - 2026-09-25: A pause no longer loses what arrives during it. The launcher keeps
   each held alert as its history line in `<pause file>.held/` and shows them all
   in one summary alert when the pause ends: its timer runs out (a detached

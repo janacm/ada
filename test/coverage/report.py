@@ -30,6 +30,7 @@ SHELL_FILES = [
     "lib/ada-sources.sh",
     "lib/ada-stage.sh",
     "lib/ada-status.sh",
+    "lib/ada-update.sh",
     "release.sh",
 ]
 
