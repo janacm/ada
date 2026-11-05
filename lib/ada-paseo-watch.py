@@ -29,6 +29,7 @@ import re
 import subprocess
 import sys
 import time
+from urllib.parse import quote
 
 PASEO = os.environ.get("PASEO_BIN") or "paseo"
 # ada-show-alert.sh is always a sibling of this file — both live in lib/ in a dev
@@ -139,6 +140,52 @@ def repo_of(cwd):
     return cwd.rsplit("/", 1)[-1]
 
 
+# --- click to open the agent --------------------------------------------------------
+# Paseo Desktop opens an existing agent from paseo://h/<server id>/agent/<agent id>
+# (Paseo's packages/protocol/src/agent-deep-link.ts; `paseo agent open <id>` builds
+# the same link). The server id is the daemon's own, read once from
+# `paseo daemon status --json`, which costs about two seconds. It never changes
+# for a daemon home, so one success is kept for the life of the loop; a failure
+# is asked again at the next alert.
+PASEO_APP = "sh.paseo.desktop"
+SERVER_ID_RE = re.compile(r"[A-Za-z0-9._~-]{1,128}")
+_server_id = None
+
+
+def server_id():
+    """The Paseo daemon's server id, or "" when the CLI can't say."""
+    global _server_id
+    if _server_id:
+        return _server_id
+    try:
+        out = subprocess.run(
+            [PASEO, "daemon", "status", "--json"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+        data = json.loads(out)
+        sid = str(data.get("serverId") or "").strip() if isinstance(data, dict) else ""
+    except Exception:
+        sid = ""
+    if SERVER_ID_RE.fullmatch(sid):
+        _server_id = sid
+        return sid
+    return ""
+
+
+def agent_link(agent_id, focus_app=None):
+    """The paseo:// link that opens this agent, or "" when clicking should just
+    bring Paseo forward: no agent id, no server id, or a click target that is
+    not the Paseo app (ADA_FOCUS_APP set to another app, or to "" for none)."""
+    if focus_app is None:
+        focus_app = os.environ.get("ADA_FOCUS_APP", PASEO_APP)
+    if not agent_id or focus_app != PASEO_APP:
+        return ""
+    sid = server_id()
+    if not sid:
+        return ""
+    return "paseo://h/%s/agent/%s" % (quote(sid, safe=""), quote(agent_id, safe=""))
+
+
 def fire(label, duration, code, agent_id="", source="paseo", repo=""):
     if len(label) > 120:
         label = label[:119] + "…"
@@ -148,6 +195,9 @@ def fire(label, duration, code, agent_id="", source="paseo", repo=""):
     env["ADA_SESSION_KEY"] = ("paseo-" + agent_id) if agent_id else ""
     env["ADA_SESSION_KIND"] = "agent"
     env["ADA_SOURCE"] = source
+    # Clicking opens this agent in Paseo; with no link the click still brings
+    # Paseo forward through ADA_FOCUS_APP, as before.
+    env["ADA_CLICK_URL"] = agent_link(agent_id)
     # Set only when known: the launcher reads an empty ADA_REPO as "not a repo",
     # while an unset one lets it ask git about its own cwd, as before.
     if repo:

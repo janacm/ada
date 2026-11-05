@@ -16,6 +16,8 @@
 #   paseo ls --json        -> [{ id, shortId, name, provider, status, … }]
 #                             status ∈ initializing|idle|running|error|closed
 #   paseo permit ls --json -> [ <pending permission request>, … ]
+#   paseo daemon status --json -> { serverId, … }, read once, for the click
+#                             link paseo://h/<serverId>/agent/<id>
 #
 # So we synthesize the missing "Stop" event by polling that snapshot
 # and diffing each agent's status between polls:
@@ -60,7 +62,8 @@
 #   ADA_NATIVE_ALERT           path to ada-alert native helper (via launcher)
 #   ADA_AUTO_CLOSE             auto-dismiss seconds (default 90, via launcher)
 #   ADA_SNOOZE_MINUTES         snooze options       (default "5 10 30 60", via launcher)
-#   ADA_FOCUS_APP              bundle id to focus on click (default sh.paseo.desktop)
+#   ADA_FOCUS_APP              bundle id to focus on click (default sh.paseo.desktop;
+#                              only that default makes a click open the agent)
 #   ADA_FOCUS_APP_NAME         display name for the click hint (default Paseo)
 # =============================================================
 set -u

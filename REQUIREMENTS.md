@@ -717,7 +717,8 @@ removed.
 - The Paseo integration must be a poller, not a provider hook, because Paseo
   runs agents through its own daemon runtime.
 - `ada-paseo-watch.py` must poll the supported CLI JSON surfaces:
-  `paseo ls --json` and `paseo permit ls --json`.
+  `paseo ls --json` and `paseo permit ls --json`, and read the daemon's server
+  id from `paseo daemon status --json`.
 - The watcher must synthesize a finished-turn alert on `running -> idle` when
   elapsed time meets `ADA_PASEO_THRESHOLD`.
 - The watcher must synthesize a failed-turn alert on `running -> error`.
@@ -737,6 +738,14 @@ removed.
 - Every alert must carry `ADA_SOURCE=paseo/<provider base>` and, when Paseo
   reports the agent's working folder, `ADA_REPO=<its folder name>`; a
   permission takes both from the agent it names.
+- Clicking an alert about an agent must open that agent in Paseo Desktop
+  through `ADA_CLICK_URL=paseo://h/<server id>/agent/<agent id>`, the link
+  Paseo's own `paseo agent open` builds, each segment percent-encoded. The
+  watcher must keep the server id once the CLI has given it, and ask again at
+  the next alert after a failed lookup. It must set no
+  link (and clear an inherited one) when the alert names no agent, the server
+  id is unknown or not a plain token, or `ADA_FOCUS_APP` is anything but
+  `sh.paseo.desktop`; the click then falls back to `ADA_FOCUS_APP` as before.
 
 ## Paseo LaunchAgent
 
@@ -918,6 +927,11 @@ removed.
 
 ## Change Log
 
+- 2026-11-05: Clicking a Paseo alert opens the agent it is about in Paseo
+  Desktop, not just the app: the watcher passes
+  `paseo://h/<server id>/agent/<agent id>` as `ADA_CLICK_URL`, with the server
+  id read once from `paseo daemon status --json`. Recent Alerts and the pause
+  summary open the same link.
 - 2026-11-03: Added source switches (`lib/ada-sources.sh`, `ada-sources`, the
   menu bar's **Alert Sources**): each integration names its source in
   `ADA_SOURCE` (Claude Code split by desktop app, terminal, IDE and headless;
