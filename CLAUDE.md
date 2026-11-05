@@ -159,6 +159,10 @@ never squash.
   to the user. Do not merge it yourself instead, and do not use
   `gh pr merge --auto`: gh 2.96 has a rule (`isImmediatelyMergeable`) for a PR
   GitHub already reports as mergeable and may merge it at once, before CI.
+  When the user asks you to merge, do it only once the `bats` job has passed
+  on the PR's head commit (`gh pr checks <n>`). A local run does not stand in
+  for it: `test.yml` runs on macOS because the tests that need the Swift
+  helper skip, not fail, without it.
 - **The fix is a required `bats` check, which needs the owner's yes.** It is a
   ruleset change on GitHub. GitHub Actions must be on that ruleset's bypass
   list, because `release.sh` pushes the formula bump straight to `main` with
