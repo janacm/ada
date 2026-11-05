@@ -217,13 +217,17 @@ finished_release() {
   git -C "$WORK" commit -q --allow-empty -am "Homebrew: point formula at $1"
 }
 
+# The fixture's formula is a copy of the real one, so its version moves with
+# every release; the expected next version is worked out from it rather than
+# written down (a literal v0.5 broke the day the formula moved to v0.5).
 @test "--next with no tags counts from the formula's version" {
-  # Pin the version: the fixture starts from the repo's own formula, which
-  # every release bumps.
-  sed -i '' 's|^  url ".*"|  url "https://github.com/janacm/ada/archive/refs/tags/v0.4.tar.gz"|' "$WORK/Formula/ada.rb"
-  git -C "$WORK" commit -q -am "formula installs v0.4"
+  local current major minor
+  current=$(sed -nE 's|^  url ".*/refs/tags/v([0-9]+)\.([0-9]+)(\.[0-9]+)?\.tar\.gz"$|\1 \2|p' "$WORK/Formula/ada.rb")
+  [[ -n "$current" ]] || { echo "no vX.Y release url in the fixture formula"; false; }
+  read -r major minor <<< "$current"
+  (( major < 1 )) || skip "the fixture formula is past v1.0, where --next major means v$((major + 1)).0"
   run "$RELEASE" --next minor
-  assert_equal "$output" "v0.5"
+  assert_equal "$output" "v$major.$((minor + 1))"
   run "$RELEASE" --next major
   assert_equal "$output" "v1.0"
 }
