@@ -129,11 +129,12 @@ plist="$HOME/Library/LaunchAgents/${label_prefix}.plist"
 logfile="${TMPDIR:-/tmp}/ada-paseo-watch.log"
 
 # --- locate the paseo CLI (PATH, then the usual symlink, then the app bundle) ---
+# ADA_PASEO_FALLBACK_PATHS overrides the fixed fallbacks, as in find_paseo in
+# lib/ada-status.sh (the test suite narrows it to hide an installed Paseo.app).
 __ada_find_paseo() {
   local p
   p=$(command -v paseo 2>/dev/null) && { printf '%s' "$p"; return 0; }
-  for p in "$HOME/.local/bin/paseo" \
-           "/Applications/Paseo.app/Contents/Resources/bin/paseo"; do
+  for p in ${ADA_PASEO_FALLBACK_PATHS-"$HOME/.local/bin/paseo" /Applications/Paseo.app/Contents/Resources/bin/paseo}; do
     [[ -x "$p" ]] && { printf '%s' "$p"; return 0; }
   done
   return 1

@@ -911,6 +911,10 @@ removed.
   a report must fail the run, not drop out of the total.
 - Total line coverage reported by `./run-tests.sh --coverage` should stay at or
   above 80%.
+- The suite must pass on a developer machine with the integrations' own tools
+  installed, not only on CI. A test that needs a tool absent must hide the real
+  one (for Paseo, `hide_paseo`, which empties `PATH` of real `paseo` binaries
+  and narrows `ADA_PASEO_FALLBACK_PATHS`) rather than skip.
 
 ## Change Log
 

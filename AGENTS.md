@@ -421,6 +421,18 @@ A healthy job is `state = running` with a live `python …/.local/share/ada/ada-
 - `❌ not loaded — run: ... install` — off
 Plus `✅/❌ plist` and `✅ log clean` / `⚠️ log has output`.
 
+**Tests must not find the developer's own Paseo.** The two Paseo finders
+(`__ada_find_paseo` in `ada-paseo-watch.sh`, `find_paseo` in `lib/ada-status.sh`)
+try `PATH` first and then fixed fallbacks, `~/.local/bin/paseo` and the CLI
+inside `/Applications/Paseo.app`. On a machine with Paseo installed, a test that
+expects "no CLI" (the installer's locked Paseo row, the status row) or expects
+its own stub to be the one found saw the real CLI instead, and four tests failed
+locally while CI, which has no Paseo, passed. Such a test calls `hide_paseo`
+(`test/test_helper.bash`): it drops every `PATH` directory holding a `paseo`
+executable and sets `ADA_PASEO_FALLBACK_PATHS` to the test's private
+`$HOME/.local/bin/paseo`, which hides the app bundle. Both finders honor that
+variable, like `ADA_OPENCODE_FALLBACK_PATHS` for opencode.
+
 ## How to validate windowed-vs-fullscreen
 
 First verify that `swift build --product ada-alert` succeeds and that a test

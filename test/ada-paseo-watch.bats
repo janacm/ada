@@ -227,15 +227,14 @@ PY
 # so a python3 stub that reports what it was handed is the whole check.
 
 @test "run fails clearly when no paseo CLI exists anywhere" {
-  if [ -x /Applications/Paseo.app/Contents/Resources/bin/paseo ]; then
-    skip "Paseo.app is installed; the no-CLI branch is unobservable here"
-  fi
+  hide_paseo
   run "$WATCH" run
   assert_failure
   assert_output_contains "'paseo' CLI not found"
 }
 
 @test "run execs the python loop with PASEO_BIN pointing at the CLI it found" {
+  hide_paseo
   mkdir -p "$HOME/.local/bin" "$BATS_TEST_TMPDIR/bin"
   printf '#!/bin/sh\necho "[]"\n' > "$HOME/.local/bin/paseo"
   printf '#!/bin/sh\necho "python3 $* PASEO_BIN=$PASEO_BIN"\n' > "$BATS_TEST_TMPDIR/bin/python3"
