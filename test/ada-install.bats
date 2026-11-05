@@ -788,3 +788,18 @@ paseo_on_path() {
   assert_output_contains "Installing Paseo integration -> LaunchAgent"
   [ -f "$HOME/Library/LaunchAgents/com.ada.paseo-watch.plist" ]
 }
+
+# Wiring decides what can alert; the source switches decide what does. The
+# installer only reads them, and says how to change them.
+@test "the installer ends by naming the switched-off sources" {
+  mkdir -p "$HOME/.claude"
+  run "$INSTALL" --agents claude --dry-run --no-test
+  assert_success
+  assert_output_contains "Switched off: claude/headless"
+  assert_output_contains "lib/ada-sources.sh off paseo"
+  [ ! -e "$HOME/.config/ada/sources" ]
+  "$REPO_ROOT/lib/ada-sources.sh" off paseo >/dev/null
+  "$REPO_ROOT/lib/ada-sources.sh" on claude/headless >/dev/null
+  run "$INSTALL" --agents claude --dry-run --no-test
+  assert_output_contains "Switched off: paseo"
+}

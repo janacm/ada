@@ -34,8 +34,8 @@ def load_mod(env):
 def run_loop(mod, ls_snaps, permit_snaps, times):
     """Run main() over len(ls_snaps) polls; return the list of fire() calls."""
     fires = []
-    mod.fire = lambda label, duration, code, agent_id="": fires.append(
-        (label, duration, code, agent_id))
+    mod.fire = lambda label, duration, code, agent_id="", **where: fires.append(
+        (label, duration, code, agent_id, where))
     mod.should_skip_active = lambda: False
 
     ls_iter = iter(ls_snaps)
@@ -65,8 +65,8 @@ def run_loop(mod, ls_snaps, permit_snaps, times):
     return fires
 
 
-def agent(aid, status, name="agent-x", provider="claude"):
-    return {"id": aid, "status": status, "name": name, "provider": provider}
+def agent(aid, status, name="agent-x", provider="claude", cwd=""):
+    return {"id": aid, "status": status, "name": name, "provider": provider, "cwd": cwd}
 
 
 FAILURES = []
@@ -155,6 +155,28 @@ fires = run_loop(m, [[agent("a1", "running")], [agent("a1", "running")]],
                        {"toolName": "write", "agentName": "ghost"}]], [1, 2])
 check("a permission naming a known agent carries its id; one that doesn't carries none",
       sorted(f[3] for f in fires) == ["", "a1"], fires)
+
+# 8. source switches: every alert names its provider as paseo/<provider> and
+#    its project as the agent's folder, and a permission takes both from the
+#    agent it names (lib/ada-sources.sh decides whether they show).
+m = load_mod({"ADA_PASEO_THRESHOLD": "0", "ADA_PASEO_EVENTS": "finish error permission",
+              "ADA_PASEO_SKIP_WHEN_ACTIVE": ""})
+fires = run_loop(m, [[agent("a1", "running", provider="codex/gpt-5", cwd="~/Documents/GitHub/ada"),
+                      agent("a2", "running", provider="", cwd="~")],
+                     [agent("a1", "idle", provider="codex/gpt-5", cwd="~/Documents/GitHub/ada"),
+                      agent("a2", "error", provider="", cwd="~")]],
+                 [[], []], [1000, 1010])
+check("finish and error alerts carry paseo/<provider> and the agent's folder",
+      sorted((f[3], f[4]["source"], f[4]["repo"]) for f in fires)
+      == [("a1", "paseo/codex", "ada"), ("a2", "paseo", "")], fires)
+
+m = load_mod({"ADA_PASEO_EVENTS": "permission", "ADA_PASEO_SKIP_WHEN_ACTIVE": ""})
+fires = run_loop(m, [[agent("a1", "running", provider="cursor", cwd="~/work/site")],
+                     [agent("a1", "running", provider="cursor", cwd="~/work/site")]],
+                 [[], [{"toolName": "bash", "agentId": "a1"}, {"toolName": "write"}]], [1, 2])
+check("a permission takes its agent's source and project, or plain paseo",
+      sorted((f[4]["source"], f[4]["repo"]) for f in fires)
+      == [("paseo", ""), ("paseo/cursor", "site")], fires)
 
 if FAILURES:
     raise SystemExit("paseo diff-loop checks failed: %s" % ", ".join(FAILURES))

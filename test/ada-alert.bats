@@ -168,3 +168,33 @@ print_menu() {
   run "$REPO_ROOT/lib/ada-mute.sh" list
   assert_equal "$output" "no muted sessions"
 }
+
+# The rules file is written only by ada-sources.sh and read by the Swift side,
+# so the two have to agree on every switch the menu shows.
+@test "--print-menu agrees with ada-sources.sh about every switch" {
+  need_print_menu
+  grep -qa -- 'Alert Sources' "$MENUBAR" || skip "ada-menubar predates the source switches (rebuild it)"
+  local S="$REPO_ROOT/lib/ada-sources.sh" pair title key mark
+  "$S" off claude >/dev/null
+  "$S" on claude/desktop >/dev/null
+  "$S" off paseo >/dev/null
+  "$S" on paseo/claude >/dev/null
+  "$S" only repo ada >/dev/null
+  printf '1\t%s\tshown\t0\tk\tagent\tl\t1s\t0\tsandbox\t\t\t\t/d\tpaseo/codex\n' "$(/bin/date +%s)" \
+    > "$TMPDIR/ada-history.tsv"
+  print_menu
+  assert_success
+  for pair in "Terminal Commands|terminal" "Claude Code|claude" "  Desktop App|claude/desktop" \
+              "  Terminal|claude/cli" "  IDE|claude/ide" "  Headless (claude -p, Agent SDK)|claude/headless" \
+              "Codex|codex" "opencode|opencode" "Paseo|paseo" "  claude|paseo/claude" "  codex|paseo/codex"; do
+    title=${pair%|*}; key=${pair#*|}
+    if "$S" check "$key" >/dev/null; then mark="[x]"; else mark="[ ]"; fi
+    assert_output_contains "    - $mark $title"$'\n'
+  done
+  assert_output_contains "> Projects (Only Checked) [folder]"
+  assert_output_contains "        - [x] Only Checked Projects"
+  assert_output_contains "        - [x] ada"
+  assert_output_contains "        - [ ] sandbox"
+  run "$S" check terminal sandbox
+  assert_failure
+}

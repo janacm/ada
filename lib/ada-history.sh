@@ -8,11 +8,13 @@
 #
 # Format v1: one line per alert, tab-separated, the version first so a reader
 # can skip lines it doesn't know and ignore columns added after the last one:
-#   1  epoch  outcome  snoozed  key  kind  label  duration  code  repo  focus_app  focus_app_name  click_url  dir
+#   1  epoch  outcome  snoozed  key  kind  label  duration  code  repo  focus_app  focus_app_name  click_url  dir  source
 # outcome is shown, paused, muted or held (dropped by a snooze holding that
 # conversation); snoozed is 1 for a snooze relaunch; dir is where the alert
-# came from (ADA_REPO_DIR, else the launcher's cwd). dir came later than the
-# rest, so an older line ends at click_url. Tabs and line breaks inside a field
+# came from (ADA_REPO_DIR, else the launcher's cwd); source is the integration
+# that raised it (ADA_SOURCE, see lib/ada-sources.sh; empty for a test alert).
+# dir and source came later than the rest, so an older line ends at click_url
+# or at dir. An alert a source switch drops gets no line at all. Tabs and line breaks inside a field
 # become spaces, and a field is cut to 200 characters (the click URL and dir to
 # 500).
 #
@@ -78,7 +80,7 @@ __ada_history_trim() {
 }
 
 # __ada_history_build <outcome> <key> <kind> <label> <duration> <code> <repo>
-#                     <focus_app> <focus_app_name> <click_url> [dir]
+#                     <focus_app> <focus_app_name> <click_url> [dir] [source]
 # Sets __ada_history_line to the line for one alert, stamped now. It works with
 # ADA_HISTORY_MAX=0 too: a pause keeps the same line as its record.
 __ada_history_build() {
@@ -92,6 +94,7 @@ __ada_history_build() {
   done
   __ada_history_add "${10:-}" 500
   __ada_history_add "${11:-}" 500
+  __ada_history_add "${12:-}" 100
 }
 
 # Append __ada_history_line to the history, within ADA_HISTORY_MAX.
@@ -138,7 +141,7 @@ __ada_history_cli() {
       fi
       ;;
     -h|--help|help)
-      sed -n '27,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '29,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       ;;
     *)
       echo "ada-history: unknown command: $action (try list, clear)" >&2

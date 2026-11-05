@@ -255,17 +255,20 @@ lb  = label_for(text, is_injected)
 by  = "0" if is_injected and not SLASH_COMMAND.search(text[:8192]) else "1"
 if by == "1" and ev == "UserPromptSubmit" and scheduled({one_line(text), lb}, text, tp):
     by = "0"
+# Codex shares this hook. Its payloads carry turn_id, which its own hook schema
+# calls a "Codex extension", and its transcripts live under ~/.codex.
+cx = "1" if "turn_id" in d or "/.codex/" in tp else "0"
 # Fields are joined with US (\x1f), a NON-whitespace delimiter, so an empty field
 # (e.g. a payload with no transcript_path) is preserved instead of collapsing the
 # way adjacent IFS-whitespace tabs would — which used to shift the prompt into
 # transcript_path and drop it. The RAW prompt stays LAST so read -r keeps it
 # whole; it is only used for the debug breadcrumb, while the label is what gets
 # stamped and displayed.
-print(ev + "\x1f" + sid + "\x1f" + cwd + "\x1f" + tp + "\x1f" + by + "\x1f" + lb + "\x1f" + pr)
+print(ev + "\x1f" + sid + "\x1f" + cwd + "\x1f" + tp + "\x1f" + by + "\x1f" + cx + "\x1f" + lb + "\x1f" + pr)
 ' 2>/dev/null)
 [[ -z "$fields" ]] && exit 0
 
-IFS=$'\x1f' read -r event session_id cwd transcript_path by_user label prompt <<<"$fields"
+IFS=$'\x1f' read -r event session_id cwd transcript_path by_user is_codex label prompt <<<"$fields"
 [[ -z "$event" ]] && exit 0
 
 # Opt-in breadcrumb for debugging Codex-vs-Claude payload shapes. Triggered by
@@ -387,6 +390,24 @@ case "$event" in
       fi
     fi
 
+    # Which harness ran the turn, for the source switches (lib/ada-sources.sh).
+    # Claude Code exports CLAUDE_CODE_ENTRYPOINT to its hooks: cli for `claude`
+    # in a terminal, sdk-cli for `claude -p`, sdk-ts / sdk-py for the Agent SDK,
+    # claude-desktop for the desktop app (read from the 2.1.316 binary, which
+    # rewrites cli to sdk-cli when it runs non-interactively). Anything else
+    # follows the plain `claude` switch.
+    if [[ "$is_codex" == 1 ]]; then
+      alert_source=codex
+    else
+      case "${CLAUDE_CODE_ENTRYPOINT:-}" in
+        claude-desktop|claude-desktop-3p|local-agent|local_agent) alert_source=claude/desktop ;;
+        cli) alert_source=claude/cli ;;
+        sdk-cli|sdk-ts|sdk-py) alert_source=claude/headless ;;
+        claude-vscode) alert_source=claude/ide ;;
+        *) alert_source=claude ;;
+      esac
+    fi
+
     # ADA_REPO_DIR points the launcher at the turn's project so it shows the
     # right repo (the hook's own cwd isn't guaranteed to be it). Empty falls
     # back to the launcher's cwd, which is the project in the usual setup.
@@ -401,7 +422,7 @@ case "$event" in
     # duration formatting and the launcher call, shared with the opencode plugin.
     ADA_REPO_DIR="$cwd" ADA_CLICK_URL="$click_url" ADA_FOCUS_APP_NAME="$focus_name" \
     ADA_SESSION_KEY="claude-$resolved_sid" ADA_SESSION_KIND=conversation \
-    ADA_SNOOZE_SCOPE="${ADA_SNOOZE_SCOPE:-session}" \
+    ADA_SNOOZE_SCOPE="${ADA_SNOOZE_SCOPE:-session}" ADA_SOURCE="$alert_source" \
       __ada_notify "$label" "$elapsed" 0 >/dev/null 2>&1 &
     ;;
 esac

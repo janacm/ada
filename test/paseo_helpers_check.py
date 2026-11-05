@@ -82,7 +82,7 @@ m.run_json = lambda args: ["not a dict", {"status": "idle"},
                            {"id": "a1", "name": "fixer", "status": "idle"}]
 snap = m.agents_snapshot()
 check("agents_snapshot skips non-objects and id-less entries, falls back to shortId",
-      snap == {"s9": ("running", "s9", "codex"), "a1": ("idle", "fixer", "")}, snap)
+      snap == {"s9": ("running", "s9", "codex", ""), "a1": ("idle", "fixer", "", "")}, snap)
 
 m.run_json = lambda args: [{"title": "Run tests", "agentName": "fixer"}, "raw", {}]
 perms = m.permits_snapshot()
@@ -94,7 +94,7 @@ check("permits_snapshot labels by the first descriptive field, else a generic la
 
 m.run_json = lambda args: [{"title": "Run tests", "agentName": "fixer", "agentId": "a1"},
                            {"title": "Other", "agentId": "gone"}]
-ids = sorted(v[2] for v in m.permits_snapshot({"a1": ("running", "fixer", "")}).values())
+ids = sorted(v[2] for v in m.permits_snapshot({"a1": ("running", "fixer", "", "")}).values())
 check("permits_snapshot takes the agent id only when it names a known agent",
       ids == ["", "a1"], ids)
 
@@ -140,6 +140,26 @@ keys = sorted(open(keyrec).read().splitlines()) if os.path.exists(keyrec) else [
 check("fire passes paseo-<agent id> as the session key, and none without an id",
       keys == sorted(["paseo-a1|agent", "|agent"]),
       keys)
+
+# --- fire: the source and project reach the launcher -------------------------------
+srcrec = os.path.join(TMP, "fired-source.txt")
+m.LAUNCHER = script("launcher-source",
+                    'printf "%%s|%%s\\n" "$ADA_SOURCE" "${ADA_REPO-unset}" >> %s\n' % srcrec)
+os.environ.pop("ADA_REPO", None)
+m.fire("finished", "3s", 0, "a1", source=m.source_of("claude"), repo=m.repo_of("~/Documents/GitHub/ada"))
+m.fire("needs you", "permission", 0)
+for _ in range(100):
+    if os.path.exists(srcrec) and len(open(srcrec).read().splitlines()) >= 2:
+        break
+    time.sleep(0.02)
+sources = sorted(open(srcrec).read().splitlines()) if os.path.exists(srcrec) else []
+check("fire passes paseo/<provider> and the folder; plain paseo and no ADA_REPO when unknown",
+      sources == sorted(["paseo/claude|ada", "paseo|unset"]), sources)
+check("source_of keeps a provider a rule can name, else plain paseo",
+      [m.source_of(p) for p in ("codex", "", "bad provider", "-x")]
+      == ["paseo/codex", "paseo", "paseo", "paseo"])
+check("repo_of takes the folder name, and nothing for home or an empty cwd",
+      [m.repo_of(c) for c in ("~/Documents/GitHub/ada/", "~", "", "/tmp/x")] == ["ada", "", "", "x"])
 
 # --- fire: label clipping and a launcher that can't start --------------------------
 record = os.path.join(TMP, "fired.txt")

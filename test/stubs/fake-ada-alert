@@ -9,6 +9,8 @@
 [ -n "${ADA_PROBE_ENV_OUT:-}" ] && printf 'ADA_CLICK_URL=%s\n' "${ADA_CLICK_URL:-}" > "$ADA_PROBE_ENV_OUT"
 # The session identity the integration passed, for the mute-key assertions.
 [ -n "${ADA_PROBE_SESSION_OUT:-}" ] && printf '%s %s\n' "${ADA_SESSION_KEY:-}" "${ADA_SESSION_KIND:-}" > "$ADA_PROBE_SESSION_OUT"
+# Where the alert came from, for the source-switch assertions (lib/ada-sources.sh).
+[ -n "${ADA_PROBE_SOURCE_OUT:-}" ] && printf '%s|%s\n' "${ADA_SOURCE:-}" "${ADA_REPO-unset}" > "$ADA_PROBE_SOURCE_OUT"
 # And whether a snooze of this alert would hold the rest of the session.
 [ -n "${ADA_PROBE_SCOPE_OUT:-}" ] && printf '%s\n' "${ADA_SNOOZE_SCOPE:-}" > "$ADA_PROBE_SCOPE_OUT"
 # The pause state a window inherits: a summary must carry none of the alert or

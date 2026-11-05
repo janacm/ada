@@ -11,6 +11,14 @@ public enum MenuAction: Equatable {
     case clearHistory
     case unmute(key: String)
     case unmuteAll
+    /// `ada-sources on|off <key>`, which also drops the rules under it.
+    case setSource(key: String, on: Bool)
+    /// `ada-sources on|off repo <name>`.
+    case setRepo(name: String, on: Bool)
+    /// Only the checked projects alert (`off repo *`), or every project does.
+    case setRepoMode(onlyListed: Bool)
+    case editSources
+    case resetSources
     case setUp
     /// Opens Terminal on `brew update && brew upgrade ada`.
     case update
@@ -26,6 +34,9 @@ public indirect enum MenuEntry: Equatable {
     case info(String, symbol: String? = nil)
     case action(String, MenuAction, symbol: String? = nil)
     case submenu(String, [MenuEntry], symbol: String? = nil)
+    /// A switch, shown with a checkmark when on. `indent` nests it under the
+    /// item above (a Claude Code surface, a Paseo provider).
+    case toggle(String, isOn: Bool, MenuAction, indent: Int = 0)
     case separator
 }
 
@@ -35,6 +46,8 @@ public struct MenuInput {
     public var muted: [MutedSession]
     /// Nil while the integration check is still running.
     public var integrations: [IntegrationStatus]?
+    /// The source switches (`lib/ada-sources.sh`).
+    public var sources: SourceRules
     public var now: Date
     public var calendar: Calendar
     public var recentLimit: Int
@@ -42,12 +55,14 @@ public struct MenuInput {
     public var update: AvailableUpdate?
 
     public init(pause: PauseState, history: [HistoryEntry], muted: [MutedSession],
-                integrations: [IntegrationStatus]?, now: Date, calendar: Calendar, recentLimit: Int = 10,
+                integrations: [IntegrationStatus]?, sources: SourceRules = SourceRules(),
+                now: Date, calendar: Calendar, recentLimit: Int = 10,
                 update: AvailableUpdate? = nil) {
         self.pause = pause
         self.history = history
         self.muted = muted
         self.integrations = integrations
+        self.sources = sources
         self.now = now
         self.calendar = calendar
         self.recentLimit = recentLimit
@@ -79,6 +94,7 @@ public enum MenuModel {
         entries.append(.submenu("Recent Alerts", recentEntries(input), symbol: "clock"))
         entries.append(.submenu(input.muted.isEmpty ? "Muted Sessions" : "Muted Sessions (\(input.muted.count))",
                                 mutedEntries(input), symbol: "bell.slash"))
+        entries.append(.submenu("Alert Sources", sourceEntries(input), symbol: "switch.2"))
         let warn = input.integrations?.contains { $0.state == .warn } ?? false
         entries.append(.submenu("Integrations", integrationEntries(input), symbol: warn ? "exclamationmark.triangle" : "puzzlepiece"))
         entries.append(.separator)
@@ -151,6 +167,80 @@ public enum MenuModel {
         return entries
     }
 
+    /// The Claude Code surfaces the hook tells apart, by CLAUDE_CODE_ENTRYPOINT.
+    static let claudeSurfaces: [(key: String, title: String)] = [
+        ("claude/desktop", "Desktop App"),
+        ("claude/cli", "Terminal"),
+        ("claude/ide", "IDE"),
+        ("claude/headless", "Headless (claude -p, Agent SDK)"),
+    ]
+
+    /// Every source an integration sends, each a switch. A parent's switch also
+    /// resets the ones under it, which is what `ada-sources on|off` does.
+    static func sourceEntries(_ input: MenuInput) -> [MenuEntry] {
+        let rules = input.sources
+        func toggle(_ title: String, _ key: String, indent: Int = 0) -> MenuEntry {
+            let isOn = rules.source(key).isOn
+            return .toggle(title, isOn: isOn, .setSource(key: key, on: !isOn), indent: indent)
+        }
+        var entries: [MenuEntry] = [
+            toggle("Terminal Commands", "terminal"),
+            toggle("Claude Code", "claude"),
+        ]
+        entries += claudeSurfaces.map { toggle($0.title, $0.key, indent: 1) }
+        entries.append(toggle("Codex", "codex"))
+        entries.append(toggle("opencode", "opencode"))
+        entries.append(toggle("Paseo", "paseo"))
+        entries += paseoProviders(input).map { toggle($0, "paseo/\($0)", indent: 1) }
+        entries.append(.separator)
+        entries.append(.submenu(rules.onlyListedRepos ? "Projects (Only Checked)" : "Projects",
+                                projectEntries(input), symbol: "folder"))
+        entries.append(.separator)
+        entries.append(.action("Edit Rules File…", .editSources))
+        entries.append(.action("Reset to Defaults", .resetSources))
+        return entries
+    }
+
+    /// Paseo's providers: the ones that have alerted (the history's source
+    /// column) and the ones a rule names, alphabetically.
+    static func paseoProviders(_ input: MenuInput) -> [String] {
+        let keys = input.history.map(\.source) + input.sources.namedSources
+        let providers = keys.compactMap { key -> String? in
+            guard key.hasPrefix("paseo/") else { return nil }
+            let provider = String(key.dropFirst("paseo/".count))
+            return !provider.contains("/") && SourceRules.isValidSource(provider) ? provider : nil
+        }
+        return Set(providers).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    /// The projects that have alerted, and the ones a rule names, each a switch,
+    /// under the choice between every project and only the checked ones.
+    static func projectEntries(_ input: MenuInput, limit: Int = 15) -> [MenuEntry] {
+        let rules = input.sources
+        let only = rules.onlyListedRepos
+        var names = rules.namedRepos
+        for entry in input.history.reversed() where !entry.repo.isEmpty && !names.contains(entry.repo) {
+            guard names.count < max(limit, rules.namedRepos.count) else { break }
+            names.append(entry.repo)
+        }
+        names.sort { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        var entries: [MenuEntry] = [
+            .toggle("All Projects", isOn: !only, .setRepoMode(onlyListed: false)),
+            .toggle("Only Checked Projects", isOn: only, .setRepoMode(onlyListed: true)),
+            .separator,
+        ]
+        if names.isEmpty {
+            entries.append(.info("Projects Appear Here After They Alert"))
+        } else if only && !names.contains(where: { rules.repo($0).isOn }) {
+            entries.append(.info("Nothing Alerts Until You Check a Project"))
+        }
+        for name in names {
+            let isOn = rules.repo(name).isOn
+            entries.append(.toggle(truncate(name, to: 60), isOn: isOn, .setRepo(name: name, on: !isOn)))
+        }
+        return entries
+    }
+
     public static func integrationEntries(_ input: MenuInput) -> [MenuEntry] {
         var entries: [MenuEntry]
         if let integrations = input.integrations {
@@ -190,7 +280,8 @@ public enum MenuModel {
 
     /// The menu as text, one entry per line, submenus indented. Chosen actions
     /// start with "- ", lines you can't choose with "  ", submenus with "> ",
-    /// and the SF Symbol follows in brackets.
+    /// and the SF Symbol follows in brackets. A switch is "- [x] " when on and
+    /// "- [ ] " when off, nested two spaces per indent.
     public static func render(_ entries: [MenuEntry], depth: Int = 0) -> String {
         let indent = String(repeating: "    ", count: depth)
         var lines: [String] = []
@@ -202,6 +293,8 @@ public enum MenuModel {
                 lines.append(indent + "  " + title + suffix(symbol))
             case let .action(title, _, symbol):
                 lines.append(indent + "- " + title + suffix(symbol))
+            case let .toggle(title, isOn, _, level):
+                lines.append(indent + "- " + (isOn ? "[x] " : "[ ] ") + String(repeating: "  ", count: level) + title)
             case let .submenu(title, children, symbol):
                 lines.append(indent + "> " + title + suffix(symbol))
                 lines.append(render(children, depth: depth + 1))

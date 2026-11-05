@@ -14,6 +14,8 @@ public enum InstallDirectory {
     public static let historyScriptPath = "lib/ada-history.sh"
     /// Which integrations are wired.
     public static let statusScriptPath = "lib/ada-status.sh"
+    /// Lists and changes the source switches.
+    public static let sourcesScriptPath = "lib/ada-sources.sh"
 
     /// `ADA_HOME` when it is set; otherwise the install the executable lives in.
     ///

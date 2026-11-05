@@ -815,12 +815,61 @@ and the summary JSON) is in the header of `lib/ada-show-alert.sh`.
   this machine, which is why the LaunchAgent guard above is tested through
   `ADA_STATUS_SKIP_PROTECTED`.
 
+## Source switches are enforced in the launcher only
+
+Each integration names where its alert came from in `ADA_SOURCE` (`terminal`,
+`claude/desktop`, `claude/cli`, `claude/ide`, `claude/headless`, `claude`,
+`codex`, `opencode`, `paseo/<provider>`). `lib/ada-show-alert.sh` sources
+`lib/ada-sources.sh` and drops an alert whose source or project the rules in
+`~/.config/ada/sources` switch off, before the mute check and without a history
+line: a user who switches off a 50-agent Paseo would otherwise push every real
+alert out of Recent Alerts. `lib/ada-sources.sh` is the only writer; the menu
+bar reads the file with `SourceRules` and runs the script for every change.
+
+- **Claude Code says where it runs in `CLAUDE_CODE_ENTRYPOINT`**, which its
+  hooks inherit. Read from the 2.1.316 binary: it sets `cli`, or `sdk-cli` when
+  non-interactive (`claude -p`; it even rewrites an inherited `cli`), unless
+  the parent already set one. The desktop app sets `claude-desktop` (seen in a
+  Code-tab session's environment), the Agent SDK `sdk-ts`/`sdk-py`, the VS Code
+  extension `claude-vscode`. Anything unmapped falls back to plain `claude`.
+- **Codex is told apart by its payload, not by an installer argument.** Its
+  hook schema (0.166.0 binary) carries `turn_id`, described there as a "Codex
+  extension". Tagging the Codex hook command with an argument would have been
+  simpler, but Codex keeps trust records for hook commands in
+  `~/.codex/.hook-trust`, and a changed command could need re-trusting.
+- **`setup_common` unsets `CLAUDE_CODE_ENTRYPOINT`.** A suite started from
+  `claude -p` inherits `sdk-cli`, which is switched off by default, and every
+  Claude hook test would go quiet.
+- **HOME, not XDG_CONFIG_HOME.** The Paseo watcher and the menu bar run as
+  LaunchAgents, which don't inherit a terminal's `XDG_CONFIG_HOME`; the shell
+  and Swift sides must agree on one path.
+- **Writes go through a symlink to its target.** A dotfiles manager may own the
+  file, and a temp-file-and-rename onto the link would leave a detached copy.
+- **Only a project rule makes a dropped alert run git**: the repo has to be
+  known before the decision, and it is exported so the badge reuses it. The
+  Paseo watcher passes `ADA_REPO` (the folder name of the agent's `cwd`) itself,
+  because a LaunchAgent must not look inside `~/Documents`. A test stubs `git`
+  to prove source rules alone never call it.
+- **Bash 3.2 shapes the reader.** Rules load into three parallel indexed arrays
+  (no associative arrays), loops go by index (`"${arr[@]}"` on an empty array
+  is an unbound-variable error under `set -u` in 3.2), and the per-alert path
+  uses parameter expansion instead of `<<<`, which bash before 5.1 implements
+  with a temp file.
+- **`check <source>` with no project judges the source alone.** An empty
+  project argument means "outside any repo", which `repo *` decides; the menu
+  parity test in `test/ada-alert.bats` caught the difference.
+- **Built-in defaults are rules a same-name rule replaces**, so `on source
+  claude` or `on source *` leaves `claude/headless` off; only `on source
+  claude/headless` turns it on. Setting a source drops the rules under it
+  (`off paseo` clears `on paseo/claude`), but `*` is not treated as their
+  parent.
+
 ## The alert history is written by the launcher only
 
 `lib/ada-history.sh` appends one tab-separated line per alert the launcher
 decides on (`shown`, `paused`, `muted`, `held`) to `$TMPDIR/ada-history.tsv`;
-the format is in its header, version first, and its 14th column (`dir`) came
-after the first 13, so readers take 13 as the minimum. The menu bar reads it
+the format is in its header, version first, and its 14th and 15th columns
+(`dir`, `source`) came after the first 13, so readers take 13 as the minimum. The menu bar reads it
 for Recent Alerts, and a pause keeps the same line as its record, which is why
 `__ada_history_build` (works with `ADA_HISTORY_MAX=0`) and
 `__ada_history_append` are separate. Three constraints shape where the calls
