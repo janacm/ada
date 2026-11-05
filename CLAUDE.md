@@ -137,6 +137,29 @@ into `main` only), not from commit subjects: a rebase-merged PR leaves no `#N`
 in any subject. Any failed lookup stops the release rather than read as "not
 major".
 
+## Pull requests auto-merge by default
+
+The owner wants every PR in this repo merged without a manual click, so turn
+on GitHub auto-merge as soon as you open one, unless the user says to hold it
+or it is a draft. In the Claude desktop app use the `ccd_pr` `set_auto_merge`
+tool with `merge_method: "merge"`; elsewhere run `gh pr merge <n> --auto
+--merge`. Use a merge commit, as the history does, never squash.
+
+- **Put the release label on first.** `release:minor` or `release:major`
+  must be on the PR before it merges (see "Releases are automated from PR
+  labels" above); a label added after an auto-merge releases nothing.
+  Leave a PR unlabelled when it changes no shipped behavior (docs, tests, CI).
+- **Auto-merge waits only for required checks, and `main` requires none.**
+  Its one ruleset ("main: no force-push or deletion") blocks force-pushes and
+  deletion only. So auto-merge merges a PR as soon as it is mergeable, before
+  the `bats` job in `.github/workflows/test.yml` finishes, and a labelled PR
+  then publishes a release of code CI has not passed. Run the suite locally
+  before opening the PR. Making `bats` a required check would make auto-merge
+  wait for it; the ruleset would then need GitHub Actions on its bypass list,
+  because `release.sh` pushes the formula bump straight to `main` with the
+  workflow's token. Check what `main` requires with
+  `gh api repos/janacm/ada/rules/branches/main`.
+
 ## Native helper is the only renderer
 
 `ada-alert` is a SwiftPM executable that opens `alert.html` in an AppKit/WebKit
