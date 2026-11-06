@@ -359,7 +359,10 @@ No zsh sourcing required — it's driven by two agent hooks pointing at
 - `UserPromptSubmit` records when the turn started (and your prompt text).
 - `Stop` measures how long the turn took and fires the alert if it ran longer
   than `ADA_CLAUDE_THRESHOLD` seconds (default `45`) and you're not already
-  looking at the terminal the agent is running in.
+  looking at the terminal the agent is running in. It stays quiet while a
+  background command, agent, workflow or monitor the agent started is still
+  running, since the conversation isn't ready for you yet; the alert comes when
+  the agent has handled the task's result.
 
 The installer can wire this for you:
 

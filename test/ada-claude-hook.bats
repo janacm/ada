@@ -288,6 +288,118 @@ API_ERR='{"type":"assistant","isApiErrorMessage":true,"message":{"content":[{"ty
   assert_file_contains "$ADA_PROBE_OUT" "cmd=$(printf 'x%.0s' $(seq 1 120))%E2%80%A6&"
 }
 
+# --- a turn that left a background task running ---------------------------------
+# Stop fires when the model ends its turn, but a background task it started keeps
+# the conversation busy (the app still shows its stop button) until the task
+# reports back and opens a new turn. The shapes below are copied from Claude Code
+# 2.1.31x transcripts.
+
+iso() { /bin/date -u "$@" +%Y-%m-%dT%H:%M:%S.000Z; }
+
+# A main-thread tool result announcing a launch: launch <tool_use_id> <text> [iso time]
+launch() {
+  printf '{"type":"user","isSidechain":false,"timestamp":"%s","message":{"role":"user","content":[{"tool_use_id":"%s","type":"tool_result","content":"%s"}]}}' \
+    "${3:-$(iso)}" "$1" "$2"
+}
+BG_CMD='Command running in background with ID: bx1. Output is being written to: /private/tmp/x/tasks/bx1.output'
+# How a report that arrives mid-turn is recorded: only as a queued operation.
+REPORT_BX1='{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>bx1</task-id>\n<tool-use-id>toolu_bg1</tool-use-id>\n<status>completed</status>\n<summary>Background command \"render\" completed (exit code 0)</summary>\n</task-notification>"}'
+
+stop_long() {
+  stamp_session "$1" "$(( $(/bin/date +%s) - 120 ))" "long turn"
+  run_hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"$1\",\"cwd\":\"/tmp\",\"transcript_path\":\"$2\"}"
+  assert_success
+}
+
+@test "a turn that leaves a background command running does not alert" {
+  t=$(transcript "$(launch toolu_bg1 "$BG_CMD")")
+  stop_long sess-b1 "$t"
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
+@test "a background command that reported back mid-turn no longer holds the alert" {
+  t=$(transcript "$(launch toolu_bg1 "$BG_CMD")" "$REPORT_BX1")
+  stop_long sess-b2 "$t"
+  wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
+}
+
+@test "every launch shape holds the alert: timeout move, async agent, workflow, monitor" {
+  for text in \
+    'Command did not complete within its 120s timeout and was moved to the background (ID: bx2). Output is being written to: /tmp/bx2.output' \
+    'Async agent launched successfully. (This tool result is internal metadata.) agentId: a1b2c3d4e5f6a7b8c' \
+    'Workflow launched in background. Task ID: wq1 Summary: render the wheels' \
+    'Monitor started (task bm1, expires in 30m unless the source ends first; you get one notice at expiry).'; do
+    rm -f "$ADA_PROBE_OUT"
+    t=$(transcript "$(launch toolu_x "$text")")
+    stop_long sess-b3 "$t"
+    refute_file_appears "$ADA_PROBE_OUT" || { echo "fired for: $text"; false; }
+  done
+}
+
+@test "a TaskStop ends the task even though no notification follows" {
+  t=$(transcript "$(launch toolu_bg1 "$BG_CMD")" \
+    "$(launch toolu_stop '{\"message\":\"Successfully stopped task: bx1 (render)\"}')")
+  stop_long sess-b4 "$t"
+  wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
+}
+
+@test "an agent report that carries only its task id ends it" {
+  t=$(transcript "$(launch toolu_ag 'Async agent launched successfully. agentId: a1b2c3d4e5f6a7b8c')" \
+    '{"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>a1b2c3d4e5f6a7b8c</task-id>\n<status>completed</status>\n</task-notification>"}}')
+  stop_long sess-b5 "$t"
+  wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
+}
+
+# A Monitor reports each event it sees with a notification that has no status;
+# only a notification with a status ends it.
+@test "a monitor event does not end the watch, and an expired monitor no longer holds" {
+  mon='Monitor started (task bm1, expires in 30m unless the source ends first).'
+  event='{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>bm1</task-id>\n<summary>Monitor event</summary>\n<event>ok front</event>\n</task-notification>"}'
+  t=$(transcript "$(launch toolu_m1 "$mon")" "$event")
+  stop_long sess-b6 "$t"
+  refute_file_appears "$ADA_PROBE_OUT"
+
+  t=$(transcript "$(launch toolu_m1 "$mon" "$(iso -v-31M)")")
+  stop_long sess-b6 "$t"
+  wait_for_file "$ADA_PROBE_OUT" || { echo "expired monitor still held the alert"; false; }
+}
+
+@test "a subagent's own background command does not hold the main conversation" {
+  t=$(transcript "$(launch toolu_bg1 "$BG_CMD" | sed 's/"isSidechain":false/"isSidechain":true/')")
+  stop_long sess-b7 "$t"
+  wait_for_file "$ADA_PROBE_OUT" || { echo "alert never fired"; false; }
+}
+
+@test "an API error still alerts while a background task runs" {
+  stamp_session "sess-b8" "$(( $(/bin/date +%s) - 5 ))" "quick turn"
+  t=$(transcript "$(launch toolu_bg1 "$BG_CMD")" "$API_ERR")
+  run_hook "{\"hook_event_name\":\"Stop\",\"session_id\":\"sess-b8\",\"cwd\":\"/tmp\",\"transcript_path\":\"$t\"}"
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "error alert never fired"; false; }
+}
+
+# Tasks die with the claude process that ran them, so after a crash or restart a
+# launch can stay unreported for good. Only launches since the current claude
+# process started count; the hook finds that process among its ancestors. A
+# symlink named claude stands in for it (a copied binary is killed by macOS).
+@test "a launch older than the running claude process does not hold the alert" {
+  ln -s /bin/bash "$BATS_TEST_TMPDIR/claude"
+  stamp_session "sess-b9" "$(( $(/bin/date +%s) - 120 ))" "long turn"
+  t=$(transcript "$(launch toolu_bg1 "$BG_CMD" "$(iso -v-2H)")")
+  payload="{\"hook_event_name\":\"Stop\",\"session_id\":\"sess-b9\",\"cwd\":\"/tmp\",\"transcript_path\":\"$t\"}"
+  run "$BATS_TEST_TMPDIR/claude" -c "printf '%s' '$payload' | '$HOOK'"
+  assert_success
+  wait_for_file "$ADA_PROBE_OUT" || { echo "a dead process's launch held the alert"; false; }
+
+  rm -f "$ADA_PROBE_OUT"
+  stamp_session "sess-b9" "$(( $(/bin/date +%s) - 120 ))" "long turn"
+  t=$(transcript "$(launch toolu_bg1 "$BG_CMD" "$(iso -v+1M)")")
+  payload="{\"hook_event_name\":\"Stop\",\"session_id\":\"sess-b9\",\"cwd\":\"/tmp\",\"transcript_path\":\"$t\"}"
+  run "$BATS_TEST_TMPDIR/claude" -c "printf '%s' '$payload' | '$HOOK'"
+  assert_success
+  refute_file_appears "$ADA_PROBE_OUT"
+}
+
 # --- displayable labels for agent-injected prompts -------------------------
 #
 # UserPromptSubmit does NOT only carry what the user typed: the agent fires the
