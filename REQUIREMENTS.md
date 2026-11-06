@@ -644,6 +644,15 @@ removed.
   label, because diagnosing a newly introduced injected shape depends on it.
 - A `Stop` event must compute elapsed turn time and trigger the shared launcher
   only when the elapsed time meets `ADA_CLAUDE_THRESHOLD`.
+- A `Stop` event must not alert while a background task the turn's agent
+  started is still running (a background or auto-backgrounded command, an async
+  agent, a workflow, or a monitor before its stated expiry), because the
+  conversation has not returned: the app still shows its stop button. The task's
+  report opens a new turn, and that turn alerts. A task counts as ended once a
+  `<task-notification>` with a `<status>` names it or `TaskStop` stopped it.
+  Launches from subagents and from an earlier `claude` process than the one
+  running the hook must not hold the alert, so a crash can never silence a
+  conversation for good. A turn that ended in an API error still alerts.
 - The hook must honor the same active-app suppression rules as terminal command
   alerts.
 - The hook must set `ADA_REPO_DIR` from the payload `cwd` so the launcher can

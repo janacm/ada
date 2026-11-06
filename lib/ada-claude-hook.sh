@@ -24,6 +24,11 @@
 #                       payload's session id doesn't match the
 #                       stamped one (Codex parity), fall back to the
 #                       most recent stamp so the alert still fires.
+#                       Stays silent while a background task the agent
+#                       started is still running (see
+#                       __ada_background_pending): the conversation has
+#                       not returned yet, and the task's report opens a
+#                       new turn that alerts instead.
 #                       Additionally, if the turn ended in an API
 #                       error (the transcript's last assistant entry
 #                       has isApiErrorMessage:true), alert REGARDLESS
@@ -267,7 +272,6 @@ cx = "1" if "turn_id" in d or "/.codex/" in tp else "0"
 print(ev + "\x1f" + sid + "\x1f" + cwd + "\x1f" + tp + "\x1f" + by + "\x1f" + cx + "\x1f" + lb + "\x1f" + pr)
 ' 2>/dev/null)
 [[ -z "$fields" ]] && exit 0
-
 IFS=$'\x1f' read -r event session_id cwd transcript_path by_user is_codex label prompt <<<"$fields"
 [[ -z "$event" ]] && exit 0
 
@@ -281,6 +285,129 @@ if [[ -n "${ADA_DEBUG_LOG:-}" || -e "${TMPDIR:-/tmp}/ada-claude-debug.on" ]]; th
     "$(date '+%F %T')" "$event" "$session_id" "$cwd" "$prompt" \
     >> "$__ada_dbg_log" 2>/dev/null
 fi
+
+# Is the agent still working in the background? Claude Code fires Stop when the
+# model ends its turn, but a background task it started keeps the conversation
+# busy (the app still shows its stop button) until the task reports back with a
+# <task-notification>, which opens a new turn. Returns 0 while any task the
+# current Claude Code process launched has not reported back.
+#
+# Read from real 2.1.31x transcripts, not from docs:
+#  - A launch is a main-thread tool_result that starts with one of four texts:
+#    "Command running in background with ID", "Command did not complete within
+#    its 120s timeout and was moved to the background" (no run_in_background
+#    flag at all), "Async agent launched", "Workflow launched in background".
+#    "Monitor started (task ..., expires in Nm" is a fifth, pending until it
+#    expires. Matching the result rather than the tool_use input is what
+#    catches the auto-backgrounded command and the Workflow tool.
+#  - A task ends in one of two ways. It reports with a <task-notification>
+#    carrying a <status> (completed, failed, killed, or stopped when a resumed
+#    session finds it died with the previous process), its <task-id> and
+#    usually <tool-use-id>. That lands in a user message when it opens a turn
+#    but only in a queue-operation entry when it arrives mid-turn, so a report
+#    anywhere in the file counts. A notification without <status> is a Monitor
+#    event from a watch that is still running. Or the agent stops it with
+#    TaskStop, which answers "Successfully stopped task: <id>" and sends no
+#    notification at all.
+#  - Tasks die with their claude process. A launch older than the process now
+#    running the session is ignored, or a crash would leave a launch that
+#    never reports and silence the conversation for good.
+__ada_background_pending() {
+  local tpath=$1
+  [[ -n "$tpath" && -f "$tpath" ]] || return 1
+  python3 -c '
+import json, os, re, subprocess, sys, time
+from datetime import datetime
+
+LAUNCH = re.compile(
+    r"Command running in background with ID"
+    r"|Command did not complete within .{0,60}moved to the background"
+    r"|Async agent launched"
+    r"|Workflow launched in background"
+    r"|Monitor started \(task")
+EXPIRES = re.compile(r"expires in (\d+)m")
+TASK_ID = re.compile(r"(?:with ID: |\(ID: |agentId: |Task ID: |\(task )([A-Za-z0-9_-]+)")
+NOTICE = re.compile(r"<task-notification>(.*?)(?:</task-notification>|$)")
+NOTICE_ID = re.compile(r"<(?:tool-use-id|task-id)>([A-Za-z0-9_-]+)</")
+STOPPED = re.compile(r"Successfully stopped task: ([A-Za-z0-9_-]+)")
+
+def epoch(ts):
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+def flat(c):
+    if isinstance(c, list):
+        return " ".join(x.get("text", "") for x in c if isinstance(x, dict))
+    return str(c or "")
+
+def claude_started():
+    # Start time of the nearest claude ancestor of this hook, or 0 when there
+    # is none (a test, or a harness that runs hooks some other way).
+    try:
+        rows = subprocess.run(["ps", "-axo", "pid=,ppid=,etime=,comm="],
+                              capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return 0
+    procs = {}
+    for row in rows.splitlines():
+        parts = row.split(None, 3)
+        if len(parts) == 4:
+            procs[parts[0]] = parts[1:]
+    pid = str(os.getppid())
+    for _ in range(12):
+        if pid not in procs:
+            return 0
+        ppid, etime, comm = procs[pid]
+        if os.path.basename(comm) == "claude" or "/claude/versions/" in comm:
+            secs = 0
+            days, _, clock = etime.rpartition("-")
+            for part in clock.split(":"):
+                secs = secs * 60 + int(part)
+            return time.time() - secs - int(days or 0) * 86400 - 2
+        pid = ppid
+    return 0
+
+now = time.time()
+launched = []
+ended = set()
+with open(sys.argv[1], encoding="utf-8", errors="replace") as f:
+    for line in f:
+        if "<task-notification>" in line:
+            for body in NOTICE.findall(line):
+                if "<status>" in body:
+                    ended.update(NOTICE_ID.findall(body))
+        if "stopped task" in line:
+            ended.update(STOPPED.findall(line))
+        if "tool_result" not in line or not LAUNCH.search(line):
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if d.get("type") != "user" or d.get("isSidechain"):
+            continue
+        content = (d.get("message") or {}).get("content")
+        ts = epoch(d.get("timestamp"))
+        for b in content if isinstance(content, list) else []:
+            if not isinstance(b, dict) or b.get("type") != "tool_result":
+                continue
+            text = flat(b.get("content")).lstrip()
+            if not LAUNCH.match(text):
+                continue
+            ttl = EXPIRES.search(text[:300])
+            if ttl and ts and now > ts + int(ttl.group(1)) * 60:
+                continue
+            task = TASK_ID.search(text[:400])
+            launched.append((b.get("tool_use_id"), task.group(1) if task else None, ts))
+pending = [ts for use, task, ts in launched if use not in ended and task not in ended]
+if pending:
+    started = claude_started()
+    pending = [ts for ts in pending if not (started and ts and ts < started)]
+sys.exit(0 if pending else 1)
+' "$tpath" 2>/dev/null
+}
 
 # Inspect the transcript tail: if the turn's last assistant entry is an API
 # error, echo the error text (stdout) and return 0; otherwise echo nothing and
@@ -364,6 +491,10 @@ case "$event" in
 
     if [[ -z "$err_text" ]]; then
       (( elapsed < threshold )) && exit 0
+      # The agent hasn't returned while a background task is still running: the
+      # UI keeps its stop button, so this is not a turn the user can answer yet.
+      # The task's completion opens a new turn, which alerts then.
+      __ada_background_pending "$transcript_path" && exit 0
     fi
 
     if [[ -n "$err_text" ]]; then
